@@ -3,7 +3,7 @@ import time
 import os
 import io
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from threading import Thread
 from hyundai_kia_connect_api import VehicleManager
 from hyundai_kia_connect_api.exceptions import (
@@ -101,8 +101,10 @@ def fetch_and_update_metrics():
     # except Exception as general_error:  # General exception (last resort)
     #     print(f"Unexpected error: {general_error}. Check library or API documentation.", file=sys.stderr)
 
+    # Get a TZ aware datetime object for the threashold of updates
+    last_updated_threshold = (datetime.now() - interval_between_requests).replace(tzinfo=timezone.utc)
 
-    if vehicle is None or vehicle.last_updated_at < datetime.now() - interval_between_requests:
+    if vehicle is None or vehicle.last_updated_at < last_updated_threshold:
         print("Cached data is stale, force refreshing...", file=sys.stderr)
         vm.force_refresh_vehicle_state(VEHICLE_ID)
         vehicle = vm.get_vehicle(VEHICLE_ID)  # Get updated vehicle data
