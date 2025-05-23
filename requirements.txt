@@ -1,10 +1,10 @@
 beautifulsoup4==4.12.3
 blinker==1.8.2
 branca==0.7.2
-certifi==2024.7.4
+certifi==2024.8.30
 charset-normalizer==3.3.2
 click==8.1.7
-cryptography==42.0.5
+cryptography==43.0.3
 contourpy==1.2.1
 curlify==2.2.1
 cycler==0.12.1
@@ -12,7 +12,7 @@ Flask==3.0.3
 folium==0.17.0
 fonttools==4.53.1
 hyundai_kia_connect_api==3.22.3
-idna==3.7
+idna==3.10
 itsdangerous==2.2.0
 Jinja2==3.1.4
 kiwisolver==1.4.5
@@ -31,6 +31,6 @@ requests==2.32.3
 six==1.16.0
 soupsieve==2.5
 tzdata==2024.1
-urllib3==2.2.2
-Werkzeug==3.0.3
+urllib3==2.2.3
+Werkzeug==3.0.6
 xyzservices==2024.6.0
