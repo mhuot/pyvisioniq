@@ -4,6 +4,7 @@ branca==0.7.2
 certifi==2024.7.4
 charset-normalizer==3.3.2
 click==8.1.7
+cryptography==42.0.5
 contourpy==1.2.1
 curlify==2.2.1
 cycler==0.12.1

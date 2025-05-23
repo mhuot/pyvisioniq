@@ -1,0 +1,718 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PyVisionIQ Dashboard</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background-color: #f5f5f5;
+            color: #333;
+        }
+        
+        .header {
+            background-color: #1e40af;
+            color: white;
+            padding: 1rem 2rem;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        .header h1 {
+            font-size: 1.5rem;
+            font-weight: 600;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+        
+        .dashboard-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 1.5rem;
+            margin-bottom: 2rem;
+        }
+        
+        .card {
+            background: white;
+            border-radius: 8px;
+            padding: 1.5rem;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+        
+        .card h2 {
+            font-size: 1.1rem;
+            color: #666;
+            margin-bottom: 0.5rem;
+        }
+        
+        .card .value {
+            font-size: 2rem;
+            font-weight: 600;
+            color: #1e40af;
+        }
+        
+        .card .subtitle {
+            font-size: 0.9rem;
+            color: #999;
+            margin-top: 0.25rem;
+        }
+        
+        .tabs {
+            display: flex;
+            gap: 1rem;
+            margin-bottom: 2rem;
+            border-bottom: 2px solid #e5e5e5;
+        }
+        
+        .tab {
+            padding: 0.75rem 1.5rem;
+            border: none;
+            background: none;
+            font-size: 1rem;
+            cursor: pointer;
+            color: #666;
+            position: relative;
+        }
+        
+        .tab.active {
+            color: #1e40af;
+        }
+        
+        .tab.active::after {
+            content: '';
+            position: absolute;
+            bottom: -2px;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background-color: #1e40af;
+        }
+        
+        .tab-content {
+            display: none;
+        }
+        
+        .tab-content.active {
+            display: block;
+        }
+        
+        .status-badge {
+            display: inline-block;
+            padding: 0.25rem 0.75rem;
+            border-radius: 9999px;
+            font-size: 0.875rem;
+            font-weight: 500;
+        }
+        
+        .status-badge.success {
+            background-color: #d1fae5;
+            color: #065f46;
+        }
+        
+        .status-badge.error {
+            background-color: #fee2e2;
+            color: #991b1b;
+        }
+        
+        .status-badge.warning {
+            background-color: #fef3c7;
+            color: #92400e;
+        }
+        
+        .button {
+            padding: 0.5rem 1rem;
+            border: none;
+            border-radius: 6px;
+            font-size: 0.875rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        .button-primary {
+            background-color: #1e40af;
+            color: white;
+        }
+        
+        .button-primary:hover {
+            background-color: #1e3a8a;
+        }
+        
+        .button-secondary {
+            background-color: #e5e7eb;
+            color: #374151;
+        }
+        
+        .button-secondary:hover {
+            background-color: #d1d5db;
+        }
+        
+        .api-stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+        }
+        
+        .stat-card {
+            background: #f9fafb;
+            padding: 1rem;
+            border-radius: 6px;
+            text-align: center;
+        }
+        
+        .stat-card .label {
+            font-size: 0.875rem;
+            color: #6b7280;
+            margin-bottom: 0.25rem;
+        }
+        
+        .stat-card .value {
+            font-size: 1.5rem;
+            font-weight: 600;
+            color: #111827;
+        }
+        
+        .settings-form {
+            max-width: 600px;
+        }
+        
+        .form-group {
+            margin-bottom: 1.5rem;
+        }
+        
+        .form-group label {
+            display: block;
+            font-size: 0.875rem;
+            font-weight: 500;
+            color: #374151;
+            margin-bottom: 0.5rem;
+        }
+        
+        .form-group input,
+        .form-group select {
+            width: 100%;
+            padding: 0.5rem;
+            border: 1px solid #d1d5db;
+            border-radius: 6px;
+            font-size: 0.875rem;
+        }
+        
+        .form-group .help-text {
+            font-size: 0.75rem;
+            color: #6b7280;
+            margin-top: 0.25rem;
+        }
+        
+        .chart-container {
+            background: white;
+            border-radius: 8px;
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+        
+        .chart-container h3 {
+            margin-bottom: 1rem;
+            color: #374151;
+        }
+        
+        .chart-container img {
+            max-width: 100%;
+            height: auto;
+        }
+        
+        #map {
+            height: 400px;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        
+        .alert {
+            padding: 1rem;
+            border-radius: 6px;
+            margin-bottom: 1rem;
+        }
+        
+        .alert-info {
+            background-color: #dbeafe;
+            color: #1e40af;
+            border: 1px solid #93c5fd;
+        }
+        
+        .alert-success {
+            background-color: #d1fae5;
+            color: #065f46;
+            border: 1px solid #86efac;
+        }
+        
+        .alert-error {
+            background-color: #fee2e2;
+            color: #991b1b;
+            border: 1px solid #fca5a5;
+        }
+        
+        .json-viewer {
+            background-color: #1e293b;
+            color: #e2e8f0;
+            padding: 1rem;
+            border-radius: 6px;
+            overflow-x: auto;
+            font-family: 'Monaco', 'Consolas', 'Courier New', monospace;
+            font-size: 0.875rem;
+            line-height: 1.5;
+            max-height: 600px;
+            overflow-y: auto;
+        }
+        
+        .json-key {
+            color: #7dd3fc;
+        }
+        
+        .json-string {
+            color: #86efac;
+        }
+        
+        .json-number {
+            color: #fbbf24;
+        }
+        
+        .json-boolean {
+            color: #c084fc;
+        }
+        
+        .json-null {
+            color: #f87171;
+        }
+        
+        .copy-button {
+            position: absolute;
+            top: 0.5rem;
+            right: 0.5rem;
+            padding: 0.25rem 0.75rem;
+            background-color: #374151;
+            color: #e5e7eb;
+            border: 1px solid #4b5563;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        .copy-button:hover {
+            background-color: #4b5563;
+            color: white;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>PyVisionIQ - EV Monitoring Dashboard</h1>
+    </div>
+    
+    <div class="container">
+        <!-- Status Cards -->
+        <div class="dashboard-grid">
+            <div class="card">
+                <h2>Battery Level</h2>
+                <div class="value">{{ battery_level }}%</div>
+                <div class="subtitle">Last updated: {{ last_update }}</div>
+            </div>
+            
+            <div class="card">
+                <h2>EV Range</h2>
+                <div class="value">{{ ev_range }} km</div>
+                <div class="subtitle">Estimated range</div>
+            </div>
+            
+            <div class="card">
+                <h2>Total Mileage</h2>
+                <div class="value">{{ mileage }} km</div>
+                <div class="subtitle">Odometer reading</div>
+            </div>
+            
+            <div class="card">
+                <h2>API Status</h2>
+                <div style="margin-top: 0.5rem;">
+                    {% if api_status == 'healthy' %}
+                        <span class="status-badge success">Healthy</span>
+                    {% elif api_status == 'warning' %}
+                        <span class="status-badge warning">Rate Limited</span>
+                    {% else %}
+                        <span class="status-badge error">Error</span>
+                    {% endif %}
+                </div>
+                <div class="subtitle">{{ api_calls_today }}/{{ api_limit }} calls today</div>
+            </div>
+        </div>
+        
+        <!-- Tabs -->
+        <div class="tabs">
+            <button class="tab active" onclick="showTab('overview')">Overview</button>
+            <button class="tab" onclick="showTab('api-stats')">API Stats</button>
+            <button class="tab" onclick="showTab('settings')">Settings</button>
+            <button class="tab" onclick="showTab('charts')">Charts</button>
+            <button class="tab" onclick="showTab('raw-data')">Raw API Data</button>
+        </div>
+        
+        <!-- Tab Contents -->
+        <div id="overview" class="tab-content active">
+            <div class="card">
+                <h2>Vehicle Location</h2>
+                <div id="map">
+                    {{ map_html|safe }}
+                </div>
+            </div>
+            
+            <div style="margin-top: 1.5rem;">
+                <button class="button button-primary" onclick="refreshData()">
+                    Refresh Vehicle Data
+                </button>
+                <button class="button button-secondary" onclick="exportData()">
+                    Export CSV Data
+                </button>
+            </div>
+        </div>
+        
+        <div id="api-stats" class="tab-content">
+            <div class="card">
+                <h2>API Usage Statistics</h2>
+                <div class="api-stats-grid">
+                    <div class="stat-card">
+                        <div class="label">Total Calls Today</div>
+                        <div class="value">{{ api_calls_today }}</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="label">Successful Calls</div>
+                        <div class="value">{{ api_success_count }}</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="label">Failed Calls</div>
+                        <div class="value">{{ api_error_count }}</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="label">Success Rate</div>
+                        <div class="value">{{ api_success_rate }}%</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="label">Avg Response Time</div>
+                        <div class="value">{{ avg_response_time }}ms</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="label">Next Update</div>
+                        <div class="value" id="next-update-time">{{ next_update_in }}</div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="card" style="margin-top: 1.5rem;">
+                <h2>Recent API Calls</h2>
+                <table style="width: 100%; margin-top: 1rem;">
+                    <thead>
+                        <tr style="text-align: left; border-bottom: 1px solid #e5e7eb;">
+                            <th style="padding: 0.5rem;">Time</th>
+                            <th style="padding: 0.5rem;">Endpoint</th>
+                            <th style="padding: 0.5rem;">Status</th>
+                            <th style="padding: 0.5rem;">Response Time</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for call in recent_api_calls %}
+                        <tr style="border-bottom: 1px solid #f3f4f6;">
+                            <td style="padding: 0.5rem;">{{ call.time }}</td>
+                            <td style="padding: 0.5rem;">{{ call.endpoint }}</td>
+                            <td style="padding: 0.5rem;">
+                                {% if call.success %}
+                                    <span class="status-badge success">Success</span>
+                                {% else %}
+                                    <span class="status-badge error">Failed</span>
+                                {% endif %}
+                            </td>
+                            <td style="padding: 0.5rem;">{{ call.response_time }}ms</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        
+        <div id="settings" class="tab-content">
+            <div class="card">
+                <h2>Configuration Settings</h2>
+                <form class="settings-form" onsubmit="saveSettings(event)">
+                    <div class="form-group">
+                        <label for="update-enabled">Automatic Updates</label>
+                        <select id="update-enabled" name="update_enabled">
+                            <option value="true" {% if update_enabled %}selected{% endif %}>Enabled</option>
+                            <option value="false" {% if not update_enabled %}selected{% endif %}>Disabled</option>
+                        </select>
+                        <div class="help-text">Enable automatic data fetching from the API</div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="api-limit">API Rate Limit</label>
+                        <input type="number" id="api-limit" name="api_limit" value="{{ api_limit }}" min="1" max="100">
+                        <div class="help-text">Maximum API calls per 24 hours</div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="csv-path">CSV File Path</label>
+                        <input type="text" id="csv-path" name="csv_path" value="{{ csv_path }}" readonly>
+                        <div class="help-text">Location where vehicle data is stored</div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="region">Region</label>
+                        <input type="text" id="region" name="region" value="{{ region }}" readonly>
+                        <div class="help-text">API region (cannot be changed at runtime)</div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="brand">Brand</label>
+                        <select id="brand" name="brand" disabled>
+                            <option value="1" {% if brand == '1' %}selected{% endif %}>Kia</option>
+                            <option value="2" {% if brand == '2' %}selected{% endif %}>Hyundai</option>
+                            <option value="3" {% if brand == '3' %}selected{% endif %}>Genesis</option>
+                        </select>
+                        <div class="help-text">Vehicle brand (cannot be changed at runtime)</div>
+                    </div>
+                    
+                    <button type="submit" class="button button-primary">Save Settings</button>
+                </form>
+            </div>
+        </div>
+        
+        <div id="charts" class="tab-content">
+            <div class="chart-container">
+                <h3>Battery Charge Level</h3>
+                <img src="/charge.png" alt="Battery charge level over time">
+            </div>
+            
+            <div class="chart-container">
+                <h3>Vehicle Mileage</h3>
+                <img src="/mileage.png" alt="Mileage over time">
+            </div>
+            
+            <div class="chart-container">
+                <h3>EV Driving Range</h3>
+                <img src="/range.png" alt="EV range over time">
+            </div>
+        </div>
+        
+        <div id="raw-data" class="tab-content">
+            <div class="card" style="position: relative;">
+                <h2>Raw API Response Data</h2>
+                <button class="copy-button" onclick="copyRawData()">Copy JSON</button>
+                <div id="raw-data-loading" style="text-align: center; padding: 2rem; color: #666;">
+                    Loading raw data...
+                </div>
+                <div id="raw-data-content" style="display: none;">
+                    <div class="alert alert-info" style="margin-bottom: 1rem;">
+                        This shows all available data from the Hyundai/Kia API response. 
+                        Last updated: <span id="raw-data-timestamp">Never</span>
+                    </div>
+                    <pre class="json-viewer" id="json-display"></pre>
+                </div>
+                <div id="raw-data-error" style="display: none; text-align: center; padding: 2rem; color: #991b1b;">
+                    Error loading data
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        function showTab(tabName) {
+            // Hide all tab contents
+            const contents = document.querySelectorAll('.tab-content');
+            contents.forEach(content => content.classList.remove('active'));
+            
+            // Remove active class from all tabs
+            const tabs = document.querySelectorAll('.tab');
+            tabs.forEach(tab => tab.classList.remove('active'));
+            
+            // Show selected tab content
+            document.getElementById(tabName).classList.add('active');
+            
+            // Add active class to clicked tab
+            event.target.classList.add('active');
+            
+            // Load raw data when that tab is selected
+            if (tabName === 'raw-data') {
+                loadRawData();
+            }
+        }
+        
+        async function refreshData() {
+            if (!confirm('This will use one of your daily API calls. Continue?')) {
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/refresh', { method: 'POST' });
+                const data = await response.json();
+                
+                if (data.success) {
+                    alert('Vehicle data refreshed successfully!');
+                    location.reload();
+                } else {
+                    alert('Error: ' + data.error);
+                }
+            } catch (error) {
+                alert('Failed to refresh data: ' + error.message);
+            }
+        }
+        
+        async function exportData() {
+            window.location.href = '/api/export';
+        }
+        
+        async function saveSettings(event) {
+            event.preventDefault();
+            
+            const formData = new FormData(event.target);
+            const settings = Object.fromEntries(formData);
+            
+            try {
+                const response = await fetch('/api/settings', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(settings)
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    alert('Settings saved successfully!');
+                    location.reload();
+                } else {
+                    alert('Error: ' + data.error);
+                }
+            } catch (error) {
+                alert('Failed to save settings: ' + error.message);
+            }
+        }
+        
+        // Auto-refresh dashboard every 5 minutes
+        setInterval(() => {
+            location.reload();
+        }, 5 * 60 * 1000);
+        
+        // Update next update countdown every second
+        let updateCountdownInterval;
+        
+        async function updateNextUpdateTime() {
+            try {
+                const response = await fetch('/api/update-status');
+                const data = await response.json();
+                
+                if (data.success) {
+                    document.getElementById('next-update-time').textContent = data.next_update_in;
+                    
+                    // If update is imminent, check more frequently
+                    if (data.next_update_in === 'Any moment') {
+                        setTimeout(() => location.reload(), 5000);
+                    }
+                }
+            } catch (error) {
+                console.error('Failed to update countdown:', error);
+            }
+        }
+        
+        // Start updating countdown
+        updateCountdownInterval = setInterval(updateNextUpdateTime, 1000);
+        
+        // Clear interval when page is hidden to save resources
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) {
+                clearInterval(updateCountdownInterval);
+            } else {
+                updateCountdownInterval = setInterval(updateNextUpdateTime, 1000);
+            }
+        });
+        
+        async function loadRawData() {
+            const loadingDiv = document.getElementById('raw-data-loading');
+            const contentDiv = document.getElementById('raw-data-content');
+            const errorDiv = document.getElementById('raw-data-error');
+            
+            // Show loading state
+            loadingDiv.style.display = 'block';
+            contentDiv.style.display = 'none';
+            errorDiv.style.display = 'none';
+            
+            try {
+                const response = await fetch('/api/raw-data');
+                const result = await response.json();
+                
+                if (result.success) {
+                    // Update timestamp
+                    document.getElementById('raw-data-timestamp').textContent = result.last_update;
+                    
+                    // Format and display JSON with syntax highlighting
+                    const jsonDisplay = document.getElementById('json-display');
+                    jsonDisplay.innerHTML = syntaxHighlight(JSON.stringify(result.data, null, 2));
+                    
+                    // Show content
+                    loadingDiv.style.display = 'none';
+                    contentDiv.style.display = 'block';
+                } else {
+                    // Show error
+                    errorDiv.textContent = result.error || 'Failed to load raw data';
+                    loadingDiv.style.display = 'none';
+                    errorDiv.style.display = 'block';
+                }
+            } catch (error) {
+                // Show error
+                errorDiv.textContent = 'Failed to load raw data: ' + error.message;
+                loadingDiv.style.display = 'none';
+                errorDiv.style.display = 'block';
+            }
+        }
+        
+        function syntaxHighlight(json) {
+            json = json.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+            return json.replace(/("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g, function (match) {
+                var cls = 'json-number';
+                if (/^"/.test(match)) {
+                    if (/:$/.test(match)) {
+                        cls = 'json-key';
+                    } else {
+                        cls = 'json-string';
+                    }
+                } else if (/true|false/.test(match)) {
+                    cls = 'json-boolean';
+                } else if (/null/.test(match)) {
+                    cls = 'json-null';
+                }
+                return '<span class="' + cls + '">' + match + '</span>';
+            });
+        }
+        
+        function copyRawData() {
+            const jsonDisplay = document.getElementById('json-display');
+            const textContent = jsonDisplay.textContent || jsonDisplay.innerText;
+            
+            navigator.clipboard.writeText(textContent).then(() => {
+                // Change button text temporarily
+                const button = document.querySelector('.copy-button');
+                const originalText = button.textContent;
+                button.textContent = 'Copied!';
+                setTimeout(() => {
+                    button.textContent = originalText;
+                }, 2000);
+            }).catch(err => {
+                alert('Failed to copy: ' + err);
+            });
+        }
+    </script>
+</body>
+</html>
