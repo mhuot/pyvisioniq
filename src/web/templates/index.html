@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PyVisionic - Vehicle Data Dashboard</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+</head>
+<body>
+    <header>
+        <h1>PyVisionic Dashboard</h1>
+        <div class="header-controls">
+            <button id="units-toggle" class="units-button" aria-label="Toggle between metric and imperial units">
+                <span class="units-text">km</span>
+            </button>
+            <button id="refresh-btn" class="refresh-button" aria-label="Refresh vehicle data">
+                Refresh Data
+            </button>
+        </div>
+    </header>
+
+    <main>
+        <section class="status-section" aria-labelledby="status-heading">
+            <h2 id="status-heading">Current Status</h2>
+            <div class="status-grid" role="list">
+                <div class="status-card" role="listitem">
+                    <h3>Battery Level</h3>
+                    <p class="status-value" id="battery-level">--</p>
+                </div>
+                <div class="status-card" role="listitem">
+                    <h3>Range</h3>
+                    <p class="status-value" id="range">--</p>
+                </div>
+                <div class="status-card" role="listitem">
+                    <h3>Temperature</h3>
+                    <p class="status-value" id="temperature">--</p>
+                </div>
+                <div class="status-card" role="listitem">
+                    <h3>Odometer</h3>
+                    <p class="status-value" id="odometer">--</p>
+                </div>
+            </div>
+            <p class="last-updated">Last updated: <span id="last-updated">Never</span></p>
+        </section>
+
+        <section class="chart-section" aria-labelledby="chart-heading">
+            <h2 id="chart-heading">Battery & Temperature History</h2>
+            <div id="battery-chart" class="chart-container" role="img" aria-label="Battery level and temperature chart"></div>
+        </section>
+
+        <section class="trips-section" aria-labelledby="trips-heading">
+            <h2 id="trips-heading">Recent Trips</h2>
+            
+            <!-- Filter Controls -->
+            <div class="trips-filters">
+                <div class="filter-group">
+                    <label for="start-date">Start Date:</label>
+                    <input type="date" id="start-date" name="start-date">
+                </div>
+                <div class="filter-group">
+                    <label for="end-date">End Date:</label>
+                    <input type="date" id="end-date" name="end-date">
+                </div>
+                <div class="filter-group">
+                    <label for="min-distance">Min Distance:</label>
+                    <input type="number" id="min-distance" name="min-distance" min="0" step="0.1">
+                </div>
+                <div class="filter-group">
+                    <label for="max-distance">Max Distance:</label>
+                    <input type="number" id="max-distance" name="max-distance" min="0" step="0.1">
+                </div>
+                <button id="apply-filters" class="btn-primary">Apply Filters</button>
+                <button id="clear-filters" class="btn-secondary">Clear</button>
+            </div>
+            
+            <div class="table-container">
+                <table id="trips-table" aria-label="Recent vehicle trips">
+                    <thead>
+                        <tr>
+                            <th scope="col" rowspan="2">Date/Time</th>
+                            <th scope="col" rowspan="2">Distance</th>
+                            <th scope="col" rowspan="2">Duration</th>
+                            <th scope="col" rowspan="2">Avg Speed</th>
+                            <th scope="col" colspan="5">Energy Usage (Wh)</th>
+                        </tr>
+                        <tr>
+                            <th scope="col">Drivetrain</th>
+                            <th scope="col">Climate</th>
+                            <th scope="col">Accessories</th>
+                            <th scope="col">Total</th>
+                            <th scope="col">Regen</th>
+                        </tr>
+                    </thead>
+                    <tbody id="trips-tbody">
+                        <tr>
+                            <td colspan="9" class="no-data">No trip data available</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            
+            <!-- Pagination Controls -->
+            <div class="pagination-controls">
+                <button id="prev-page" class="btn-secondary" disabled>Previous</button>
+                <span id="page-info">Page 1 of 1</span>
+                <button id="next-page" class="btn-secondary" disabled>Next</button>
+                <select id="per-page" class="per-page-select">
+                    <option value="5">5 per page</option>
+                    <option value="10" selected>10 per page</option>
+                    <option value="20">20 per page</option>
+                    <option value="50">50 per page</option>
+                </select>
+            </div>
+        </section>
+        <section class="collection-status" aria-labelledby="collection-heading">
+            <h2 id="collection-heading">Data Collection Status</h2>
+            <div class="collection-info">
+                <p>API Calls Today: <span id="api-calls-today">--</span> / 30</p>
+                <p>Next Collection: <span id="next-collection">--</span></p>
+            </div>
+        </section>
+    </main>
+
+    <footer>
+        <p>&copy; 2024 PyVisionic. Vehicle data visualization for Hyundai/Kia Connect.</p>
+    </footer>
+
+    <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+</body>
+</html>

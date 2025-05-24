@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Project specific
+.env
+.env.local
+data/
+cache/
+logs/
+*.log
+nohup.out
+
+# OS
+.DS_Store
+Thumbs.db
