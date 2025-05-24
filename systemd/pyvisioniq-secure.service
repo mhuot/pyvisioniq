@@ -1,0 +1,34 @@
+[Unit]
+Description=PyVisionIQ with Encrypted Credentials
+After=network.target
+
+[Service]
+Type=simple
+User=pyvisioniq
+Group=pyvisioniq
+WorkingDirectory=/opt/pyvisioniq
+
+# Environment file contains PYVISIONIQ_MASTER_PASSWORD
+EnvironmentFile=/etc/pyvisioniq/pyvisioniq.env
+
+# Main execution
+ExecStart=/opt/pyvisioniq/venv/bin/python /opt/pyvisioniq/pyvisioniq.py
+
+# Security hardening
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/pyvisioniq/data /opt/pyvisioniq/.pyvisioniq
+
+# Restart policy
+Restart=on-failure
+RestartSec=30
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=pyvisioniq
+
+[Install]
+WantedBy=multi-user.target

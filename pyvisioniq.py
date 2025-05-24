@@ -28,6 +28,7 @@ import folium
 from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
 from dotenv import load_dotenv
 from secure_config import SecureConfig
+from csv_manager import CSVDataManager
 
 # Try to load from .env first for backward compatibility
 load_dotenv()
@@ -85,6 +86,9 @@ PORT = config_data.get('port', 8001)
 HOST = config_data.get('host', '0.0.0.0')
 CSV_FILE = config_data.get('csv_file', './vehicle_data.csv')
 
+# Initialize CSV data manager
+csv_manager = CSVDataManager(CSV_FILE)
+
 # Validate required configuration
 required_config = {
     'username': USERNAME,
@@ -116,7 +120,8 @@ api_stats_lock = Lock()
 # Settings that can be changed at runtime
 runtime_settings = {
     'update_enabled': UPDATE,
-    'api_limit': APILIMIT
+    'api_limit': APILIMIT,
+    'units': 'metric'  # Default to metric, can be changed to 'imperial'
 }
 settings_lock = Lock()
 
@@ -309,21 +314,16 @@ def fetch_and_update_metrics():
     battery_health_gauge.set(battery_health)
     ev_driving_range_gauge.set(ev_driving_range)
 
-    data_to_log = pd.DataFrame({
-        'Timestamp': [datetime.now().isoformat()],
-        'Charging Level': [charging_level],
-        'Mileage': [mileage],
-        'Battery Health': [battery_health],
-        'EV Driving Range': [ev_driving_range],
-        'Longitude': [longitude],
-        'Latitude': [latitude]
+    # Use CSV manager to append data
+    csv_manager.append_data({
+        'Timestamp': datetime.now().isoformat(),
+        'Charging Level': charging_level,
+        'Mileage': mileage,
+        'Battery Health': battery_health,
+        'EV Driving Range': ev_driving_range,
+        'Longitude': longitude,
+        'Latitude': latitude
     })
-
-    # Write to CSV with header only if it's the first time
-    if not os.path.exists(CSV_FILE):
-        data_to_log.to_csv(CSV_FILE, index=False)
-    else:
-        data_to_log.to_csv(CSV_FILE, mode='a', header=False, index=False)
 
     print(f"{datetime.now().isoformat()}," +
           f"Charging Level: {charging_level}%, " +
@@ -363,8 +363,10 @@ def scheduled_update():
 
 def rangeplot():
     '''Generate a plot of the charging level over time.'''
-    # Check if CSV file exists
-    if not os.path.exists(CSV_FILE):
+    # Use CSV manager to get data
+    data = csv_manager.get_all_data()
+    
+    if data.empty:
         plt.figure(figsize=(10, 6))
         plt.text(0.5, 0.5, 'No data available yet\nTrigger a data refresh first',
                 ha='center', va='center', fontsize=16, color='gray')
@@ -375,8 +377,6 @@ def rangeplot():
         plt.close()
         return fig
 
-    data = pd.read_csv(CSV_FILE)
-    data['Timestamp'] = pd.to_datetime(data['Timestamp'], errors='coerce')
     data.set_index('Timestamp', inplace=True)
 
     plt.figure(figsize=(10, 6))
@@ -396,8 +396,10 @@ def rangeplot():
 
 def chargeplot():
     '''Generate a plot of the charging level over time.'''
-    # Check if CSV file exists
-    if not os.path.exists(CSV_FILE):
+    # Use CSV manager to get data
+    data = csv_manager.get_all_data()
+    
+    if data.empty:
         plt.figure(figsize=(10, 6))
         plt.text(0.5, 0.5, 'No data available yet\nTrigger a data refresh first',
                 ha='center', va='center', fontsize=16, color='gray')
@@ -408,8 +410,6 @@ def chargeplot():
         plt.close()
         return fig
 
-    data = pd.read_csv(CSV_FILE)
-    data['Timestamp'] = pd.to_datetime(data['Timestamp'], errors='coerce')
     data.set_index('Timestamp', inplace=True)
 
     plt.figure(figsize=(10, 6))
@@ -429,8 +429,10 @@ def chargeplot():
 
 def mileageplot():
     '''Generate a plot of the mileage over time.'''
-    # Check if CSV file exists
-    if not os.path.exists(CSV_FILE):
+    # Use CSV manager to get data
+    data = csv_manager.get_all_data()
+    
+    if data.empty:
         plt.figure(figsize=(10, 6))
         plt.text(0.5, 0.5, 'No data available yet\nTrigger a data refresh first',
                 ha='center', va='center', fontsize=16, color='gray')
@@ -441,8 +443,6 @@ def mileageplot():
         plt.close()
         return fig
 
-    data = pd.read_csv(CSV_FILE)
-    data['Timestamp'] = pd.to_datetime(data['Timestamp'], errors='coerce')
     data.set_index('Timestamp', inplace=True)
 
     plt.figure(figsize=(10,6))
@@ -462,14 +462,15 @@ def mileageplot():
 
 def mapit():
     '''Create and save a map visualization of the vehicle's location data.'''
-    # Check if CSV file exists
-    if not os.path.exists(CSV_FILE):
+    # Use CSV manager to get data
+    data = csv_manager.get_all_data()
+    
+    if data.empty:
         # Return a simple message if no data
         return ("<p style='text-align: center; padding: 2rem; color: #666;'>"
                 "No location data available yet. Trigger a data refresh first.</p>")
 
     try:
-        data = pd.read_csv(CSV_FILE)
 
         # Check if we have location data
         if data.empty or 'Latitude' not in data.columns or 'Longitude' not in data.columns:
@@ -524,6 +525,81 @@ def metrics():
 def endpointmap():
     '''Endpoint to render the map visualization.'''
     return render_template('index.html', map=mapit())
+
+# Modern dashboard route
+@app.route('/modern')
+def modern_dashboard():
+    '''Modern dashboard with enhanced UI'''
+    with vehicle_data_lock:
+        vehicle_data = latest_vehicle_data.copy()
+
+    with api_stats_lock:
+        stats = api_stats.copy()
+        avg_response_time = (sum(stats['response_times']) / len(stats['response_times'])
+                             if stats['response_times'] else 0)
+        success_rate = (stats['success_count'] / stats['total_calls'] * 100) if stats['total_calls'] > 0 else 100
+
+    with settings_lock:
+        settings = runtime_settings.copy()
+
+    # Calculate next update time
+    if settings['update_enabled']:
+        interval = get_interval_between_requests()
+        last_update_time = vehicle_data.get('last_update_time')
+
+        if last_update_time:
+            next_update = last_update_time + interval
+            time_until_next = next_update - datetime.now()
+
+            if time_until_next.total_seconds() > 0:
+                total_seconds = int(time_until_next.total_seconds())
+                hours = total_seconds // 3600
+                minutes = (total_seconds % 3600) // 60
+                seconds = total_seconds % 60
+
+                if hours > 0:
+                    next_update_in = f"{hours}h {minutes}m"
+                elif minutes > 0:
+                    next_update_in = f"{minutes}m {seconds}s"
+                else:
+                    next_update_in = f"{seconds}s"
+            else:
+                next_update_in = "Any moment"
+        else:
+            next_update_in = f"{int(interval.total_seconds() / 60)} min"
+    else:
+        next_update_in = "Disabled"
+
+    # Convert miles to km for display (1 mile = 1.60934 km)
+    miles_to_km = 1.60934
+    
+    return render_template('modern_dashboard.html',
+        # Vehicle data (convert miles to km)
+        battery_level=vehicle_data['battery_level'],
+        ev_range=int(vehicle_data['ev_range'] * miles_to_km) if vehicle_data['ev_range'] else 0,
+        mileage=int(vehicle_data['mileage'] * miles_to_km) if vehicle_data['mileage'] else 0,
+        battery_health=vehicle_data.get('battery_health', 0),
+        last_update=vehicle_data['last_update'],
+        latest_vehicle_data=vehicle_data,  # Pass full data for location
+        
+        # API stats
+        api_calls_today=stats['daily_calls'],
+        api_limit=settings['api_limit'],
+        api_success_count=stats['success_count'],
+        api_error_count=stats['error_count'],
+        api_success_rate=f"{success_rate:.1f}",
+        avg_response_time=f"{avg_response_time:.0f}",
+        next_update_in=next_update_in,
+        recent_api_calls=list(stats['recent_calls'])[-10:],
+        
+        # Settings
+        update_enabled=settings['update_enabled'],
+        units=settings.get('units', 'metric'),
+        
+        # Pass these for the JavaScript
+        region=REGION,
+        brand=BRAND
+    )
 
 @app.route('/mileage.png')
 def endpointmileage():
@@ -648,10 +724,18 @@ def api_refresh():
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
 
-@app.route('/api/settings', methods=['POST'])
+@app.route('/api/settings', methods=['GET', 'POST'])
 def api_settings():
-    '''Update runtime settings'''
+    '''Get or update runtime settings'''
     try:
+        if request.method == 'GET':
+            with settings_lock:
+                return jsonify({
+                    'success': True,
+                    'settings': runtime_settings.copy()
+                })
+        
+        # POST method
         data = request.json
 
         with settings_lock:
@@ -664,6 +748,12 @@ def api_settings():
                     runtime_settings['api_limit'] = new_limit
                 else:
                     return jsonify({'success': False, 'error': 'API limit must be between 1 and 100'})
+            
+            if 'units' in data:
+                if data['units'] in ['metric', 'imperial']:
+                    runtime_settings['units'] = data['units']
+                else:
+                    return jsonify({'success': False, 'error': 'Units must be either metric or imperial'})
 
         return jsonify({'success': True, 'message': 'Settings updated'})
     except Exception as e:
@@ -753,6 +843,73 @@ def api_update_status():
         'last_update': latest_vehicle_data.get('last_update', 'Never')
     })
 
+@app.route('/api/chart-data')
+def api_chart_data():
+    '''Get historical data for charts'''
+    try:
+        # Use CSV manager to get recent data
+        recent_data = csv_manager.get_recent_data(hours=24)
+        
+        if recent_data.empty:
+            return jsonify({
+                'success': False,
+                'error': 'No historical data available yet'
+            })
+        
+        # Get all data for daily calculations
+        data = csv_manager.get_all_data()
+        
+        # Convert miles to km (1 mile = 1.60934 km)
+        miles_to_km = 1.60934
+        
+        # Prepare data for charts (convert to km)
+        chart_data = {
+            'timestamps': recent_data['Timestamp'].dt.strftime('%H:%M').tolist(),
+            'battery_levels': recent_data['Charging Level'].tolist(),
+            'ranges': (recent_data['EV Driving Range'] * miles_to_km).round(0).tolist(),
+            'mileages': (recent_data['Mileage'] * miles_to_km).round(0).tolist()
+        }
+        
+        # Calculate daily usage (difference in mileage per day)
+        if len(data) > 1:
+            data['Date'] = data['Timestamp'].dt.date
+            daily_mileage = data.groupby('Date')['Mileage'].agg(['first', 'last'])
+            daily_mileage['usage'] = (daily_mileage['last'] - daily_mileage['first']) * miles_to_km
+            
+            # Get last 7 days
+            last_7_days = daily_mileage.tail(7)
+            chart_data['daily_dates'] = [d.strftime('%m/%d') for d in last_7_days.index]
+            chart_data['daily_usage'] = last_7_days['usage'].round(0).tolist()
+        else:
+            chart_data['daily_dates'] = []
+            chart_data['daily_usage'] = []
+        
+        return jsonify({
+            'success': True,
+            'data': chart_data
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        })
+
+@app.route('/api/data-stats')
+def api_data_stats():
+    '''Get data storage statistics'''
+    try:
+        stats = csv_manager.get_statistics()
+        return jsonify({
+            'success': True,
+            'stats': stats
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        })
+
 @app.route('/api/config', methods=['GET', 'POST'])
 def api_config():
     '''Manage secure configuration'''
@@ -816,32 +973,30 @@ if __name__ == "__main__":
             api_rate_limit_remaining.set(max(0, remaining))
 
     # Load last update time from CSV if it exists
-    if os.path.exists(CSV_FILE):
+    data = csv_manager.get_all_data()
+    if not data.empty:
         try:
-            data = pd.read_csv(CSV_FILE)
-            if not data.empty and 'Timestamp' in data.columns:
-                # Get the most recent timestamp
-                data['Timestamp'] = pd.to_datetime(data['Timestamp'], errors='coerce')
-                last_timestamp = data['Timestamp'].max()
+            # Get the most recent timestamp
+            last_timestamp = data['Timestamp'].max()
 
-                if pd.notna(last_timestamp):
-                    with vehicle_data_lock:
-                        latest_vehicle_data['last_update_time'] = last_timestamp.to_pydatetime()
-                        latest_vehicle_data['last_update'] = last_timestamp.strftime('%Y-%m-%d %H:%M:%S')
+            if pd.notna(last_timestamp):
+                with vehicle_data_lock:
+                    latest_vehicle_data['last_update_time'] = last_timestamp.to_pydatetime()
+                    latest_vehicle_data['last_update'] = last_timestamp.strftime('%Y-%m-%d %H:%M:%S')
 
-                    print(f"Loaded last update time from CSV: {last_timestamp}", file=sys.stderr)
+                print(f"Loaded last update time from CSV: {last_timestamp}", file=sys.stderr)
 
-                    # Also load the latest vehicle data
-                    last_row = data.loc[data['Timestamp'].idxmax()]
-                    with vehicle_data_lock:
-                        latest_vehicle_data['battery_level'] = last_row.get('Charging Level', 0)
-                        latest_vehicle_data['ev_range'] = last_row.get('EV Driving Range', 0)
-                        latest_vehicle_data['mileage'] = last_row.get('Mileage', 0)
-                        latest_vehicle_data['battery_health'] = last_row.get('Battery Health', 0)
-                        latest_vehicle_data['location'] = {
-                            'lat': last_row.get('Latitude', 0),
-                            'lon': last_row.get('Longitude', 0)
-                        }
+                # Also load the latest vehicle data
+                last_row = data.loc[data['Timestamp'].idxmax()]
+                with vehicle_data_lock:
+                    latest_vehicle_data['battery_level'] = last_row.get('Charging Level', 0)
+                    latest_vehicle_data['ev_range'] = last_row.get('EV Driving Range', 0)
+                    latest_vehicle_data['mileage'] = last_row.get('Mileage', 0)
+                    latest_vehicle_data['battery_health'] = last_row.get('Battery Health', 0)
+                    latest_vehicle_data['location'] = {
+                        'lat': last_row.get('Latitude', 0),
+                        'lon': last_row.get('Longitude', 0)
+                    }
         except Exception as e:
             print(f"Error loading last update from CSV: {e}", file=sys.stderr)
 

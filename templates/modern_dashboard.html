@@ -1,0 +1,1116 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="PyVisionIQ - Electric Vehicle Dashboard for monitoring battery level, range, and vehicle health">
+    <title>PyVisionIQ - Modern EV Dashboard</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Alpine.js for interactivity -->
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    
+    <!-- Chart.js for modern charts -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
+    <!-- Leaflet for maps (lighter than Folium) -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    
+    <!-- Custom Tailwind config -->
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        // WCAG AAA compliant color palette
+                        primary: {
+                            50: '#f0f7ff',
+                            100: '#e0efff',
+                            200: '#b9ddff',
+                            300: '#7cc0ff',
+                            400: '#369eff',
+                            500: '#0077ff',
+                            600: '#0057d1',
+                            700: '#0043a8',
+                            800: '#003788',
+                            900: '#062e70',
+                        }
+                    },
+                    animation: {
+                        'pulse-slow': 'pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+                        'slide-in': 'slideIn 0.3s ease-out',
+                    },
+                    keyframes: {
+                        slideIn: {
+                            '0%': { transform: 'translateY(-10px)', opacity: '0' },
+                            '100%': { transform: 'translateY(0)', opacity: '1' },
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    
+    <style>
+        /* Skip to main content link */
+        .skip-link {
+            position: absolute;
+            top: -40px;
+            left: 0;
+            background: #000;
+            color: #fff;
+            padding: 8px;
+            text-decoration: none;
+            z-index: 100;
+        }
+        
+        .skip-link:focus {
+            top: 0;
+        }
+        
+        /* Enhanced focus indicators */
+        *:focus {
+            outline: 3px solid #0077ff;
+            outline-offset: 2px;
+        }
+        
+        /* High contrast mode support */
+        @media (prefers-contrast: high) {
+            *:focus {
+                outline: 4px solid currentColor;
+                outline-offset: 4px;
+            }
+        }
+        
+        /* Custom scrollbar */
+        ::-webkit-scrollbar {
+            width: 12px;
+            height: 12px;
+        }
+        ::-webkit-scrollbar-track {
+            @apply bg-gray-100 dark:bg-gray-800;
+        }
+        ::-webkit-scrollbar-thumb {
+            @apply bg-gray-600 dark:bg-gray-400 rounded-full;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            @apply bg-gray-700 dark:bg-gray-300;
+        }
+        
+        /* Smooth transitions for dark mode */
+        * {
+            transition: background-color 0.2s, border-color 0.2s;
+        }
+        
+        /* Glass morphism effect with WCAG contrast */
+        .glass {
+            backdrop-filter: blur(10px);
+            background-color: rgba(255, 255, 255, 0.95);
+        }
+        .dark .glass {
+            background-color: rgba(17, 24, 39, 0.95);
+        }
+        
+        /* Gradient text with fallback */
+        .gradient-text {
+            background: linear-gradient(135deg, #0057d1 0%, #6b21a8 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        
+        /* Loading spinner */
+        .spinner {
+            border: 3px solid rgba(0, 119, 255, 0.2);
+            border-radius: 50%;
+            border-top: 3px solid #0077ff;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        /* Screen reader only text */
+        .sr-only {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            padding: 0;
+            margin: -1px;
+            overflow: hidden;
+            clip: rect(0, 0, 0, 0);
+            white-space: nowrap;
+            border-width: 0;
+        }
+        
+        /* Ensure sufficient color contrast */
+        .text-high-contrast {
+            color: #1a1a1a;
+        }
+        .dark .text-high-contrast {
+            color: #ffffff;
+        }
+        
+        .text-medium-contrast {
+            color: #404040;
+        }
+        .dark .text-medium-contrast {
+            color: #d1d5db;
+        }
+    </style>
+</head>
+<body class="h-full bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100" 
+      x-data="dashboard()" 
+      x-init="init()">
+    
+    <!-- Skip to main content link -->
+    <a href="#main-content" class="skip-link">Skip to main content</a>
+    
+    <!-- Header -->
+    <header class="glass sticky top-0 z-50 border-b border-gray-300 dark:border-gray-600" role="banner">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex items-center justify-between h-16">
+                <!-- Logo and Title -->
+                <div class="flex items-center space-x-4">
+                    <div class="w-10 h-10 bg-gradient-to-br from-blue-600 to-purple-700 rounded-lg flex items-center justify-center" role="img" aria-label="PyVisionIQ Logo">
+                        <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
+                        </svg>
+                    </div>
+                    <h1 class="text-xl font-bold text-high-contrast">PyVisionIQ</h1>
+                </div>
+                
+                <!-- Actions -->
+                <nav class="flex items-center space-x-4" role="navigation" aria-label="Main navigation">
+                    <!-- Connection Status -->
+                    <div class="flex items-center space-x-2" role="status" aria-live="polite" aria-atomic="true">
+                        <div class="w-2 h-2 rounded-full" :class="connected ? 'bg-green-600 animate-pulse' : 'bg-red-600'" aria-hidden="true"></div>
+                        <span class="text-sm text-medium-contrast" x-text="connected ? 'Connected' : 'Disconnected'">
+                            <span class="sr-only">Connection status: </span>
+                        </span>
+                    </div>
+                    
+                    <!-- Dark Mode Toggle -->
+                    <button @click="toggleDarkMode()" 
+                            :aria-label="darkMode ? 'Switch to light mode' : 'Switch to dark mode'"
+                            :aria-pressed="darkMode"
+                            class="p-2 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors focus:ring-2 focus:ring-offset-2 focus:ring-blue-600">
+                        <svg x-show="!darkMode" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"></path>
+                        </svg>
+                        <svg x-show="darkMode" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"></path>
+                        </svg>
+                    </button>
+                    
+                    <!-- Unit Toggle -->
+                    <button @click="toggleUnits()" 
+                            :aria-label="`Current unit: ${units === 'metric' ? 'kilometers' : 'miles'}. Click to switch to ${units === 'metric' ? 'miles' : 'kilometers'}`"
+                            :aria-pressed="units === 'imperial'"
+                            class="px-3 py-2 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors focus:ring-2 focus:ring-offset-2 focus:ring-blue-600 text-sm font-medium">
+                        <span x-text="units === 'metric' ? 'km' : 'mi'" class="text-high-contrast"></span>
+                    </button>
+                    
+                    <!-- Refresh Button -->
+                    <button @click="refreshData()" 
+                            :disabled="refreshing"
+                            :aria-busy="refreshing"
+                            aria-label="Refresh data"
+                            class="px-4 py-2 bg-blue-700 hover:bg-blue-800 disabled:bg-gray-500 text-white rounded-lg transition-colors flex items-center space-x-2 focus:ring-2 focus:ring-offset-2 focus:ring-blue-600">
+                        <svg class="w-4 h-4" :class="refreshing && 'animate-spin'" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+                        </svg>
+                        <span x-text="refreshing ? 'Refreshing...' : 'Refresh'"></span>
+                    </button>
+                </nav>
+            </div>
+        </div>
+    </header>
+    
+    <!-- Main Content -->
+    <main id="main-content" class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8" role="main">
+        <!-- Live region for dynamic updates -->
+        <div class="sr-only" role="status" aria-live="polite" aria-atomic="true" id="live-region"></div>
+        
+        <!-- Key Metrics -->
+        <section aria-labelledby="metrics-heading">
+            <h2 id="metrics-heading" class="sr-only">Key Vehicle Metrics</h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+                <!-- Battery Level -->
+                <article class="bg-white dark:bg-gray-800 rounded-2xl shadow-lg p-6 border border-gray-300 dark:border-gray-600 animate-slide-in">
+                    <div class="flex items-center justify-between mb-4">
+                        <h3 class="text-sm font-medium text-medium-contrast">Battery Level</h3>
+                        <div class="w-10 h-10 bg-green-100 dark:bg-green-900 rounded-full flex items-center justify-center" aria-hidden="true">
+                            <svg class="w-6 h-6 text-green-700 dark:text-green-300" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-3-3v6m5 5H7a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v12a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </div>
+                    </div>
+                    <div class="flex items-baseline space-x-2">
+                        <span class="text-3xl font-bold text-high-contrast" aria-label="{{ battery_level }} percent battery level">{{ battery_level }}</span>
+                        <span class="text-lg text-medium-contrast" aria-hidden="true">%</span>
+                    </div>
+                    <div class="mt-3 bg-gray-200 dark:bg-gray-700 rounded-full h-2 overflow-hidden" role="progressbar" aria-valuenow="{{ battery_level }}" aria-valuemin="0" aria-valuemax="100" aria-label="Battery charge level">
+                        <div class="h-full bg-gradient-to-r from-green-600 to-green-500 transition-all duration-500"
+                             :style="`width: {{ battery_level }}%`"></div>
+                    </div>
+                </article>
+                
+                <!-- EV Range -->
+                <article class="bg-white dark:bg-gray-800 rounded-2xl shadow-lg p-6 border border-gray-300 dark:border-gray-600 animate-slide-in" style="animation-delay: 0.1s">
+                    <div class="flex items-center justify-between mb-4">
+                        <h3 class="text-sm font-medium text-medium-contrast">EV Range</h3>
+                        <div class="w-10 h-10 bg-blue-100 dark:bg-blue-900 rounded-full flex items-center justify-center" aria-hidden="true">
+                            <svg class="w-6 h-6 text-blue-700 dark:text-blue-300" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7"></path>
+                            </svg>
+                        </div>
+                    </div>
+                    <div class="flex items-baseline space-x-2">
+                        <span id="ev-range-value" class="text-3xl font-bold text-high-contrast" aria-label="{{ ev_range }} kilometers of range">{{ ev_range }}</span>
+                        <span id="ev-range-unit" class="text-lg text-medium-contrast" aria-hidden="true">km</span>
+                    </div>
+                    <p class="mt-2 text-sm text-gray-600 dark:text-gray-400">Estimated range</p>
+                </article>
+                
+                <!-- Mileage -->
+                <article class="bg-white dark:bg-gray-800 rounded-2xl shadow-lg p-6 border border-gray-300 dark:border-gray-600 animate-slide-in" style="animation-delay: 0.2s">
+                    <div class="flex items-center justify-between mb-4">
+                        <h3 class="text-sm font-medium text-medium-contrast">Total Mileage</h3>
+                        <div class="w-10 h-10 bg-purple-100 dark:bg-purple-900 rounded-full flex items-center justify-center" aria-hidden="true">
+                            <svg class="w-6 h-6 text-purple-700 dark:text-purple-300" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"></path>
+                            </svg>
+                        </div>
+                    </div>
+                    <div class="flex items-baseline space-x-2">
+                        <span id="mileage-value" class="text-3xl font-bold text-high-contrast" aria-label="{{ "{:,}".format(mileage) }} kilometers total mileage">{{ "{:,}".format(mileage) }}</span>
+                        <span id="mileage-unit" class="text-lg text-medium-contrast" aria-hidden="true">km</span>
+                    </div>
+                    <p class="mt-2 text-sm text-gray-600 dark:text-gray-400">Odometer reading</p>
+                </article>
+                
+                <!-- Next Update -->
+                <article class="bg-white dark:bg-gray-800 rounded-2xl shadow-lg p-6 border border-gray-300 dark:border-gray-600 animate-slide-in" style="animation-delay: 0.3s">
+                    <div class="flex items-center justify-between mb-4">
+                        <h3 class="text-sm font-medium text-medium-contrast">Next Update</h3>
+                        <div class="w-10 h-10 bg-amber-100 dark:bg-amber-900 rounded-full flex items-center justify-center" aria-hidden="true">
+                            <svg class="w-6 h-6 text-amber-700 dark:text-amber-300" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                            </svg>
+                        </div>
+                    </div>
+                    <div class="flex items-baseline space-x-2">
+                        <span class="text-2xl font-bold text-high-contrast" x-text="nextUpdate" aria-live="polite" aria-atomic="true">{{ next_update_in }}</span>
+                    </div>
+                    <p class="mt-2 text-sm text-gray-600 dark:text-gray-400">Auto-refresh <span class="font-medium">{{ 'enabled' if update_enabled else 'disabled' }}</span></p>
+                </article>
+            </div>
+        </section>
+        
+        <!-- Tabs -->
+        <section aria-labelledby="tabs-heading">
+            <h2 id="tabs-heading" class="sr-only">Dashboard Views</h2>
+            <div class="mb-8">
+                <div class="border-b border-gray-300 dark:border-gray-600">
+                    <nav class="-mb-px flex space-x-8" role="tablist" aria-label="Dashboard tabs">
+                        <button @click="activeTab = 'overview'"
+                                role="tab"
+                                :aria-selected="activeTab === 'overview'"
+                                :tabindex="activeTab === 'overview' ? '0' : '-1'"
+                                id="overview-tab"
+                                aria-controls="overview-panel"
+                                :class="activeTab === 'overview' ? 'border-blue-600 text-blue-700 dark:text-blue-300' : 'border-transparent text-gray-600 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200'"
+                                class="py-2 px-1 border-b-2 font-medium text-sm transition-colors focus:ring-2 focus:ring-offset-2 focus:ring-blue-600">
+                            Overview
+                        </button>
+                        <button @click="activeTab = 'charts'"
+                                role="tab"
+                                :aria-selected="activeTab === 'charts'"
+                                :tabindex="activeTab === 'charts' ? '0' : '-1'"
+                                id="charts-tab"
+                                aria-controls="charts-panel"
+                                :class="activeTab === 'charts' ? 'border-blue-600 text-blue-700 dark:text-blue-300' : 'border-transparent text-gray-600 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200'"
+                                class="py-2 px-1 border-b-2 font-medium text-sm transition-colors focus:ring-2 focus:ring-offset-2 focus:ring-blue-600">
+                            Analytics
+                        </button>
+                        <button @click="activeTab = 'api'"
+                                role="tab"
+                                :aria-selected="activeTab === 'api'"
+                                :tabindex="activeTab === 'api' ? '0' : '-1'"
+                                id="api-tab"
+                                aria-controls="api-panel"
+                                :class="activeTab === 'api' ? 'border-blue-600 text-blue-700 dark:text-blue-300' : 'border-transparent text-gray-600 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200'"
+                                class="py-2 px-1 border-b-2 font-medium text-sm transition-colors focus:ring-2 focus:ring-offset-2 focus:ring-blue-600">
+                            API Status
+                        </button>
+                        <button @click="activeTab = 'settings'"
+                                role="tab"
+                                :aria-selected="activeTab === 'settings'"
+                                :tabindex="activeTab === 'settings' ? '0' : '-1'"
+                                id="settings-tab"
+                                aria-controls="settings-panel"
+                                :class="activeTab === 'settings' ? 'border-blue-600 text-blue-700 dark:text-blue-300' : 'border-transparent text-gray-600 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200'"
+                                class="py-2 px-1 border-b-2 font-medium text-sm transition-colors focus:ring-2 focus:ring-offset-2 focus:ring-blue-600">
+                            Settings
+                        </button>
+                    </nav>
+                </div>
+            </div>
+        </section>
+        
+        <!-- Tab Content -->
+        <div class="space-y-6">
+            <!-- Overview Tab -->
+            <div x-show="activeTab === 'overview'" 
+                 x-transition 
+                 role="tabpanel" 
+                 id="overview-panel" 
+                 aria-labelledby="overview-tab"
+                 tabindex="0">
+                <!-- Map -->
+                <section class="bg-white dark:bg-gray-800 rounded-2xl shadow-lg p-6 border border-gray-300 dark:border-gray-600 mb-6" aria-labelledby="map-heading">
+                    <h2 id="map-heading" class="text-lg font-semibold mb-4 text-high-contrast">Vehicle Location</h2>
+                    <div id="map" class="h-96 rounded-lg overflow-hidden" role="application" aria-label="Interactive map showing vehicle location"></div>
+                    <div class="mt-4 text-sm text-medium-contrast">
+                        <p>Vehicle is currently located at coordinates: {{ latest_vehicle_data.location.lat }}, {{ latest_vehicle_data.location.lon }}</p>
+                    </div>
+                </section>
+                
+                <!-- Vehicle Status -->
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <section class="bg-white dark:bg-gray-800 rounded-2xl shadow-lg p-6 border border-gray-300 dark:border-gray-600" aria-labelledby="health-heading">
+                        <h2 id="health-heading" class="text-lg font-semibold mb-4 text-high-contrast">Vehicle Health</h2>
+                        <div class="space-y-4">
+                            <div>
+                                <div class="flex justify-between mb-2">
+                                    <span class="text-sm text-medium-contrast">Battery Health</span>
+                                    <span class="text-sm font-medium text-high-contrast" aria-label="{{ battery_health }} percent battery health">{{ battery_health }}%</span>
+                                </div>
+                                <div class="bg-gray-200 dark:bg-gray-700 rounded-full h-2" role="progressbar" aria-valuenow="{{ battery_health }}" aria-valuemin="0" aria-valuemax="100" aria-label="Battery health level">
+                                    <div class="bg-green-600 h-2 rounded-full transition-all duration-500"
+                                         style="width: {{ battery_health }}%"></div>
+                                </div>
+                            </div>
+                            <div>
+                                <div class="flex justify-between mb-2">
+                                    <span class="text-sm text-medium-contrast">Last Updated</span>
+                                    <time class="text-sm font-medium text-high-contrast" datetime="{{ last_update_iso }}">{{ last_update }}</time>
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+                    
+                    <section class="bg-white dark:bg-gray-800 rounded-2xl shadow-lg p-6 border border-gray-300 dark:border-gray-600" aria-labelledby="actions-heading">
+                        <h2 id="actions-heading" class="text-lg font-semibold mb-4 text-high-contrast">Quick Actions</h2>
+                        <div class="space-y-3">
+                            <button @click="exportData()" 
+                                    aria-label="Export vehicle data as CSV file"
+                                    class="w-full px-4 py-3 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-lg transition-colors flex items-center justify-center space-x-2 focus:ring-2 focus:ring-offset-2 focus:ring-blue-600">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                                </svg>
+                                <span>Export CSV Data</span>
+                            </button>
+                            <button @click="viewRawData()" 
+                                    aria-label="View raw API data in JSON format"
+                                    class="w-full px-4 py-3 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-lg transition-colors flex items-center justify-center space-x-2 focus:ring-2 focus:ring-offset-2 focus:ring-blue-600">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"></path>
+                                </svg>
+                                <span>View Raw API Data</span>
+                            </button>
+                        </div>
+                    </section>
+                </div>
+            </div>
+            
+            <!-- Analytics Tab -->
+            <div x-show="activeTab === 'charts'" 
+                 x-transition 
+                 role="tabpanel" 
+                 id="charts-panel" 
+                 aria-labelledby="charts-tab"
+                 tabindex="0">
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    <section class="bg-white dark:bg-gray-800 rounded-2xl shadow-lg p-6 border border-gray-300 dark:border-gray-600" aria-labelledby="battery-chart-heading">
+                        <h2 id="battery-chart-heading" class="text-lg font-semibold mb-4 text-high-contrast">Battery Level Trend</h2>
+                        <div class="h-48">
+                            <canvas id="batteryChart" aria-label="Line chart showing battery level over time"></canvas>
+                        </div>
+                        <p class="sr-only">This chart displays the battery level percentage over time as a line graph.</p>
+                    </section>
+                    
+                    <section class="bg-white dark:bg-gray-800 rounded-2xl shadow-lg p-6 border border-gray-300 dark:border-gray-600" aria-labelledby="range-chart-heading">
+                        <h2 id="range-chart-heading" class="text-lg font-semibold mb-4 text-high-contrast">Range History</h2>
+                        <div class="h-48">
+                            <canvas id="rangeChart" aria-label="Line chart showing vehicle range over time"></canvas>
+                        </div>
+                        <p class="sr-only">This chart displays the estimated vehicle range in kilometers over time as a line graph.</p>
+                    </section>
+                    
+                    <section class="bg-white dark:bg-gray-800 rounded-2xl shadow-lg p-6 border border-gray-300 dark:border-gray-600" aria-labelledby="mileage-chart-heading">
+                        <h2 id="mileage-chart-heading" class="text-lg font-semibold mb-4 text-high-contrast">Mileage Progression</h2>
+                        <div class="h-48">
+                            <canvas id="mileageChart" aria-label="Line chart showing total mileage over time"></canvas>
+                        </div>
+                        <p class="sr-only">This chart displays the total vehicle mileage in kilometers over time as a line graph.</p>
+                    </section>
+                    
+                    <section class="bg-white dark:bg-gray-800 rounded-2xl shadow-lg p-6 border border-gray-300 dark:border-gray-600" aria-labelledby="usage-chart-heading">
+                        <h2 id="usage-chart-heading" class="text-lg font-semibold mb-4 text-high-contrast">Daily Usage</h2>
+                        <div class="h-48">
+                            <canvas id="usageChart" aria-label="Bar chart showing daily vehicle usage"></canvas>
+                        </div>
+                        <p class="sr-only">This chart displays the daily vehicle usage in kilometers as a bar graph.</p>
+                    </section>
+                </div>
+            </div>
+            
+            <!-- API Status Tab -->
+            <div x-show="activeTab === 'api'" 
+                 x-transition 
+                 role="tabpanel" 
+                 id="api-panel" 
+                 aria-labelledby="api-tab"
+                 tabindex="0">
+                <section class="bg-white dark:bg-gray-800 rounded-2xl shadow-lg p-6 border border-gray-300 dark:border-gray-600 mb-6" aria-labelledby="api-stats-heading">
+                    <h2 id="api-stats-heading" class="text-lg font-semibold mb-4 text-high-contrast">API Usage Statistics</h2>
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                        <div class="text-center">
+                            <p class="text-3xl font-bold text-blue-700 dark:text-blue-300" aria-label="{{ api_calls_today }} API calls made today">{{ api_calls_today }}</p>
+                            <p class="text-sm text-medium-contrast mt-1">Calls Today</p>
+                        </div>
+                        <div class="text-center">
+                            <p class="text-3xl font-bold text-green-700 dark:text-green-300" aria-label="{{ api_success_rate }} percent API success rate">{{ api_success_rate }}%</p>
+                            <p class="text-sm text-medium-contrast mt-1">Success Rate</p>
+                        </div>
+                        <div class="text-center">
+                            <p class="text-3xl font-bold text-purple-700 dark:text-purple-300" aria-label="{{ avg_response_time }} milliseconds average response time">{{ avg_response_time }}ms</p>
+                            <p class="text-sm text-medium-contrast mt-1">Avg Response</p>
+                        </div>
+                    </div>
+                </section>
+                
+                <section class="bg-white dark:bg-gray-800 rounded-2xl shadow-lg p-6 border border-gray-300 dark:border-gray-600" aria-labelledby="api-calls-heading">
+                    <h2 id="api-calls-heading" class="text-lg font-semibold mb-4 text-high-contrast">Recent API Calls</h2>
+                    <div class="overflow-x-auto">
+                        <table class="w-full" role="table" aria-label="Recent API calls table">
+                            <thead>
+                                <tr class="border-b border-gray-300 dark:border-gray-600">
+                                    <th scope="col" class="text-left py-3 px-4 text-sm font-medium text-medium-contrast">Time</th>
+                                    <th scope="col" class="text-left py-3 px-4 text-sm font-medium text-medium-contrast">Endpoint</th>
+                                    <th scope="col" class="text-left py-3 px-4 text-sm font-medium text-medium-contrast">Status</th>
+                                    <th scope="col" class="text-left py-3 px-4 text-sm font-medium text-medium-contrast">Response Time</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for call in recent_api_calls %}
+                                <tr class="border-b border-gray-200 dark:border-gray-700">
+                                    <td class="py-3 px-4 text-sm text-high-contrast">
+                                        <time datetime="{{ call.time_iso }}">{{ call.time }}</time>
+                                    </td>
+                                    <td class="py-3 px-4 text-sm text-high-contrast">{{ call.endpoint }}</td>
+                                    <td class="py-3 px-4">
+                                        {% if call.success %}
+                                            <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-900 dark:bg-green-900 dark:text-green-100">
+                                                Success
+                                            </span>
+                                        {% else %}
+                                            <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-900 dark:bg-red-900 dark:text-red-100">
+                                                Failed
+                                            </span>
+                                        {% endif %}
+                                    </td>
+                                    <td class="py-3 px-4 text-sm text-high-contrast">{{ call.response_time }}ms</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </section>
+            </div>
+            
+            <!-- Settings Tab -->
+            <div x-show="activeTab === 'settings'" 
+                 x-transition 
+                 role="tabpanel" 
+                 id="settings-panel" 
+                 aria-labelledby="settings-tab"
+                 tabindex="0">
+                <section class="bg-white dark:bg-gray-800 rounded-2xl shadow-lg p-6 border border-gray-300 dark:border-gray-600" aria-labelledby="settings-heading">
+                    <h2 id="settings-heading" class="text-lg font-semibold mb-6 text-high-contrast">Configuration Settings</h2>
+                    <form @submit.prevent="saveSettings()" class="space-y-6" aria-label="Configuration settings form">
+                        <div>
+                            <label for="update-enabled" class="block text-sm font-medium mb-2 text-high-contrast">Automatic Updates</label>
+                            <select id="update-enabled"
+                                    x-model="settings.update_enabled" 
+                                    aria-describedby="update-enabled-desc"
+                                    class="w-full px-4 py-2 border border-gray-400 dark:border-gray-500 rounded-lg bg-white dark:bg-gray-700 text-high-contrast focus:ring-2 focus:ring-blue-600 focus:border-transparent">
+                                <option value="true">Enabled</option>
+                                <option value="false">Disabled</option>
+                            </select>
+                            <p id="update-enabled-desc" class="mt-2 text-sm text-medium-contrast">When enabled, vehicle data will be automatically updated at regular intervals.</p>
+                        </div>
+                        
+                        <div>
+                            <label for="api-limit" class="block text-sm font-medium mb-2 text-high-contrast">API Rate Limit (per day)</label>
+                            <input type="number" 
+                                   id="api-limit"
+                                   x-model="settings.api_limit" 
+                                   min="1" 
+                                   max="100"
+                                   aria-describedby="api-limit-desc"
+                                   class="w-full px-4 py-2 border border-gray-400 dark:border-gray-500 rounded-lg bg-white dark:bg-gray-700 text-high-contrast focus:ring-2 focus:ring-blue-600 focus:border-transparent">
+                            <p id="api-limit-desc" class="mt-2 text-sm text-medium-contrast">Maximum number of API calls allowed per day. Valid range: 1-100.</p>
+                        </div>
+                        
+                        <div class="pt-4">
+                            <button type="submit" 
+                                    aria-label="Save configuration settings"
+                                    class="px-6 py-2 bg-blue-700 hover:bg-blue-800 text-white rounded-lg transition-colors focus:ring-2 focus:ring-offset-2 focus:ring-blue-600">
+                                Save Settings
+                            </button>
+                        </div>
+                    </form>
+                </section>
+            </div>
+        </div>
+    </main>
+    
+    <!-- Raw Data Modal -->
+    <div x-show="showRawDataModal" 
+         x-transition:enter="transition ease-out duration-300"
+         x-transition:enter-start="opacity-0"
+         x-transition:enter-end="opacity-100"
+         x-transition:leave="transition ease-in duration-200"
+         x-transition:leave-start="opacity-100"
+         x-transition:leave-end="opacity-0"
+         class="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center p-4 z-50"
+         role="dialog"
+         aria-modal="true"
+         aria-labelledby="modal-title">
+        <div @click.away="showRawDataModal = false" 
+             class="bg-white dark:bg-gray-800 rounded-2xl shadow-xl max-w-4xl w-full max-h-[80vh] overflow-hidden">
+            <div class="p-6 border-b border-gray-300 dark:border-gray-600 flex items-center justify-between">
+                <h3 id="modal-title" class="text-lg font-semibold text-high-contrast">Raw API Data</h3>
+                <button @click="showRawDataModal = false" 
+                        aria-label="Close modal"
+                        class="p-2 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-lg transition-colors focus:ring-2 focus:ring-offset-2 focus:ring-blue-600">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                    </svg>
+                </button>
+            </div>
+            <div class="p-6 overflow-y-auto max-h-[60vh]">
+                <pre class="bg-gray-100 dark:bg-gray-900 p-4 rounded-lg overflow-x-auto text-sm text-high-contrast" x-text="rawDataJson" aria-label="JSON data"></pre>
+            </div>
+            <div class="p-6 border-t border-gray-300 dark:border-gray-600">
+                <button @click="copyRawData()" 
+                        aria-label="Copy JSON data to clipboard"
+                        class="px-4 py-2 bg-blue-700 hover:bg-blue-800 text-white rounded-lg transition-colors focus:ring-2 focus:ring-offset-2 focus:ring-blue-600">
+                    Copy JSON
+                </button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Notification area for screen readers -->
+    <div class="sr-only" role="alert" aria-live="assertive" aria-atomic="true" id="notification-area"></div>
+    
+    <!-- JavaScript -->
+    <script>
+        function dashboard() {
+            return {
+                darkMode: localStorage.getItem('darkMode') === 'true',
+                units: localStorage.getItem('units') || '{{ units }}',
+                activeTab: 'overview',
+                connected: true,
+                refreshing: false,
+                nextUpdate: '{{ next_update_in }}',
+                showRawDataModal: false,
+                rawDataJson: '',
+                map: null,
+                charts: {},
+                settings: {
+                    update_enabled: '{{ update_enabled }}'.toLowerCase(),
+                    api_limit: {{ api_limit }},
+                    units: '{{ units }}'
+                },
+                // Original metric values
+                originalData: {
+                    ev_range: {{ ev_range }},
+                    mileage: {{ mileage }},
+                    battery_level: {{ battery_level }}
+                },
+                
+                init() {
+                    // Apply dark mode
+                    this.applyDarkMode();
+                    
+                    // Apply unit preference
+                    this.$nextTick(() => {
+                        this.updateUnitDisplays();
+                    });
+                    
+                    // Initialize map
+                    this.$nextTick(() => {
+                        this.initMap();
+                        this.initCharts();
+                    });
+                    
+                    // Update countdown
+                    setInterval(() => this.updateCountdown(), 1000);
+                    
+                    // Setup keyboard navigation
+                    this.setupKeyboardNavigation();
+                },
+                
+                setupKeyboardNavigation() {
+                    // Tab navigation with arrow keys
+                    document.addEventListener('keydown', (e) => {
+                        if (e.target.getAttribute('role') === 'tab') {
+                            const tabs = ['overview', 'charts', 'api', 'settings'];
+                            const currentIndex = tabs.indexOf(this.activeTab);
+                            
+                            if (e.key === 'ArrowRight') {
+                                e.preventDefault();
+                                const nextIndex = (currentIndex + 1) % tabs.length;
+                                this.activeTab = tabs[nextIndex];
+                                document.getElementById(tabs[nextIndex] + '-tab').focus();
+                            } else if (e.key === 'ArrowLeft') {
+                                e.preventDefault();
+                                const prevIndex = (currentIndex - 1 + tabs.length) % tabs.length;
+                                this.activeTab = tabs[prevIndex];
+                                document.getElementById(tabs[prevIndex] + '-tab').focus();
+                            }
+                        }
+                    });
+                },
+                
+                toggleDarkMode() {
+                    this.darkMode = !this.darkMode;
+                    localStorage.setItem('darkMode', this.darkMode);
+                    this.applyDarkMode();
+                    this.announceToScreenReader(`${this.darkMode ? 'Dark' : 'Light'} mode activated`);
+                },
+                
+                applyDarkMode() {
+                    if (this.darkMode) {
+                        document.documentElement.classList.add('dark');
+                    } else {
+                        document.documentElement.classList.remove('dark');
+                    }
+                },
+                
+                toggleUnits() {
+                    this.units = this.units === 'metric' ? 'imperial' : 'metric';
+                    localStorage.setItem('units', this.units);
+                    this.updateUnitDisplays();
+                    this.saveUnitPreference();
+                    this.announceToScreenReader(`Units changed to ${this.units === 'metric' ? 'kilometers' : 'miles'}`);
+                },
+                
+                kmToMiles(km) {
+                    return km * 0.621371;
+                },
+                
+                milesToKm(miles) {
+                    return miles * 1.60934;
+                },
+                
+                formatDistance(value, unit = null) {
+                    const displayUnit = unit || this.units;
+                    if (displayUnit === 'imperial') {
+                        return Math.round(this.kmToMiles(value));
+                    }
+                    return Math.round(value);
+                },
+                
+                getDistanceUnit() {
+                    return this.units === 'metric' ? 'km' : 'mi';
+                },
+                
+                updateUnitDisplays() {
+                    // Update all distance displays
+                    const rangeDisplay = document.getElementById('ev-range-value');
+                    const mileageDisplay = document.getElementById('mileage-value');
+                    const rangeUnit = document.getElementById('ev-range-unit');
+                    const mileageUnit = document.getElementById('mileage-unit');
+                    
+                    if (rangeDisplay) {
+                        rangeDisplay.textContent = this.formatDistance(this.originalData.ev_range);
+                    }
+                    if (mileageDisplay) {
+                        mileageDisplay.textContent = this.formatDistance(this.originalData.mileage).toLocaleString();
+                    }
+                    if (rangeUnit) {
+                        rangeUnit.textContent = this.getDistanceUnit();
+                    }
+                    if (mileageUnit) {
+                        mileageUnit.textContent = this.getDistanceUnit();
+                    }
+                    
+                    // Update map popup
+                    if (this.marker) {
+                        this.updateMapPopup();
+                    }
+                    
+                    // Update chart data if charts are initialized
+                    if (this.charts.range || this.charts.mileage || this.charts.usage) {
+                        this.loadChartData();
+                    }
+                },
+                
+                updateMapPopup() {
+                    if (this.marker) {
+                        const range = this.formatDistance(this.originalData.ev_range);
+                        const unit = this.getDistanceUnit();
+                        this.marker.bindPopup(`Vehicle Location<br>Battery: ${this.originalData.battery_level}%<br>Range: ${range} ${unit}`);
+                    }
+                },
+                
+                async saveUnitPreference() {
+                    try {
+                        const response = await fetch('/api/settings', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                ...this.settings,
+                                units: this.units
+                            })
+                        });
+                        
+                        const data = await response.json();
+                        if (!data.success) {
+                            console.error('Failed to save unit preference:', data.error);
+                        }
+                    } catch (error) {
+                        console.error('Failed to save unit preference:', error);
+                    }
+                },
+                
+                initMap() {
+                    // Initialize Leaflet map
+                    this.map = L.map('map', {
+                        keyboard: true,
+                        keyboardPanDelta: 80
+                    }).setView([{{ latest_vehicle_data.location.lat }}, {{ latest_vehicle_data.location.lon }}], 13);
+                    
+                    // Add tile layer
+                    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                        attribution: '© OpenStreetMap contributors'
+                    }).addTo(this.map);
+                    
+                    // Add marker with accessible popup
+                    this.marker = L.marker([{{ latest_vehicle_data.location.lat }}, {{ latest_vehicle_data.location.lon }}])
+                        .addTo(this.map);
+                    this.updateMapPopup();
+                    
+                    // Make marker keyboard accessible
+                    this.marker.on('click', () => {
+                        this.marker.openPopup();
+                    });
+                },
+                
+                initCharts() {
+                    const isDark = this.darkMode;
+                    const textColor = isDark ? '#ffffff' : '#1a1a1a';
+                    const gridColor = isDark ? '#4b5563' : '#d1d5db';
+                    
+                    // Common chart options with accessibility
+                    const commonOptions = {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: {
+                                display: false
+                            },
+                            tooltip: {
+                                enabled: true,
+                                backgroundColor: isDark ? '#1f2937' : '#ffffff',
+                                titleColor: textColor,
+                                bodyColor: textColor,
+                                borderColor: isDark ? '#4b5563' : '#d1d5db',
+                                borderWidth: 1
+                            }
+                        },
+                        scales: {
+                            x: {
+                                ticks: { color: textColor },
+                                grid: { color: gridColor, display: false }
+                            },
+                            y: {
+                                ticks: { color: textColor },
+                                grid: { color: gridColor }
+                            }
+                        }
+                    };
+                    
+                    // Battery Chart
+                    this.charts.battery = new Chart(document.getElementById('batteryChart'), {
+                        type: 'line',
+                        data: {
+                            labels: [],
+                            datasets: [{
+                                label: 'Battery Level (%)',
+                                data: [],
+                                borderColor: '#16a34a',
+                                backgroundColor: 'rgba(22, 163, 74, 0.1)',
+                                tension: 0.4,
+                                borderWidth: 3
+                            }]
+                        },
+                        options: {
+                            ...commonOptions,
+                            scales: {
+                                ...commonOptions.scales,
+                                y: {
+                                    ...commonOptions.scales.y,
+                                    min: 0,
+                                    max: 100
+                                }
+                            }
+                        }
+                    });
+                    
+                    // Range Chart
+                    this.charts.range = new Chart(document.getElementById('rangeChart'), {
+                        type: 'line',
+                        data: {
+                            labels: [],
+                            datasets: [{
+                                label: `Range (${this.getDistanceUnit()})`,
+                                data: [],
+                                borderColor: '#0057d1',
+                                backgroundColor: 'rgba(0, 87, 209, 0.1)',
+                                tension: 0.4,
+                                borderWidth: 3
+                            }]
+                        },
+                        options: commonOptions
+                    });
+                    
+                    // Mileage Chart
+                    this.charts.mileage = new Chart(document.getElementById('mileageChart'), {
+                        type: 'line',
+                        data: {
+                            labels: [],
+                            datasets: [{
+                                label: `Total Mileage (${this.getDistanceUnit()})`,
+                                data: [],
+                                borderColor: '#7c3aed',
+                                backgroundColor: 'rgba(124, 58, 237, 0.1)',
+                                tension: 0.4,
+                                borderWidth: 3
+                            }]
+                        },
+                        options: commonOptions
+                    });
+                    
+                    // Daily Usage Chart
+                    this.charts.usage = new Chart(document.getElementById('usageChart'), {
+                        type: 'bar',
+                        data: {
+                            labels: [],
+                            datasets: [{
+                                label: `Daily Usage (${this.getDistanceUnit()})`,
+                                data: [],
+                                backgroundColor: '#d97706',
+                                borderRadius: 8
+                            }]
+                        },
+                        options: {
+                            ...commonOptions,
+                            scales: {
+                                ...commonOptions.scales,
+                                y: {
+                                    ...commonOptions.scales.y,
+                                    beginAtZero: true
+                                }
+                            }
+                        }
+                    });
+                    
+                    // Load chart data
+                    this.loadChartData();
+                },
+                
+                async loadChartData() {
+                    // Fetch historical data and update charts
+                    try {
+                        const response = await fetch('/api/chart-data');
+                        const result = await response.json();
+                        
+                        if (result.success) {
+                            const data = result.data;
+                            
+                            // Update battery chart
+                            this.charts.battery.data.labels = data.timestamps;
+                            this.charts.battery.data.datasets[0].data = data.battery_levels;
+                            this.charts.battery.update();
+                            
+                            // Update range chart with unit conversion
+                            this.charts.range.data.labels = data.timestamps;
+                            this.charts.range.data.datasets[0].data = this.units === 'imperial' 
+                                ? data.ranges.map(r => this.formatDistance(r))
+                                : data.ranges;
+                            this.charts.range.data.datasets[0].label = `Range (${this.getDistanceUnit()})`;
+                            this.charts.range.update();
+                            
+                            // Update mileage chart with unit conversion
+                            this.charts.mileage.data.labels = data.timestamps;
+                            this.charts.mileage.data.datasets[0].data = this.units === 'imperial'
+                                ? data.mileages.map(m => this.formatDistance(m))
+                                : data.mileages;
+                            this.charts.mileage.data.datasets[0].label = `Total Mileage (${this.getDistanceUnit()})`;
+                            this.charts.mileage.update();
+                            
+                            // Update daily usage chart with unit conversion
+                            this.charts.usage.data.labels = data.daily_dates;
+                            this.charts.usage.data.datasets[0].data = this.units === 'imperial'
+                                ? data.daily_usage.map(u => this.formatDistance(u))
+                                : data.daily_usage;
+                            this.charts.usage.data.datasets[0].label = `Daily Usage (${this.getDistanceUnit()})`;
+                            this.charts.usage.update();
+                        }
+                    } catch (error) {
+                        console.error('Failed to load chart data:', error);
+                        this.announceToScreenReader('Failed to load chart data');
+                    }
+                },
+                
+                async updateCountdown() {
+                    try {
+                        const response = await fetch('/api/update-status');
+                        const data = await response.json();
+                        if (data.success) {
+                            this.nextUpdate = data.next_update_in;
+                        }
+                    } catch (error) {
+                        console.error('Failed to update countdown:', error);
+                    }
+                },
+                
+                async refreshData() {
+                    if (this.refreshing) return;
+                    
+                    if (!confirm('This will use one of your daily API calls. Continue?')) {
+                        return;
+                    }
+                    
+                    this.refreshing = true;
+                    this.announceToScreenReader('Refreshing data');
+                    
+                    try {
+                        const response = await fetch('/api/refresh', { method: 'POST' });
+                        const data = await response.json();
+                        
+                        if (data.success) {
+                            // Show success notification
+                            this.showNotification('Data refreshed successfully!', 'success');
+                            setTimeout(() => location.reload(), 1500);
+                        } else {
+                            this.showNotification('Error: ' + data.error, 'error');
+                        }
+                    } catch (error) {
+                        this.showNotification('Failed to refresh data', 'error');
+                    } finally {
+                        this.refreshing = false;
+                    }
+                },
+                
+                async viewRawData() {
+                    try {
+                        const response = await fetch('/api/raw-data');
+                        const data = await response.json();
+                        
+                        if (data.success) {
+                            this.rawDataJson = JSON.stringify(data.data, null, 2);
+                            this.showRawDataModal = true;
+                            this.$nextTick(() => {
+                                document.getElementById('modal-title').focus();
+                            });
+                        } else {
+                            this.showNotification('Error: ' + data.error, 'error');
+                        }
+                    } catch (error) {
+                        this.showNotification('Failed to load raw data', 'error');
+                    }
+                },
+                
+                copyRawData() {
+                    navigator.clipboard.writeText(this.rawDataJson).then(() => {
+                        this.showNotification('JSON copied to clipboard!', 'success');
+                    }).catch(() => {
+                        this.showNotification('Failed to copy', 'error');
+                    });
+                },
+                
+                exportData() {
+                    this.announceToScreenReader('Downloading CSV file');
+                    window.location.href = '/api/export';
+                },
+                
+                async saveSettings() {
+                    try {
+                        const response = await fetch('/api/settings', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(this.settings)
+                        });
+                        
+                        const data = await response.json();
+                        
+                        if (data.success) {
+                            this.showNotification('Settings saved successfully!', 'success');
+                            setTimeout(() => location.reload(), 1500);
+                        } else {
+                            this.showNotification('Error: ' + data.error, 'error');
+                        }
+                    } catch (error) {
+                        this.showNotification('Failed to save settings', 'error');
+                    }
+                },
+                
+                showNotification(message, type = 'info') {
+                    // Announce to screen readers
+                    this.announceToScreenReader(message);
+                    
+                    // Visual notification
+                    const notification = document.createElement('div');
+                    notification.className = `fixed bottom-4 right-4 px-6 py-3 rounded-lg shadow-lg text-white z-50 ${
+                        type === 'success' ? 'bg-green-700' : 
+                        type === 'error' ? 'bg-red-700' : 
+                        'bg-blue-700'
+                    }`;
+                    notification.setAttribute('role', 'alert');
+                    notification.setAttribute('aria-live', 'assertive');
+                    notification.textContent = message;
+                    document.body.appendChild(notification);
+                    
+                    setTimeout(() => {
+                        notification.remove();
+                    }, 3000);
+                },
+                
+                announceToScreenReader(message) {
+                    const liveRegion = document.getElementById('live-region');
+                    liveRegion.textContent = message;
+                    setTimeout(() => {
+                        liveRegion.textContent = '';
+                    }, 1000);
+                }
+            }
+        }
+    </script>
+</body>
+</html>

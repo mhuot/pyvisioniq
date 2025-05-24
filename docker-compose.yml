@@ -1,0 +1,36 @@
+version: '3.8'
+
+services:
+  pyvisioniq:
+    build: .
+    container_name: pyvisioniq
+    ports:
+      - "8001:8001"
+    environment:
+      # Option 1: Pass master password directly (less secure)
+      # - PYVISIONIQ_MASTER_PASSWORD=your_master_password
+      
+      # Option 2: Use Docker secrets (recommended)
+      - PYVISIONIQ_MASTER_PASSWORD_FILE=/run/secrets/pyvisioniq_password
+    
+    volumes:
+      # Persistent data storage
+      - ./data:/app/data
+      - ./.pyvisioniq:/app/.pyvisioniq
+    
+    secrets:
+      - pyvisioniq_password
+    
+    restart: unless-stopped
+    
+    # Health check
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/metrics"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+secrets:
+  pyvisioniq_password:
+    file: ./pyvisioniq_password.txt
