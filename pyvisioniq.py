@@ -3,7 +3,6 @@ import time
 import os
 import io
 import sys
-import json
 from datetime import datetime, timedelta
 from threading import Thread, Lock
 from collections import deque
@@ -54,7 +53,7 @@ if secure_config.exists():
 if not config_loaded:
     print("No secure configuration found, checking environment variables...", file=sys.stderr)
     config_data = secure_config.initialize_from_env()
-    
+
     if all(key in config_data for key in ['username', 'password', 'pin', 'region', 'brand', 'vehicle_id']):
         print("Using configuration from environment variables", file=sys.stderr)
         # Optionally save to secure storage
@@ -166,27 +165,27 @@ def track_api_call(endpoint, success, response_time=None, error=None):
         if api_stats['last_reset'] != datetime.now().date():
             api_stats['daily_calls'] = 0
             api_stats['last_reset'] = datetime.now().date()
-        
+
         api_stats['total_calls'] += 1
         api_stats['daily_calls'] += 1
-        
+
         if success:
             api_stats['success_count'] += 1
             api_calls_total.labels(status='success').inc()
         else:
             api_stats['error_count'] += 1
             api_calls_total.labels(status='error').inc()
-        
+
         if response_time:
             api_stats['response_times'].append(response_time)
             # Convert milliseconds to seconds for Prometheus
             api_response_time.observe(response_time / 1000.0)
-        
+
         # Update rate limit remaining metric
         with settings_lock:
             remaining = runtime_settings['api_limit'] - api_stats['daily_calls']
             api_rate_limit_remaining.set(max(0, remaining))
-        
+
         # Add to recent calls
         api_stats['recent_calls'].append({
             'time': datetime.now().strftime('%H:%M:%S'),
@@ -201,12 +200,12 @@ def fetch_and_update_metrics():
     start_time = time.time()
     vehicle = None
     error_occurred = None
-    
+
     try:
         vm.check_and_refresh_token()
         vm.update_vehicle_with_cached_state(VEHICLE_ID)
         vehicle = vm.get_vehicle(VEHICLE_ID)
-        
+
     except (
         KeyError,
         ConnectionError,
@@ -242,12 +241,12 @@ def fetch_and_update_metrics():
             else:
                 # Vehicle timestamp is timezone-naive
                 current_time = datetime.now()
-            
+
             needs_refresh = vehicle.last_updated_at < current_time - get_interval_between_requests()
         except Exception as e:
             print(f"Error comparing timestamps: {e}, forcing refresh", file=sys.stderr)
             needs_refresh = True
-    
+
     if needs_refresh:
         print("Cached data is stale, force refreshing...", file=sys.stderr)
         refresh_start = time.time()
@@ -283,7 +282,7 @@ def fetch_and_update_metrics():
         latest_vehicle_data['last_update'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         latest_vehicle_data['last_update_time'] = datetime.now()  # Store actual datetime
         latest_vehicle_data['location'] = {'lat': latitude, 'lon': longitude}
-        
+
         # Store raw vehicle data (convert to dict to make it JSON serializable)
         try:
             # Get all available attributes from the vehicle object
@@ -338,22 +337,23 @@ def scheduled_update():
     # Check if we need to wait before first update based on last CSV update
     with vehicle_data_lock:
         last_update_time = latest_vehicle_data.get('last_update_time')
-    
+
     if last_update_time:
         interval = get_interval_between_requests()
         next_update = last_update_time + interval
         wait_time = (next_update - datetime.now()).total_seconds()
-        
+
         if wait_time > 0:
-            print(f"Waiting {wait_time:.0f} seconds until next scheduled update based on last CSV entry", file=sys.stderr)
+            print(f"Waiting {wait_time:.0f} seconds until next scheduled update "
+                  f"based on last CSV entry", file=sys.stderr)
             time.sleep(wait_time)
-    
+
     while True:
         with settings_lock:
             if not runtime_settings['update_enabled']:
                 time.sleep(60)  # Check every minute if updates are re-enabled
                 continue
-        
+
         now = datetime.now()
         interval = get_interval_between_requests()
         next_update = (now + interval).replace(second=0, microsecond=0)
@@ -366,7 +366,7 @@ def rangeplot():
     # Check if CSV file exists
     if not os.path.exists(CSV_FILE):
         plt.figure(figsize=(10, 6))
-        plt.text(0.5, 0.5, 'No data available yet\nTrigger a data refresh first', 
+        plt.text(0.5, 0.5, 'No data available yet\nTrigger a data refresh first',
                 ha='center', va='center', fontsize=16, color='gray')
         plt.xlim(0, 1)
         plt.ylim(0, 1)
@@ -374,7 +374,7 @@ def rangeplot():
         fig = plt.gcf()
         plt.close()
         return fig
-    
+
     data = pd.read_csv(CSV_FILE)
     data['Timestamp'] = pd.to_datetime(data['Timestamp'], errors='coerce')
     data.set_index('Timestamp', inplace=True)
@@ -399,7 +399,7 @@ def chargeplot():
     # Check if CSV file exists
     if not os.path.exists(CSV_FILE):
         plt.figure(figsize=(10, 6))
-        plt.text(0.5, 0.5, 'No data available yet\nTrigger a data refresh first', 
+        plt.text(0.5, 0.5, 'No data available yet\nTrigger a data refresh first',
                 ha='center', va='center', fontsize=16, color='gray')
         plt.xlim(0, 1)
         plt.ylim(0, 1)
@@ -407,11 +407,11 @@ def chargeplot():
         fig = plt.gcf()
         plt.close()
         return fig
-    
+
     data = pd.read_csv(CSV_FILE)
     data['Timestamp'] = pd.to_datetime(data['Timestamp'], errors='coerce')
     data.set_index('Timestamp', inplace=True)
-    
+
     plt.figure(figsize=(10, 6))
     plt.plot(data.index, data['Charging Level'], label='Charging Level', marker='o', linestyle='-')
     plt.xlabel('Timestamp')
@@ -432,7 +432,7 @@ def mileageplot():
     # Check if CSV file exists
     if not os.path.exists(CSV_FILE):
         plt.figure(figsize=(10, 6))
-        plt.text(0.5, 0.5, 'No data available yet\nTrigger a data refresh first', 
+        plt.text(0.5, 0.5, 'No data available yet\nTrigger a data refresh first',
                 ha='center', va='center', fontsize=16, color='gray')
         plt.xlim(0, 1)
         plt.ylim(0, 1)
@@ -440,11 +440,11 @@ def mileageplot():
         fig = plt.gcf()
         plt.close()
         return fig
-    
+
     data = pd.read_csv(CSV_FILE)
     data['Timestamp'] = pd.to_datetime(data['Timestamp'], errors='coerce')
     data.set_index('Timestamp', inplace=True)
-    
+
     plt.figure(figsize=(10,6))
     plt.plot(data.index, data['Mileage'], label='Mileage', marker='x', linestyle='-')
     plt.xlabel('Timestamp')
@@ -465,15 +465,16 @@ def mapit():
     # Check if CSV file exists
     if not os.path.exists(CSV_FILE):
         # Return a simple message if no data
-        return "<p style='text-align: center; padding: 2rem; color: #666;'>No location data available yet. Trigger a data refresh first.</p>"
-    
+        return ("<p style='text-align: center; padding: 2rem; color: #666;'>"
+                "No location data available yet. Trigger a data refresh first.</p>")
+
     try:
         data = pd.read_csv(CSV_FILE)
-        
+
         # Check if we have location data
         if data.empty or 'Latitude' not in data.columns or 'Longitude' not in data.columns:
             return "<p style='text-align: center; padding: 2rem; color: #666;'>No location data available.</p>"
-        
+
         map_center = [data['Latitude'].mean(), data['Longitude'].mean()]
         my_map = folium.Map(location=map_center, zoom_start=12)
 
@@ -546,12 +547,13 @@ def dashboard():
     '''Enhanced dashboard with API stats and controls'''
     with vehicle_data_lock:
         vehicle_data = latest_vehicle_data.copy()
-    
+
     with api_stats_lock:
         stats = api_stats.copy()
-        avg_response_time = sum(stats['response_times']) / len(stats['response_times']) if stats['response_times'] else 0
+        avg_response_time = (sum(stats['response_times']) / len(stats['response_times'])
+                             if stats['response_times'] else 0)
         success_rate = (stats['success_count'] / stats['total_calls'] * 100) if stats['total_calls'] > 0 else 100
-        
+
         # Determine API status
         if stats['daily_calls'] >= runtime_settings['api_limit']:
             api_status = 'warning'
@@ -559,27 +561,27 @@ def dashboard():
             api_status = 'error'
         else:
             api_status = 'healthy'
-    
+
     with settings_lock:
         settings = runtime_settings.copy()
-    
+
     # Calculate next update time
     if settings['update_enabled']:
         interval = get_interval_between_requests()
         last_update_time = vehicle_data.get('last_update_time')
-        
+
         if last_update_time:
             # Calculate actual next update based on last update
             next_update = last_update_time + interval
             time_until_next = next_update - datetime.now()
-            
+
             if time_until_next.total_seconds() > 0:
                 # Format time remaining
                 total_seconds = int(time_until_next.total_seconds())
                 hours = total_seconds // 3600
                 minutes = (total_seconds % 3600) // 60
                 seconds = total_seconds % 60
-                
+
                 if hours > 0:
                     next_update_in = f"{hours}h {minutes}m"
                 elif minutes > 0:
@@ -593,20 +595,20 @@ def dashboard():
             next_update_in = f"{int(interval.total_seconds() / 60)} min"
     else:
         next_update_in = "Disabled"
-    
+
     # Generate map HTML
     try:
         map_html = mapit()
     except:
         map_html = "<p>No location data available</p>"
-    
+
     return render_template('dashboard.html',
         # Vehicle data
         battery_level=vehicle_data['battery_level'],
         ev_range=vehicle_data['ev_range'],
         mileage=vehicle_data['mileage'],
         last_update=vehicle_data['last_update'],
-        
+
         # API stats
         api_status=api_status,
         api_calls_today=stats['daily_calls'],
@@ -617,13 +619,13 @@ def dashboard():
         avg_response_time=f"{avg_response_time:.0f}",
         next_update_in=next_update_in,
         recent_api_calls=list(stats['recent_calls'])[-10:],
-        
+
         # Settings
         update_enabled=settings['update_enabled'],
         csv_path=CSV_FILE,
         region=REGION,
         brand=BRAND,
-        
+
         # Map
         map_html=map_html
     )
@@ -637,11 +639,11 @@ def api_refresh():
         with api_stats_lock:
             if api_stats['daily_calls'] >= runtime_settings['api_limit']:
                 return jsonify({'success': False, 'error': 'Daily API limit reached'})
-        
+
         # Perform refresh in a thread to avoid blocking
         thread = Thread(target=fetch_and_update_metrics)
         thread.start()
-        
+
         return jsonify({'success': True, 'message': 'Refresh initiated'})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
@@ -651,18 +653,18 @@ def api_settings():
     '''Update runtime settings'''
     try:
         data = request.json
-        
+
         with settings_lock:
             if 'update_enabled' in data:
                 runtime_settings['update_enabled'] = data['update_enabled'] == 'true'
-            
+
             if 'api_limit' in data:
                 new_limit = int(data['api_limit'])
                 if 1 <= new_limit <= 100:
                     runtime_settings['api_limit'] = new_limit
                 else:
                     return jsonify({'success': False, 'error': 'API limit must be between 1 and 100'})
-        
+
         return jsonify({'success': True, 'message': 'Settings updated'})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
@@ -682,7 +684,7 @@ def api_stats_endpoint():
     '''Get current API statistics'''
     with api_stats_lock:
         stats = api_stats.copy()
-    
+
     return jsonify({
         'total_calls': stats['total_calls'],
         'daily_calls': stats['daily_calls'],
@@ -696,10 +698,10 @@ def api_raw_data():
     '''Get raw vehicle data from the API'''
     with vehicle_data_lock:
         raw_data = latest_vehicle_data.get('raw_data')
-    
+
     if raw_data is None:
         return jsonify({'success': False, 'error': 'No data available yet. Please trigger a data refresh first.'})
-    
+
     return jsonify({
         'success': True,
         'last_update': latest_vehicle_data.get('last_update'),
@@ -711,25 +713,25 @@ def api_update_status():
     '''Get current update status and next update time'''
     with vehicle_data_lock:
         last_update_time = latest_vehicle_data.get('last_update_time')
-    
+
     with settings_lock:
         update_enabled = runtime_settings['update_enabled']
-    
+
     if update_enabled:
         interval = get_interval_between_requests()
-        
+
         if last_update_time:
             # Calculate actual next update based on last update
             next_update = last_update_time + interval
             time_until_next = next_update - datetime.now()
-            
+
             if time_until_next.total_seconds() > 0:
                 # Format time remaining
                 total_seconds = int(time_until_next.total_seconds())
                 hours = total_seconds // 3600
                 minutes = (total_seconds % 3600) // 60
                 seconds = total_seconds % 60
-                
+
                 if hours > 0:
                     next_update_in = f"{hours}h {minutes}m"
                 elif minutes > 0:
@@ -743,7 +745,7 @@ def api_update_status():
             next_update_in = f"{int(interval.total_seconds() / 60)} min"
     else:
         next_update_in = "Disabled"
-    
+
     return jsonify({
         'success': True,
         'next_update_in': next_update_in,
@@ -763,32 +765,32 @@ def api_config():
             else:
                 safe_config[key] = '***'  # Mask sensitive values
         return jsonify({'success': True, 'config': safe_config})
-    
+
     elif request.method == 'POST':
         try:
             updates = request.json
-            
+
             # Don't allow changing sensitive data through API without authentication
             sensitive_keys = {'password', 'pin', 'username'}
             if any(key in updates for key in sensitive_keys):
                 return jsonify({'success': False, 'error': 'Cannot change sensitive data through API'})
-            
+
             # Update configuration in memory
             for key, value in updates.items():
                 if key in config_data:
                     config_data[key] = value
                     secure_config.set(key, value)
-            
+
             # Save to secure storage
             secure_config.save_config(secure_config.get_all())
-            
+
             # Update runtime settings if applicable
             with settings_lock:
                 if 'api_limit' in updates:
                     runtime_settings['api_limit'] = int(updates['api_limit'])
                 if 'auto_update' in updates:
                     runtime_settings['update_enabled'] = bool(updates['auto_update'])
-            
+
             # Update global variables if needed
             global APILIMIT, UPDATE, PORT, HOST, CSV_FILE
             if 'api_limit' in updates:
@@ -801,7 +803,7 @@ def api_config():
                 HOST = updates['host']
             if 'csv_file' in updates:
                 CSV_FILE = updates['csv_file']
-            
+
             return jsonify({'success': True, 'message': 'Configuration updated and saved securely'})
         except Exception as e:
             return jsonify({'success': False, 'error': str(e)})
@@ -812,7 +814,7 @@ if __name__ == "__main__":
         with settings_lock:
             remaining = runtime_settings['api_limit'] - api_stats['daily_calls']
             api_rate_limit_remaining.set(max(0, remaining))
-    
+
     # Load last update time from CSV if it exists
     if os.path.exists(CSV_FILE):
         try:
@@ -821,14 +823,14 @@ if __name__ == "__main__":
                 # Get the most recent timestamp
                 data['Timestamp'] = pd.to_datetime(data['Timestamp'], errors='coerce')
                 last_timestamp = data['Timestamp'].max()
-                
+
                 if pd.notna(last_timestamp):
                     with vehicle_data_lock:
                         latest_vehicle_data['last_update_time'] = last_timestamp.to_pydatetime()
                         latest_vehicle_data['last_update'] = last_timestamp.strftime('%Y-%m-%d %H:%M:%S')
-                    
+
                     print(f"Loaded last update time from CSV: {last_timestamp}", file=sys.stderr)
-                    
+
                     # Also load the latest vehicle data
                     last_row = data.loc[data['Timestamp'].idxmax()]
                     with vehicle_data_lock:
@@ -842,7 +844,7 @@ if __name__ == "__main__":
                         }
         except Exception as e:
             print(f"Error loading last update from CSV: {e}", file=sys.stderr)
-    
+
     if UPDATE:
         # Start the scheduled update in a separate thread
         update_thread = Thread(target=scheduled_update)
