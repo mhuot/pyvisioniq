@@ -5,7 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>PyVisionic - Vehicle Data Dashboard</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
-    <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/luxon@3.4.4/build/global/luxon.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-luxon@1.3.1/dist/chartjs-adapter-luxon.umd.min.js"></script>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 </head>
@@ -28,8 +30,9 @@
             <h2 id="status-heading">Current Status</h2>
             <div class="status-grid" role="list">
                 <div class="status-card" role="listitem">
-                    <h3>Battery Level</h3>
+                    <h3>Battery Level <span class="charging-indicator" id="charging-indicator" style="display: none;">⚡ Charging</span></h3>
                     <p class="status-value" id="battery-level">--</p>
+                    <p class="charging-rate" id="charging-rate" style="display: none;">-- kW</p>
                 </div>
                 <div class="status-card" role="listitem">
                     <h3>Range</h3>
@@ -75,12 +78,16 @@
                 
         <section class="chart-section" aria-labelledby="chart-heading">
             <h2 id="chart-heading">Battery & Temperature History</h2>
-            <div id="battery-chart" class="chart-container" role="img" aria-label="Battery level and temperature chart"></div>
+            <div class="chart-container">
+                <canvas id="battery-chart" role="img" aria-label="Battery level and temperature chart"></canvas>
+            </div>
         </section>
 
         <section class="chart-section" aria-labelledby="energy-chart-heading">
             <h2 id="energy-chart-heading">Energy Usage Breakdown</h2>
-            <div id="energy-chart" class="chart-container" role="img" aria-label="Energy consumption breakdown chart"></div>
+            <div class="chart-container">
+                <canvas id="energy-chart" role="img" aria-label="Energy consumption breakdown chart"></canvas>
+            </div>
         </section>
 
 
@@ -158,7 +165,7 @@
         <section class="collection-status" aria-labelledby="collection-heading">
             <h2 id="collection-heading">Data Collection Status</h2>
             <div class="collection-info">
-                <p>API Calls Today: <span id="api-calls-today">--</span> / 30</p>
+                <p>API Calls Today: <span id="api-calls-today">--</span></p>
                 <p>Next Collection: <span id="next-collection">--</span></p>
             </div>
         </section>
@@ -167,6 +174,21 @@
     <footer>
         <p>&copy; 2024 PyVisionic. Vehicle data visualization for Hyundai/Kia Connect.</p>
     </footer>
+
+    <!-- Trip Detail Modal -->
+    <div id="tripModal" class="modal">
+        <div class="modal-content">
+            <span class="modal-close">&times;</span>
+            <h2 id="modal-title">Trip Details</h2>
+            <div id="modal-body">
+                <div class="trip-stats-grid" id="trip-stats"></div>
+                <div class="chart-container" style="height: 300px; margin-top: 20px;">
+                    <canvas id="trip-energy-chart"></canvas>
+                </div>
+                <div id="trip-map" style="height: 300px; margin-top: 20px;"></div>
+            </div>
+        </div>
+    </div>
 
     <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
 </body>

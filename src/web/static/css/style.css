@@ -189,6 +189,34 @@ h2 {
     color: var(--primary-color);
 }
 
+.charging-indicator {
+    display: inline-block;
+    font-size: 0.75rem;
+    color: var(--success-color);
+    font-weight: 600;
+    text-transform: none;
+    letter-spacing: normal;
+    margin-left: 0.5rem;
+    animation: pulse 2s infinite;
+}
+
+.charging-rate {
+    font-size: 1.2rem;
+    color: var(--success-color);
+    font-weight: 600;
+    margin-top: 0.5rem;
+    animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+    0%, 100% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.6;
+    }
+}
+
 .last-updated {
     text-align: right;
     color: var(--text-light);
@@ -582,4 +610,28 @@ a:focus {
     th, td {
         padding: 0.5rem;
     }
+}
+/* Additional Chart.js mobile optimizations */
+@media (max-width: 768px) {
+    .chart-container {
+        height: 300px \!important;
+        padding: 1rem;
+    }
+    
+    /* Ensure charts are responsive */
+    .chart-container canvas {
+        max-height: 280px \!important;
+    }
+    
+    /* Prevent overlapping on doughnut charts */
+    #energy-chart {
+        max-width: 90%;
+        margin: 0 auto;
+    }
+}
+
+/* Force Chart.js to respect container size */
+canvas {
+    max-width: 100% \!important;
+    height: auto \!important;
 }

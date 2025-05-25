@@ -3,6 +3,10 @@ let locationsMap = null;
 let tripMap = null;
 let mapMarkers = [];
 
+// Chart instances
+let batteryChart = null;
+let energyChart = null;
+
 document.addEventListener('DOMContentLoaded', function() {
     const refreshBtn = document.getElementById('refresh-btn');
     const unitsToggle = document.getElementById('units-toggle');
@@ -21,87 +25,105 @@ document.addEventListener('DOMContentLoaded', function() {
         kmToMiles: (km) => km * 0.621371,
         milesToKm: (miles) => miles * 1.60934,
         celsiusToFahrenheit: (c) => (c * 9/5) + 32,
-        fahrenheitToCelsius: (f) => (f - 32) * 5/9
+        fahrenheitToCelsius: (f) => (f - 32) * 5/9,
+        whPerKmToMiPerKwh: (whPerKm) => 1000 / (whPerKm * 1.60934)
     };
     
-    // Store current data for re-rendering
-    let currentData = {
-        battery_level: null,
-        range: null,
-        temperature: null,
-        odometer: null,
-        trips: [],
-        batteryHistory: null
-    };
-    
-    // Current units state
     let currentUnits = localStorage.getItem('units') || 'metric';
-    updateUnitsButton();
+    let currentTrips = [];
+    let currentData = {
+        batteryHistory: null,
+        trips: null
+    };
     
-    // Pagination state
-    let currentPage = 1;
-    let perPage = 10;
-    let totalPages = 1;
-    let filters = {};
+    // Set initial units
+    updateUnitsDisplay();
     
-    // Handle units toggle
+    function updateUnitsDisplay() {
+        unitsText.textContent = currentUnits === 'metric' ? 'km' : 'mi';
+        unitsToggle.classList.toggle('imperial', currentUnits === 'imperial');
+    }
+    
     unitsToggle.addEventListener('click', function() {
         currentUnits = currentUnits === 'metric' ? 'imperial' : 'metric';
         localStorage.setItem('units', currentUnits);
-        updateUnitsButton();
-        updateDisplay();
-    });
-    
-    function updateUnitsButton() {
-        unitsText.textContent = currentUnits === 'metric' ? 'km' : 'mi';
-    }
-    
-    // Update display based on current units
-    function updateDisplay() {
-        const units = currentUnits;
+        updateUnitsDisplay();
         
-        if (currentData.battery_level !== null) {
-            batteryLevel.textContent = currentData.battery_level + '%';
-        }
-        
-        if (currentData.range !== null) {
-            const rangeValue = units === 'imperial' 
-                ? Math.round(conversions.kmToMiles(currentData.range))
-                : currentData.range;
-            const rangeUnit = units === 'imperial' ? 'mi' : 'km';
-            range.textContent = rangeValue + ' ' + rangeUnit;
-        }
-        
-        if (currentData.temperature !== null) {
-            const tempValue = units === 'imperial'
-                ? Math.round(conversions.celsiusToFahrenheit(currentData.temperature))
-                : currentData.temperature;
-            const tempUnit = units === 'imperial' ? '°F' : '°C';
-            temperature.textContent = tempValue + tempUnit;
-        }
-        
-        if (currentData.odometer !== null) {
-            const odometerValue = units === 'imperial'
-                ? Math.round(conversions.kmToMiles(currentData.odometer))
-                : currentData.odometer;
-            const distanceUnit = units === 'imperial' ? 'mi' : 'km';
-            odometer.textContent = formatNumber(odometerValue) + ' ' + distanceUnit;
-        }
-        
-        if (currentData.trips.length > 0) {
+        // Re-render everything with new units
+        loadCurrentStatus();
+        if (currentData.trips) {
             updateTripsTable(currentData.trips);
-            updateEnergyChart(currentData.trips);
         }
-        
         if (currentData.batteryHistory) {
             updateBatteryChart(currentData.batteryHistory);
         }
+    });
+    
+    async function loadCurrentStatus() {
+        try {
+            const response = await fetch('/api/current-status');
+            const data = await response.json();
+            
+            if (data.battery_level !== null && batteryLevel) {
+                batteryLevel.textContent = data.battery_level + '%';
+                const batteryIcon = document.querySelector('.battery-icon');
+                if (batteryIcon) {
+                    batteryIcon.className = 'battery-icon';
+                    if (data.battery_level > 80) batteryIcon.classList.add('high');
+                    else if (data.battery_level > 50) batteryIcon.classList.add('medium');
+                    else if (data.battery_level > 20) batteryIcon.classList.add('low');
+                    else batteryIcon.classList.add('critical');
+                }
+            }
+            
+            // Handle charging indicator and rate
+            const chargingIndicator = document.getElementById('charging-indicator');
+            const chargingRate = document.getElementById('charging-rate');
+            if (chargingIndicator && chargingRate) {
+                if (data.is_charging) {
+                    chargingIndicator.style.display = 'inline';
+                    chargingRate.style.display = 'block';
+                    if (data.charging_power !== null && data.charging_power !== undefined) {
+                        chargingRate.textContent = `Charging at ${data.charging_power} kW`;
+                    } else {
+                        chargingRate.textContent = 'Charging';
+                    }
+                } else {
+                    chargingIndicator.style.display = 'none';
+                    chargingRate.style.display = 'none';
+                }
+            }
+            
+            if (data.range !== null && range) {
+                const rangeValue = currentUnits === 'metric' ? 
+                    data.range : conversions.kmToMiles(data.range);
+                range.textContent = Math.round(rangeValue) + (currentUnits === 'metric' ? ' km' : ' mi');
+            }
+            
+            if (data.temperature !== null && temperature) {
+                const tempValue = currentUnits === 'metric' ? 
+                    data.temperature : conversions.celsiusToFahrenheit(data.temperature);
+                temperature.textContent = Math.round(tempValue) + '°' + (currentUnits === 'metric' ? 'C' : 'F');
+            }
+            
+            if (data.odometer !== null && odometer) {
+                const odoValue = currentUnits === 'metric' ? 
+                    data.odometer : conversions.kmToMiles(data.odometer);
+                odometer.textContent = Math.round(odoValue).toLocaleString() + (currentUnits === 'metric' ? ' km' : ' mi');
+            }
+            
+            if (data.last_updated && lastUpdated) {
+                const date = new Date(data.last_updated);
+                lastUpdated.textContent = date.toLocaleString();
+            }
+        } catch (error) {
+            console.error('Error loading current status:', error);
+        }
     }
-
+    
     // Load initial data
     loadCurrentStatus();
     loadBatteryHistory();
-    loadTrips();
     loadCollectionStatus();
     loadEfficiencyStats();
     
@@ -118,93 +140,196 @@ document.addEventListener('DOMContentLoaded', function() {
             const response = await fetch('/api/refresh');
             const data = await response.json();
             
-            if (data.status === 'success') {
+            if (response.ok) {
+                showNotification(data.message || 'Data refreshed successfully', 'success');
                 // Reload all data
-                await Promise.all([
-                    loadCurrentStatus(),
-                    loadBatteryHistory(),
-                    loadTrips()
-                ]);
-                showNotification('Data refreshed successfully', 'success');
+                loadCurrentStatus();
+                loadBatteryHistory();
+                loadTripsWithPagination();
+                loadEfficiencyStats();
+                loadLocationsMap();
             } else {
-                showNotification('Failed to refresh data: ' + data.message, 'error');
+                // Show specific error message with appropriate styling
+                const errorType = data.error_type || 'error';
+                const notificationType = errorType === 'rate_limit' ? 'warning' : 'error';
+                showNotification(data.message || 'Failed to refresh data', notificationType);
+                
+                // Log additional error details for debugging
+                console.error('Refresh error:', data);
             }
         } catch (error) {
-            showNotification('Error refreshing data: ' + error.message, 'error');
+            console.error('Network error:', error);
+            showNotification('Network error: Unable to connect to server', 'error');
         } finally {
             refreshBtn.disabled = false;
             refreshBtn.textContent = 'Refresh Data';
         }
     });
-
-    async function loadCurrentStatus() {
-        try {
-            const response = await fetch('/api/current-status');
-            const data = await response.json();
-            
-            if (data.battery_level !== undefined) {
-                // Store the raw data
-                currentData.battery_level = data.battery_level;
-                currentData.range = data.range;
-                currentData.temperature = data.temperature;
-                currentData.odometer = data.odometer;
-                
-                // Update display with units conversion
-                updateDisplay();
-                
-                lastUpdated.textContent = data.last_updated ? formatDateTime(data.last_updated) : 'Never';
-            }
-        } catch (error) {
-            console.error('Error loading current status:', error);
-        }
-    }
-
+    
     async function loadBatteryHistory() {
         try {
             const response = await fetch('/api/battery-history');
             const data = await response.json();
-            
-            if (data.chart) {
-                currentData.batteryHistory = data;
-                updateBatteryChart(data);
-            }
+            currentData.batteryHistory = data;
+            updateBatteryChart(data);
         } catch (error) {
             console.error('Error loading battery history:', error);
         }
     }
     
+    async function loadTrips() {
+        try {
+            const response = await fetch('/api/trips');
+            const data = await response.json();
+            const trips = data.trips || data; // Handle both paginated and non-paginated responses
+            currentTrips = trips;
+            currentData.trips = trips;
+            updateTripsTable(trips);
+            updateEnergyChart(trips);
+        } catch (error) {
+            console.error('Error loading trips:', error);
+        }
+    }
+    
     function updateBatteryChart(data) {
-        if (!data.chart) return;
+        if (!data.data || data.data.length === 0) return;
         
-        // data.chart is already an object, not a JSON string
-        const fig = data.chart;
+        const ctx = chartDiv.getContext('2d');
         const units = currentUnits;
         
-        // Ensure all traces have connectgaps set to false to show gaps for null values
-        if (fig.data) {
-            fig.data.forEach(trace => {
-                if (trace.type === 'scatter' || trace.type === 'line' || !trace.type) {
-                    trace.connectgaps = false;
+        // Prepare data
+        const chartData = data.data.map(d => ({
+            x: new Date(d.timestamp),
+            battery: d.battery_level,
+            temperature: d.temperature !== null && units === 'imperial' ? 
+                conversions.celsiusToFahrenheit(d.temperature) : d.temperature
+        }));
+        
+        // Update existing chart or create new one
+        if (batteryChart) {
+            // Update existing chart data
+            batteryChart.data.datasets[0].data = chartData.map(d => ({x: d.x, y: d.battery}));
+            batteryChart.data.datasets[1].data = chartData.map(d => ({x: d.x, y: d.temperature}));
+            batteryChart.options.scales.y1.title.text = `Temperature (°${units === 'imperial' ? 'F' : 'C'})`;
+            batteryChart.update('none'); // Update without animation for performance
+            return;
+        }
+        
+        // Create new chart only if it doesn't exist
+        batteryChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                datasets: [{
+                    label: 'Battery Level (%)',
+                    data: chartData.map(d => ({x: d.x, y: d.battery})),
+                    borderColor: '#3498db',
+                    backgroundColor: 'rgba(52, 152, 219, 0.1)',
+                    yAxisID: 'y',
+                    spanGaps: false,  // This creates gaps for null values
+                    tension: 0.1,
+                    pointRadius: 3,
+                    pointHoverRadius: 5
+                }, {
+                    label: `Temperature (°${units === 'imperial' ? 'F' : 'C'})`,
+                    data: chartData.map(d => ({x: d.x, y: d.temperature})),
+                    borderColor: '#e74c3c',
+                    backgroundColor: 'rgba(231, 76, 60, 0.1)',
+                    yAxisID: 'y1',
+                    spanGaps: false,
+                    tension: 0.1,
+                    pointRadius: 3,
+                    pointHoverRadius: 5
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: {
+                    mode: 'index',
+                    intersect: false,
+                },
+                plugins: {
+                    title: {
+                        display: true,
+                        text: 'Battery Level vs Temperature',
+                        font: { size: 16 }
+                    },
+                    legend: {
+                        display: true,
+                        position: 'top',
+                        labels: {
+                            usePointStyle: true,
+                            padding: 15
+                        }
+                    },
+                    tooltip: {
+                        callbacks: {
+                            label: function(context) {
+                                let label = context.dataset.label || '';
+                                if (label) {
+                                    label += ': ';
+                                }
+                                if (context.parsed.y !== null) {
+                                    label += context.parsed.y.toFixed(1);
+                                    if (context.datasetIndex === 0) label += '%';
+                                    else label += '°';
+                                }
+                                return label;
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        type: 'time',
+                        time: {
+                            tooltipFormat: 'MMM DD, HH:mm',
+                            displayFormats: {
+                                hour: 'HH:mm',
+                                day: 'MMM DD'
+                            }
+                        },
+                        title: {
+                            display: true,
+                            text: 'Time'
+                        },
+                        grid: {
+                            display: true,
+                            drawOnChartArea: true,
+                            color: 'rgba(0, 0, 0, 0.1)'
+                        }
+                    },
+                    y: {
+                        type: 'linear',
+                        display: true,
+                        position: 'left',
+                        title: {
+                            display: true,
+                            text: 'Battery Level (%)'
+                        },
+                        min: 0,
+                        max: 100,
+                        grid: {
+                            display: true,
+                            drawOnChartArea: true,
+                            color: 'rgba(0, 0, 0, 0.1)'
+                        }
+                    },
+                    y1: {
+                        type: 'linear',
+                        display: true,
+                        position: 'right',
+                        title: {
+                            display: true,
+                            text: `Temperature (°${units === 'imperial' ? 'F' : 'C'})`
+                        },
+                        grid: {
+                            drawOnChartArea: false,
+                        }
+                    }
                 }
-            });
-        }
-        
-        // Update temperature axis if needed
-        if (units === 'imperial' && fig.data.length > 1) {
-            // Convert temperature data to Fahrenheit
-            const tempTrace = fig.data[1];
-            if (tempTrace && tempTrace.y) {
-                tempTrace.y = tempTrace.y.map(temp => 
-                    temp !== null ? conversions.celsiusToFahrenheit(temp) : null
-                );
             }
-            // Update y-axis label
-            if (fig.layout.yaxis2) {
-                fig.layout.yaxis2.title = 'Temperature (°F)';
-            }
-        }
-        
-        Plotly.newPlot(chartDiv, fig.data, fig.layout, {responsive: true});
+        });
     }
 
     function updateEnergyChart(trips) {
@@ -213,7 +338,7 @@ document.addEventListener('DOMContentLoaded', function() {
             return;
         }
 
-        // Calculate total energy consumption by category
+        // Aggregate energy data from all trips
         const energyData = {
             drivetrain: 0,
             climate: 0,
@@ -239,213 +364,244 @@ document.addEventListener('DOMContentLoaded', function() {
             return;
         }
 
-        // Create pie chart for energy consumption breakdown
-        const consumptionData = [{
-            values: [energyData.drivetrain, energyData.climate, energyData.accessories, energyData.battery_care],
-            labels: ['Drivetrain', 'Climate', 'Accessories', 'Battery Care'],
-            type: 'pie',
-            hole: 0.3,
-            marker: {
-                colors: ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728']
-            },
-            textinfo: 'label+percent',
-            textposition: 'outside'
-        }];
+        const ctx = energyChartDiv.getContext('2d');
+        
+        // Update existing chart or create new one
+        if (energyChart) {
+            // Update existing chart data
+            energyChart.data.datasets[0].data = [
+                energyData.drivetrain,
+                energyData.climate,
+                energyData.accessories,
+                energyData.battery_care
+            ];
+            energyChart.options.plugins.title.text = `Energy Consumption Breakdown (${tripCount} trips)`;
+            energyChart.update('none'); // Update without animation for performance
+            return;
+        }
 
-        const layout = {
-            title: {
-                text: `Energy Consumption Breakdown (${tripCount} trips)`,
-                font: { size: 16 }
+        // Create doughnut chart only if it doesn't exist
+        energyChart = new Chart(ctx, {
+            type: 'doughnut',
+            data: {
+                labels: ['Drivetrain', 'Climate', 'Accessories', 'Battery Care'],
+                datasets: [{
+                    data: [
+                        energyData.drivetrain,
+                        energyData.climate,
+                        energyData.accessories,
+                        energyData.battery_care
+                    ],
+                    backgroundColor: [
+                        'rgba(52, 152, 219, 0.8)',   // Blue
+                        'rgba(255, 127, 14, 0.8)',   // Orange
+                        'rgba(44, 160, 44, 0.8)',    // Green
+                        'rgba(214, 39, 40, 0.8)'     // Red
+                    ],
+                    borderColor: [
+                        'rgba(52, 152, 219, 1)',
+                        'rgba(255, 127, 14, 1)',
+                        'rgba(44, 160, 44, 1)',
+                        'rgba(214, 39, 40, 1)'
+                    ],
+                    borderWidth: 2
+                }]
             },
-            annotations: [{
-                font: { size: 14 },
-                showarrow: false,
-                text: `${Math.round(energyData.regenerated)} Wh<br>Regenerated`,
-                x: 0.5,
-                y: 0.5
-            }],
-            showlegend: true,
-            margin: { t: 50, b: 50, l: 50, r: 50 }
-        };
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    title: {
+                        display: true,
+                        text: `Energy Consumption Breakdown (${tripCount} trips)`,
+                        font: { size: 16 }
+                    },
+                    legend: {
+                        position: 'bottom',
+                        labels: {
+                            padding: 15,
+                            generateLabels: function(chart) {
+                                const data = chart.data;
+                                if (data.labels.length && data.datasets.length) {
+                                    const dataset = data.datasets[0];
+                                    const total = dataset.data.reduce((a, b) => a + b, 0);
+                                    return data.labels.map((label, i) => {
+                                        const value = dataset.data[i];
+                                        const percentage = total > 0 ? ((value / total) * 100).toFixed(1) : 0;
+                                        return {
+                                            text: `${label}: ${percentage}%`,
+                                            fillStyle: dataset.backgroundColor[i],
+                                            strokeStyle: dataset.borderColor[i],
+                                            lineWidth: dataset.borderWidth,
+                                            hidden: false,
+                                            index: i
+                                        };
+                                    });
+                                }
+                                return [];
+                            }
+                        }
+                    },
+                    tooltip: {
+                        callbacks: {
+                            label: function(context) {
+                                const label = context.label || '';
+                                const value = context.parsed;
+                                const total = context.dataset.data.reduce((a, b) => a + b, 0);
+                                const percentage = total > 0 ? ((value / total) * 100).toFixed(1) : 0;
+                                return `${label}: ${value} Wh (${percentage}%)`;
+                            }
+                        }
+                    }
+                },
+                elements: {}
+            }
+        });
 
-        Plotly.newPlot(energyChartDiv, consumptionData, layout, {responsive: true});
+        // Plugin to draw center text
+        Chart.register({
+            id: 'centerText',
+            beforeDraw: function(chart) {
+                if (chart.config.options.elements && chart.config.options.elements.center) {
+                    const ctx = chart.ctx;
+                    const centerConfig = chart.config.options.elements.center;
+                    
+                    ctx.save();
+                    ctx.font = '14px ' + centerConfig.fontStyle;
+                    ctx.fillStyle = centerConfig.color;
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    
+                    const centerX = (chart.chartArea.left + chart.chartArea.right) / 2;
+                    const centerY = (chart.chartArea.top + chart.chartArea.bottom) / 2;
+                    
+                    ctx.fillText(centerConfig.text, centerX, centerY - 10);
+                    
+                    ctx.font = '12px ' + centerConfig.fontStyle;
+                    ctx.fillStyle = '#666';
+                    ctx.fillText(centerConfig.subText, centerX, centerY + 10);
+                    
+                    ctx.restore();
+                }
+            }
+        });
     }
 
-
-    async function loadTrips() {
-        try {
-            // Build query parameters
-            const params = new URLSearchParams({
-                page: currentPage,
-                per_page: perPage,
-                ...filters
+    function updateTripsTable(trips) {
+        tripsTable.innerHTML = '';
+        
+        trips.forEach((trip, index) => {
+            const row = document.createElement('tr');
+            row.className = 'clickable';
+            
+            const date = new Date(trip.date);
+            const distance = currentUnits === 'metric' ? 
+                trip.distance : conversions.kmToMiles(trip.distance);
+            const efficiency = trip.total_consumed && trip.distance > 0 ? 
+                trip.total_consumed / trip.distance : null;
+            const efficiencyDisplay = efficiency ? 
+                (currentUnits === 'metric' ? 
+                    `${Math.round(efficiency)} Wh/km` : 
+                    `${conversions.whPerKmToMiPerKwh(efficiency).toFixed(1)} mi/kWh`) : '-';
+            
+            row.innerHTML = `
+                <td>${formatDate(date)}</td>
+                <td>${distance.toFixed(1)} ${currentUnits === 'metric' ? 'km' : 'mi'}</td>
+                <td>${trip.duration || '-'} min</td>
+                <td>${trip.average_speed || '-'} ${currentUnits === 'metric' ? 'km/h' : 'mph'}</td>
+                <td>${trip.drivetrain_consumed || '-'}</td>
+                <td>${trip.climate_consumed || '-'}</td>
+                <td>${trip.accessories_consumed || '-'}</td>
+                <td>${trip.total_consumed || '-'}</td>
+                <td>${trip.regenerated_energy || '-'}</td>
+                <td>${trip.end_latitude && trip.end_longitude ? '📍' : '-'}</td>
+            `;
+            
+            // Create trip ID in the format expected by backend: date_distance_odometer
+            let dateStr = trip.date.toString();
+            dateStr = dateStr.replace(/\.0+$/, '');
+            
+            // Create composite trip ID
+            const tripParts = [
+                btoa(dateStr),
+                trip.distance,
+                trip.odometer_start || '0'
+            ];
+            const tripId = tripParts.join('_');
+            
+            row.addEventListener('click', () => {
+                showTripModal(tripId);
             });
             
-            const response = await fetch(`/api/trips?${params}`);
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
-            }
+            tripsTable.appendChild(row);
+        });
+    }
+    
+    function formatDate(date) {
+        if (!(date instanceof Date)) {
+            date = new Date(date);
+        }
+        const options = { 
+            month: 'short', 
+            day: 'numeric', 
+            hour: '2-digit', 
+            minute: '2-digit' 
+        };
+        return date.toLocaleDateString('en-US', options);
+    }
+    
+    async function loadCollectionStatus() {
+        try {
+            const response = await fetch('/api/collection-status');
             const data = await response.json();
             
-            // Handle both old and new API response formats
-            if (Array.isArray(data)) {
-                // Old format - just an array of trips
-                currentData.trips = data;
-                updateTripsTable(data);
-                updateEnergyChart(data);
-                updatePagination({
-                    page: 1,
-                    total_pages: 1,
-                    total: data.length,
-                    per_page: data.length
-                });
-            } else {
-                // New format with pagination info
-                currentData.trips = data.trips || [];
-                updateTripsTable(data.trips || []);
-                updateEnergyChart(data.trips || []);
-                updatePagination(data);
+            const callsToday = document.getElementById('api-calls-today');
+            const nextCollection = document.getElementById('next-collection');
+            
+            if (callsToday) {
+                callsToday.textContent = `${data.calls_today}/${data.daily_limit}`;
+                callsToday.className = data.calls_today >= data.daily_limit ? 'limit-reached' : '';
+            }
+            
+            if (nextCollection && data.next_collection) {
+                const next = new Date(data.next_collection);
+                const now = new Date();
+                const diff = Math.round((next - now) / 60000);
+                
+                if (diff > 0) {
+                    nextCollection.textContent = `in ${diff} minutes`;
+                } else {
+                    nextCollection.textContent = 'soon';
+                }
             }
         } catch (error) {
-            console.error('Error loading trips:', error);
+            console.error('Error loading collection status:', error);
         }
     }
     
-    function updateTripsTable(trips) {
-        const units = currentUnits;
-        
-        if (trips && trips.length > 0) {
-            tripsTable.innerHTML = trips.map(trip => {
-                const distance = units === 'imperial' 
-                    ? Math.round(conversions.kmToMiles(trip.distance || 0))
-                    : (trip.distance || 0);
-                const avgSpeed = units === 'imperial'
-                    ? Math.round(conversions.kmToMiles(trip.average_speed || 0))
-                    : (trip.average_speed || 0);
-                const speedUnit = units === 'imperial' ? 'mph' : 'km/h';
-                const distanceUnit = units === 'imperial' ? 'mi' : 'km';
-                
-                // Format location and temperature
-                let locationInfo = '--';
-                if (trip.end_latitude && trip.end_longitude) {
-                    const temp = trip.end_temperature ? 
-                        (units === 'imperial' ? 
-                            `${Math.round(conversions.celsiusToFahrenheit(trip.end_temperature))}°F` : 
-                            `${trip.end_temperature}°C`) : '';
-                    locationInfo = `<span title="Lat: ${trip.end_latitude}, Lon: ${trip.end_longitude}">📍</span> ${temp}`;
-                }
-                
-                // Create trip ID - use base64 encoding for the date to avoid URL issues
-                // Handle different date formats - remove .000 or .0 at the end
-                let dateStr = String(trip.date);
-                dateStr = dateStr.replace(/\.0+$/, ''); // Remove .0, .00, .000 etc at the end
-                const encodedDate = btoa(dateStr).replace(/=/g, ''); // Remove padding
-                const tripId = `${encodedDate}_${trip.distance}_${trip.odometer_start || ''}`;
-                
-                // Debug logging
-                if (trips.indexOf(trip) < 3) { // Log first 3 trips
-                    console.log(`Trip ${trips.indexOf(trip)}: date='${trip.date}' -> '${dateStr}' -> '${encodedDate}', distance=${trip.distance}, odometer=${trip.odometer_start}`);
-                }
-                
-                return `
-                    <tr class="trip-row" data-trip-id="${tripId}" style="cursor: pointer;">
-                        <td>${formatDate(trip.date)}</td>
-                        <td>${distance} ${distanceUnit}</td>
-                        <td>${trip.duration || '--'} min</td>
-                        <td>${avgSpeed || '--'} ${speedUnit}</td>
-                        <td>${trip.drivetrain_consumed || '--'}</td>
-                        <td>${trip.climate_consumed || '--'}</td>
-                        <td>${trip.accessories_consumed || '--'}</td>
-                        <td>${trip.total_consumed || '--'}</td>
-                        <td>${trip.regenerated_energy || '--'}</td>
-                        <td>${locationInfo}</td>
-                    </tr>
-                `;
-            }).join('');
-            
-            // Add click handlers to trip rows
-            document.querySelectorAll('.trip-row').forEach(row => {
-                row.addEventListener('click', function() {
-                    const tripId = this.getAttribute('data-trip-id');
-                    showTripDetails(tripId);
-                });
-            });
-        } else {
-            tripsTable.innerHTML = '<tr><td colspan="10" class="no-data">No trip data available</td></tr>';
-        }
-    }
-
-    function formatDateTime(dateString) {
-        const date = new Date(dateString);
-        return date.toLocaleString();
-    }
-
-    function formatDate(dateString) {
-        const date = new Date(dateString);
-        // Check if the date string includes time
-        if (dateString.includes(' ') || dateString.includes('T')) {
-            // Format with both date and time
-            return date.toLocaleString('en-US', {
-                year: 'numeric',
-                month: 'short',
-                day: 'numeric',
-                hour: '2-digit',
-                minute: '2-digit'
-            });
-        } else {
-            // Format date only
-            return date.toLocaleDateString('en-US', {
-                year: 'numeric',
-                month: 'short',
-                day: 'numeric'
-            });
-        }
-    }
-
-    function formatNumber(num) {
-        return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
-    }
-
-    function showNotification(message, type) {
-        // Simple notification - could be enhanced with a toast library
+    function showNotification(message, type = 'info') {
         const notification = document.createElement('div');
         notification.className = `notification ${type}`;
         notification.textContent = message;
-        notification.style.cssText = `
-            position: fixed;
-            top: 20px;
-            right: 20px;
-            padding: 1rem 1.5rem;
-            background-color: ${type === 'success' ? 'var(--success-color)' : 'var(--danger-color)'};
-            color: white;
-            border-radius: var(--border-radius);
-            box-shadow: var(--shadow-hover);
-            z-index: 1000;
-            animation: slideIn 0.3s ease;
-        `;
-        
         document.body.appendChild(notification);
         
         setTimeout(() => {
-            notification.style.animation = 'slideOut 0.3s ease';
+            notification.classList.add('fade-out');
             setTimeout(() => notification.remove(), 300);
         }, 3000);
     }
 
     function initializeLocationsMap() {
         try {
-            // Check if element exists
             const mapElement = document.getElementById('locations-map');
             if (!mapElement) {
                 console.error('Map element not found: locations-map');
                 return;
             }
             
-            // Initialize the main locations map
             if (!locationsMap) {
-                locationsMap = L.map('locations-map').setView([44.9778, -93.2650], 10); // Minneapolis area default
+                locationsMap = L.map('locations-map').setView([44.9778, -93.2650], 10);
                 
-                // Add OpenStreetMap tiles
                 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
                     attribution: '© OpenStreetMap contributors'
                 }).addTo(locationsMap);
@@ -467,7 +623,6 @@ document.addEventListener('DOMContentLoaded', function() {
                 const locations = await response.json();
                 console.log(`Loaded ${locations.length} locations`);
                 
-                // Clear existing markers
                 mapMarkers.forEach(marker => locationsMap.removeLayer(marker));
                 mapMarkers = [];
                 
@@ -490,7 +645,6 @@ document.addEventListener('DOMContentLoaded', function() {
                         const marker = L.marker([loc.lat, loc.lng], { icon })
                             .addTo(locationsMap);
                         
-                        // Create popup content
                         let popupContent = `<strong>${formatDate(loc.date)}</strong>`;
                         if (loc.distance > 0) {
                             popupContent += `<br>Distance: ${loc.distance} km`;
@@ -508,10 +662,11 @@ document.addEventListener('DOMContentLoaded', function() {
                         bounds.push([loc.lat, loc.lng]);
                     });
                     
-                    // Fit map to show all markers
                     if (bounds.length > 0) {
                         locationsMap.fitBounds(bounds, { padding: [50, 50] });
                     }
+                } else {
+                    locationsMap.setView([44.9778, -93.2650], 10);
                 }
             }
         } catch (error) {
@@ -519,202 +674,242 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
     
-    function showTripMap(trip) {
-        if (trip.end_latitude && trip.end_longitude) {
-            // Wait for modal to be visible
-            setTimeout(() => {
-                if (!tripMap) {
-                    tripMap = L.map('trip-map').setView([trip.end_latitude, trip.end_longitude], 13);
-                    
-                    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                        attribution: '© OpenStreetMap contributors'
-                    }).addTo(tripMap);
-                } else {
-                    tripMap.setView([trip.end_latitude, trip.end_longitude], 13);
-                    // Clear existing markers
-                    tripMap.eachLayer(layer => {
-                        if (layer instanceof L.Marker) {
-                            tripMap.removeLayer(layer);
-                        }
-                    });
-                }
-                
-                // Add marker for trip end location
-                const marker = L.marker([trip.end_latitude, trip.end_longitude])
-                    .addTo(tripMap);
-                
-                let popupContent = `<strong>Trip End Location</strong>`;
-                popupContent += `<br>Date: ${formatDate(trip.date)}`;
-                popupContent += `<br>Coordinates: ${trip.end_latitude.toFixed(6)}, ${trip.end_longitude.toFixed(6)}`;
-                
-                marker.bindPopup(popupContent).openPopup();
-                
-                // Force map to refresh
-                tripMap.invalidateSize();
-            }, 100);
-        } else {
-            // Hide map if no location
-            document.getElementById('trip-map').style.display = 'none';
-        }
-    }
-    
     async function loadEfficiencyStats() {
         try {
             const response = await fetch('/api/efficiency-stats');
-            if (response.ok) {
-                const stats = await response.json();
-                
-                // Update efficiency cards
-                const periods = ['last_day', 'last_week', 'last_month', 'all_time'];
-                const periodNames = ['day', 'week', 'month', 'all'];
-                
-                periods.forEach((period, index) => {
-                    const periodData = stats[period];
-                    const elementId = periodNames[index];
-                    
-                    if (periodData) {
-                        // Display average efficiency
-                        document.getElementById(`efficiency-${elementId}`).textContent = 
-                            `${periodData.average} mi/kWh`;
-                        
-                        // Display details (best/worst)
-                        document.getElementById(`efficiency-${elementId}-detail`).textContent = 
-                            `Best: ${periodData.best} | Worst: ${periodData.worst} | Trips: ${periodData.trip_count}`;
-                        
-                        // Color code based on efficiency
-                        const valueElement = document.getElementById(`efficiency-${elementId}`);
-                        if (periodData.average >= 4.0) {
-                            valueElement.style.color = 'var(--success-color)';
-                        } else if (periodData.average >= 3.0) {
-                            valueElement.style.color = 'var(--warning-color)';
-                        } else {
-                            valueElement.style.color = 'var(--danger-color)';
-                        }
-                    } else {
-                        document.getElementById(`efficiency-${elementId}`).textContent = '--';
-                        document.getElementById(`efficiency-${elementId}-detail`).textContent = 'No data';
-                    }
-                });
-                
-                // Log totals for debugging
-                console.log('Efficiency totals:', stats.totals);
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
             }
+            const stats = await response.json();
+            
+            const displayStat = (elementId, data) => {
+                const valueElement = document.getElementById(elementId);
+                const detailElement = document.getElementById(elementId + '-detail');
+                
+                if (valueElement && data) {
+                    valueElement.textContent = `${data.average} mi/kWh`;
+                }
+                if (detailElement && data) {
+                    detailElement.textContent = `Best: ${data.best} | Worst: ${data.worst}`;
+                }
+            };
+            
+            displayStat('efficiency-day', stats.last_day);
+            displayStat('efficiency-week', stats.last_week);
+            displayStat('efficiency-month', stats.last_month);
+            displayStat('efficiency-all', stats.all_time);
+            
         } catch (error) {
             console.error('Error loading efficiency stats:', error);
         }
     }
     
-    async function loadCollectionStatus() {
-        try {
-            const response = await fetch('/api/collection-status');
-            const data = await response.json();
-            
-            const apiCallsToday = document.getElementById('api-calls-today');
-            const nextCollection = document.getElementById('next-collection');
-            
-            if (apiCallsToday) {
-                apiCallsToday.textContent = data.calls_today || 0;
-            }
-            
-            if (nextCollection && data.next_collection) {
-                const nextTime = new Date(data.next_collection);
-                const now = new Date();
-                const diffMinutes = Math.round((nextTime - now) / 60000);
-                
-                if (diffMinutes > 0) {
-                    nextCollection.textContent = `in ${diffMinutes} minutes`;
-                } else {
-                    nextCollection.textContent = nextTime.toLocaleTimeString();
-                }
-            }
-        } catch (error) {
-            console.error('Error loading collection status:', error);
-        }
-    }
-
-    function updatePagination(data) {
-        currentPage = data.page;
-        totalPages = data.total_pages;
-        
-        // Update page info
-        document.getElementById('page-info').textContent = `Page ${currentPage} of ${totalPages}`;
-        
-        // Update button states
-        document.getElementById('prev-page').disabled = currentPage <= 1;
-        document.getElementById('next-page').disabled = currentPage >= totalPages;
-    }
+    // Pagination variables
+    let currentPage = 1;
+    let perPage = 10;
+    let totalPages = 1;
     
     // Pagination event handlers
-    document.getElementById('prev-page').addEventListener('click', () => {
-        if (currentPage > 1) {
-            currentPage--;
-            loadTrips();
+    const prevPageBtn = document.getElementById('prev-page');
+    const nextPageBtn = document.getElementById('next-page');
+    const pageInfo = document.getElementById('page-info');
+    const perPageSelect = document.getElementById('per-page');
+    
+    if (prevPageBtn) {
+        prevPageBtn.addEventListener('click', () => {
+            if (currentPage > 1) {
+                currentPage--;
+                loadTripsWithPagination();
+            }
+        });
+    }
+    
+    if (nextPageBtn) {
+        nextPageBtn.addEventListener('click', () => {
+            if (currentPage < totalPages) {
+                currentPage++;
+                loadTripsWithPagination();
+            }
+        });
+    }
+    
+    if (perPageSelect) {
+        perPageSelect.addEventListener('change', (e) => {
+            perPage = parseInt(e.target.value);
+            currentPage = 1;
+            loadTripsWithPagination();
+        });
+    }
+    
+    async function loadTripsWithPagination() {
+        try {
+            const response = await fetch(`/api/trips?page=${currentPage}&per_page=${perPage}`);
+            const data = await response.json();
+            
+            totalPages = data.total_pages || 1;
+            currentPage = data.page || 1;
+            
+            updateTripsTable(data.trips || []);
+            
+            // Update pagination controls
+            if (pageInfo) pageInfo.textContent = `Page ${currentPage} of ${totalPages}`;
+            if (prevPageBtn) prevPageBtn.disabled = currentPage <= 1;
+            if (nextPageBtn) nextPageBtn.disabled = currentPage >= totalPages;
+            
+            // Also update the energy chart with all trips
+            if (data.trips) {
+                updateEnergyChart(data.trips);
+            }
+        } catch (error) {
+            console.error('Error loading trips with pagination:', error);
+        }
+    }
+    
+    // Replace initial loadTrips with pagination version
+    loadTripsWithPagination();
+    
+    // Modal handling
+    const modal = document.getElementById('tripModal');
+    const modalClose = document.querySelector('.modal-close');
+    let tripEnergyChart = null;
+    
+    if (modalClose) {
+        modalClose.addEventListener('click', () => {
+            modal.style.display = 'none';
+            if (tripMap) {
+                tripMap.remove();
+                tripMap = null;
+            }
+        });
+    }
+    
+    window.addEventListener('click', (event) => {
+        if (event.target === modal) {
+            modal.style.display = 'none';
+            if (tripMap) {
+                tripMap.remove();
+                tripMap = null;
+            }
         }
     });
     
-    document.getElementById('next-page').addEventListener('click', () => {
-        if (currentPage < totalPages) {
-            currentPage++;
-            loadTrips();
-        }
-    });
-    
-    document.getElementById('per-page').addEventListener('change', (e) => {
-        perPage = parseInt(e.target.value);
-        currentPage = 1; // Reset to first page
-        loadTrips();
-    });
-    
-    // Filter event handlers
-    document.getElementById('apply-filters').addEventListener('click', () => {
-        filters = {};
-        
-        const startDate = document.getElementById('start-date').value;
-        const endDate = document.getElementById('end-date').value;
-        const minDistance = document.getElementById('min-distance').value;
-        const maxDistance = document.getElementById('max-distance').value;
-        
-        if (startDate) filters.start_date = startDate;
-        if (endDate) filters.end_date = endDate;
-        if (minDistance) filters.min_distance = minDistance;
-        if (maxDistance) filters.max_distance = maxDistance;
-        
-        currentPage = 1; // Reset to first page
-        loadTrips();
-    });
-    
-    document.getElementById('clear-filters').addEventListener('click', () => {
-        document.getElementById('start-date').value = '';
-        document.getElementById('end-date').value = '';
-        document.getElementById('min-distance').value = '';
-        document.getElementById('max-distance').value = '';
-        
-        filters = {};
-        currentPage = 1;
-        loadTrips();
-    });
-
-    // Show trip details modal
-    async function showTripDetails(tripId) {
-        console.log('Showing trip details for ID:', tripId);
+    async function showTripModal(tripId) {
         try {
             const response = await fetch(`/api/trip/${tripId}`);
+            if (!response.ok) {
+                throw new Error('Failed to load trip details');
+            }
+            
             const trip = await response.json();
             
-            if (!response.ok) {
-                alert('Error loading trip details');
-                return;
+            // Update modal title
+            document.getElementById('modal-title').textContent = 
+                `Trip Details - ${formatDate(new Date(trip.date))}`;
+            
+            // Create stats grid
+            const statsHtml = `
+                <div class="stat-card">
+                    <h3>Distance</h3>
+                    <p>${trip.distance} ${currentUnits === 'metric' ? 'km' : 'mi'}</p>
+                </div>
+                <div class="stat-card">
+                    <h3>Duration</h3>
+                    <p>${trip.duration} min</p>
+                </div>
+                <div class="stat-card">
+                    <h3>Avg Speed</h3>
+                    <p>${trip.average_speed} ${currentUnits === 'metric' ? 'km/h' : 'mph'}</p>
+                </div>
+                <div class="stat-card">
+                    <h3>Max Speed</h3>
+                    <p>${trip.max_speed} ${currentUnits === 'metric' ? 'km/h' : 'mph'}</p>
+                </div>
+                <div class="stat-card">
+                    <h3>Efficiency</h3>
+                    <p>${currentUnits === 'metric' ? 
+                        Math.round(trip.efficiency_wh_per_km) + ' Wh/km' : 
+                        conversions.whPerKmToMiPerKwh(trip.efficiency_wh_per_km).toFixed(1) + ' mi/kWh'}</p>
+                </div>
+                <div class="stat-card">
+                    <h3>Net Energy</h3>
+                    <p>${trip.net_energy} Wh</p>
+                </div>
+            `;
+            document.getElementById('trip-stats').innerHTML = statsHtml;
+            
+            // Create energy breakdown chart
+            const ctx = document.getElementById('trip-energy-chart').getContext('2d');
+            
+            if (tripEnergyChart) {
+                tripEnergyChart.destroy();
             }
             
-            // Create modal if it doesn't exist
-            let modal = document.getElementById('trip-modal');
-            if (!modal) {
-                modal = createTripModal();
-                document.body.appendChild(modal);
-            }
+            tripEnergyChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: ['Drivetrain', 'Climate', 'Accessories', 'Battery Care', 'Regenerated'],
+                    datasets: [{
+                        label: 'Energy (Wh)',
+                        data: [
+                            trip.drivetrain_consumed,
+                            trip.climate_consumed,
+                            trip.accessories_consumed,
+                            trip.battery_care_consumed,
+                            -trip.regenerated_energy // Negative for regenerated
+                        ],
+                        backgroundColor: [
+                            'rgba(52, 152, 219, 0.8)',
+                            'rgba(255, 127, 14, 0.8)',
+                            'rgba(44, 160, 44, 0.8)',
+                            'rgba(214, 39, 40, 0.8)',
+                            'rgba(46, 204, 113, 0.8)'
+                        ]
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        title: {
+                            display: true,
+                            text: 'Energy Consumption Breakdown'
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            title: {
+                                display: true,
+                                text: 'Energy (Wh)'
+                            }
+                        }
+                    }
+                }
+            });
             
-            // Populate modal with trip data
-            updateTripModal(trip);
+            // Create map if location available
+            if (trip.end_latitude && trip.end_longitude) {
+                setTimeout(() => {
+                    const mapDiv = document.getElementById('trip-map');
+                    if (tripMap) {
+                        tripMap.remove();
+                    }
+                    
+                    tripMap = L.map('trip-map').setView([trip.end_latitude, trip.end_longitude], 13);
+                    
+                    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                        attribution: '© OpenStreetMap contributors'
+                    }).addTo(tripMap);
+                    
+                    L.marker([trip.end_latitude, trip.end_longitude])
+                        .addTo(tripMap)
+                        .bindPopup('Trip End Location')
+                        .openPopup();
+                }, 100);
+            } else {
+                document.getElementById('trip-map').innerHTML = 
+                    '<div class="no-data">No location data available for this trip</div>';
+            }
             
             // Show modal
             modal.style.display = 'block';
@@ -725,202 +920,55 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
     
-    function createTripModal() {
-        const modal = document.createElement('div');
-        modal.id = 'trip-modal';
-        modal.className = 'modal';
-        modal.innerHTML = `
-            <div class="modal-content">
-                <span class="modal-close" onclick="document.getElementById('trip-modal').style.display='none'">&times;</span>
-                <h2 id="trip-modal-title">Trip Details</h2>
-                <div id="trip-modal-body">
-                    <div class="trip-stats-grid"></div>
-                    <div id="trip-map"></div>
-                    <div id="trip-energy-chart" class="chart-container"></div>
-                    <div id="trip-speed-chart" class="chart-container"></div>
-                    <div id="trip-efficiency-chart" class="chart-container"></div>
-                </div>
-            </div>
-        `;
-        
-        // Close modal when clicking outside
-        modal.onclick = function(event) {
-            if (event.target === modal) {
-                modal.style.display = 'none';
-            }
-        };
-        
-        return modal;
-    }
-    
-    function updateTripModal(trip) {
-        const units = currentUnits;
-        
-        // Update title
-        document.getElementById('trip-modal-title').textContent = `Trip on ${formatDate(trip.date)}`;
-        
-        // Calculate statistics
-        const distance = units === 'imperial' 
-            ? Math.round(conversions.kmToMiles(trip.distance || 0))
-            : (trip.distance || 0);
-        const distanceUnit = units === 'imperial' ? 'mi' : 'km';
-        const speedUnit = units === 'imperial' ? 'mph' : 'km/h';
-        const avgSpeed = units === 'imperial'
-            ? Math.round(conversions.kmToMiles(trip.average_speed || 0))
-            : (trip.average_speed || 0);
-        const maxSpeed = units === 'imperial'
-            ? Math.round(conversions.kmToMiles(trip.max_speed || 0))
-            : (trip.max_speed || 0);
-        
-        // Create stats grid
-        const statsGrid = document.querySelector('.trip-stats-grid');
-        statsGrid.innerHTML = `
-            <div class="stat-card">
-                <h3>Distance</h3>
-                <p>${distance} ${distanceUnit}</p>
-            </div>
-            <div class="stat-card">
-                <h3>Duration</h3>
-                <p>${trip.duration || '--'} min</p>
-            </div>
-            <div class="stat-card">
-                <h3>Average Speed</h3>
-                <p>${avgSpeed} ${speedUnit}</p>
-            </div>
-            <div class="stat-card">
-                <h3>Max Speed</h3>
-                <p>${maxSpeed} ${speedUnit}</p>
-            </div>
-            <div class="stat-card">
-                <h3>Idle Time</h3>
-                <p>${trip.idle_time || '--'} min</p>
-            </div>
-            <div class="stat-card">
-                <h3>Efficiency</h3>
-                <p>${trip.efficiency_wh_per_km ? (1000 / (trip.efficiency_wh_per_km * 1.60934)).toFixed(2) : '--'} mi/kWh</p>
-            </div>
-            <div class="stat-card">
-                <h3>Net Energy</h3>
-                <p>${trip.net_energy || trip.total_consumed || '--'} Wh</p>
-            </div>
-            <div class="stat-card">
-                <h3>Regenerated</h3>
-                <p>${trip.regenerated_energy || '--'} Wh</p>
-            </div>
-        `;
-        
-        // Create energy breakdown chart
-        createEnergyBreakdownChart(trip);
-        
-        // Create speed/time chart if we have enough data
-        if (trip.duration && trip.average_speed) {
-            createSpeedChart(trip);
-        }
-        
-        // Create efficiency comparison chart
-        createEfficiencyChart(trip);
-        
-        // Show map if location available
-        if (trip.end_latitude && trip.end_longitude) {
-            document.getElementById('trip-map').style.display = 'block';
-            showTripMap(trip);
-        } else {
-            document.getElementById('trip-map').style.display = 'none';
-        }
-    }
-    
-    function createEnergyBreakdownChart(trip) {
-        const data = [{
-            values: [
-                trip.drivetrain_consumed || 0,
-                trip.climate_consumed || 0,
-                trip.accessories_consumed || 0,
-                trip.battery_care_consumed || 0
-            ],
-            labels: ['Drivetrain', 'Climate', 'Accessories', 'Battery Care'],
-            type: 'pie',
-            hole: 0.4,
-            marker: {
-                colors: ['#3498db', '#e74c3c', '#f39c12', '#2ecc71']
-            },
-            textinfo: 'label+value',
-            textposition: 'outside'
-        }];
-        
-        const layout = {
-            title: 'Energy Consumption Breakdown (Wh)',
-            height: 300,
-            margin: { t: 50, b: 50, l: 50, r: 50 }
-        };
-        
-        Plotly.newPlot('trip-energy-chart', data, layout, {responsive: true});
-    }
-    
-    function createSpeedChart(trip) {
-        // Create a simple visualization based on available data
-        const data = [{
-            x: ['Start', 'Average', 'Max', 'End'],
-            y: [0, trip.average_speed || 0, trip.max_speed || 0, 0],
-            type: 'scatter',
-            mode: 'lines+markers',
-            line: { color: '#3498db', width: 3 },
-            marker: { size: 8 }
-        }];
-        
-        const layout = {
-            title: 'Speed Profile',
-            xaxis: { title: 'Trip Progress' },
-            yaxis: { title: `Speed (${currentUnits === 'imperial' ? 'mph' : 'km/h'})` },
-            height: 300,
-            margin: { t: 50, b: 50, l: 60, r: 50 }
-        };
-        
-        Plotly.newPlot('trip-speed-chart', data, layout, {responsive: true});
-    }
-    
-    function createEfficiencyChart(trip) {
-        // Compare this trip's efficiency to overall average
-        const efficiency = trip.efficiency_wh_per_km || 0;
-        
-        const data = [{
-            x: ['This Trip', 'Average (est)'],
-            y: [efficiency, 180], // 180 Wh/km is typical EV efficiency
-            type: 'bar',
-            marker: {
-                color: [efficiency < 180 ? '#2ecc71' : '#e74c3c', '#3498db']
-            }
-        }];
-        
-        const layout = {
-            title: 'Energy Efficiency Comparison',
-            yaxis: { title: `Wh/${currentUnits === 'imperial' ? 'mi' : 'km'}` },
-            height: 300,
-            margin: { t: 50, b: 50, l: 60, r: 50 }
-        };
-        
-        Plotly.newPlot('trip-efficiency-chart', data, layout, {responsive: true});
-    }
-    
-    // Make showTripDetails available globally
-    window.showTripDetails = showTripDetails;
-
-    // Auto-refresh every 30 minutes (to stay within API limits)
+    // Reduce update frequency and stagger the calls
     setInterval(() => {
-        loadCurrentStatus();
-        loadBatteryHistory();
-        loadTrips();
         loadCollectionStatus();
-        loadEfficiencyStats();
-        loadLocationsMap();
-    }, 30 * 60 * 1000);
+    }, 60000);
     
-    // Refresh collection status more frequently
-    setInterval(loadCollectionStatus, 60 * 1000);
+    setInterval(() => {
+        loadEfficiencyStats();
+    }, 300000); // Every 5 minutes
+    
+    setInterval(() => {
+        loadLocationsMap();
+    }, 300000); // Every 5 minutes
 });
 
-// CSS animations
+// Add CSS for notifications
 const style = document.createElement('style');
 style.textContent = `
+    .notification {
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        padding: 15px 20px;
+        border-radius: 4px;
+        color: white;
+        font-weight: 500;
+        z-index: 1000;
+        animation: slideIn 0.3s ease-out;
+    }
+    
+    .notification.success {
+        background-color: #2ecc71;
+    }
+    
+    .notification.error {
+        background-color: #e74c3c;
+    }
+    
+    .notification.info {
+        background-color: #3498db;
+    }
+    
+    .notification.warning {
+        background-color: #f39c12;
+    }
+    
+    .notification.fade-out {
+        animation: slideOut 0.3s ease-out forwards;
+    }
+    
     @keyframes slideIn {
         from {
             transform: translateX(100%);

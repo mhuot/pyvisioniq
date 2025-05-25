@@ -13,6 +13,7 @@ COPY . .
 
 RUN mkdir -p data logs cache
 
-EXPOSE 5000
+# EXPOSE is informational only - actual port binding is handled by docker-compose
+# Removing since we use dynamic PORT variable
 
-CMD ["python", "-m", "gunicorn", "--bind", "0.0.0.0:5000", "--workers", "1", "src.web.app:app"]
+CMD ["sh", "-c", "python -m gunicorn --bind 0.0.0.0:${PORT:-5000} --workers 1 src.web.app:app"]

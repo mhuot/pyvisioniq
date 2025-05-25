@@ -71,7 +71,7 @@ class CSVStorage:
         if not self.battery_file.exists():
             with open(self.battery_file, 'w', newline='', encoding='utf-8') as f:
                 writer = csv.DictWriter(f, fieldnames=[
-                    'timestamp', 'battery_level', 'is_charging', 
+                    'timestamp', 'battery_level', 'is_charging', 'charging_power',
                     'remaining_time', 'range', 'temperature', 'odometer'
                 ])
                 writer.writeheader()
@@ -154,7 +154,7 @@ class CSVStorage:
         if battery:
             with open(self.battery_file, 'a', newline='', encoding='utf-8') as f:
                 writer = csv.DictWriter(f, fieldnames=[
-                    'timestamp', 'battery_level', 'is_charging', 
+                    'timestamp', 'battery_level', 'is_charging', 'charging_power',
                     'remaining_time', 'range', 'temperature', 'odometer'
                 ])
                 # Convert temperature from F to C if present
@@ -165,6 +165,7 @@ class CSVStorage:
                     'timestamp': timestamp,
                     'battery_level': battery.get('level'),
                     'is_charging': battery.get('is_charging'),
+                    'charging_power': battery.get('charging_power'),
                     'remaining_time': battery.get('remaining_time'),
                     'range': battery.get('range'),
                     'temperature': temp_c,

@@ -14,6 +14,14 @@ load_dotenv()
 # Set up logging
 logger = logging.getLogger(__name__)
 
+class APIError(Exception):
+    """Custom exception for API errors with user-friendly messages"""
+    def __init__(self, message, error_type="general", original_error=None):
+        self.message = message
+        self.error_type = error_type
+        self.original_error = original_error
+        super().__init__(message)
+
 class CachedVehicleClient:
     def __init__(self, cache_dir="cache"):
         self.cache_dir = Path(cache_dir)
@@ -229,6 +237,16 @@ class CachedVehicleClient:
             if ev_range is None:
                 ev_range = getattr(vehicle, 'ev_range_with_ac', getattr(vehicle, 'ev_battery_remain', None))
             
+            # Get charging power from raw data
+            charging_power = None
+            vehicle_data = getattr(vehicle, 'data', {})
+            ev_status = vehicle_data.get('vehicleStatus', {}).get('evStatus', {})
+            if ev_status:
+                charging_power = ev_status.get('batteryStndChrgPower')
+                if charging_power is None:
+                    # Try the attribute if available
+                    charging_power = getattr(vehicle, 'ev_charging_current', None)
+            
             # Get odometer value - it's in miles for US region
             odometer_value = getattr(vehicle, 'odometer', None)
             
@@ -241,11 +259,13 @@ class CachedVehicleClient:
             
             data = {
                 "timestamp": datetime.now().isoformat(),
+                "api_last_updated": getattr(vehicle, 'last_updated_at', None),
                 "vehicle_id": self.vehicle_id,
                 "odometer": odometer_km,
                 "battery": {
                     "level": getattr(vehicle, 'ev_battery_percentage', None),
                     "is_charging": getattr(vehicle, 'ev_battery_is_charging', False),
+                    "charging_power": charging_power,
                     "remaining_time": None,  # Not in the new API
                     "range": ev_range
                 },
@@ -361,8 +381,87 @@ class CachedVehicleClient:
             
             return None
     
+    def _classify_error(self, error):
+        """Classify error and return user-friendly message"""
+        error_msg = str(error).lower()
+        error_type = type(error).__name__
+        
+        # Rate limit errors
+        if any(phrase in error_msg for phrase in [
+            'rate limit', 'too many requests', 'quota exceeded', 
+            'throttled', '429', 'limit exceeded', 'quota'
+        ]):
+            return APIError(
+                "API rate limit reached. The Hyundai/Kia API allows only 30 calls per day. Please try again later.",
+                "rate_limit",
+                error
+            )
+        
+        # Authentication errors
+        if any(phrase in error_msg for phrase in [
+            'unauthorized', '401', 'authentication', 'invalid credentials',
+            'login failed', 'token expired', 'forbidden', '403'
+        ]):
+            return APIError(
+                "Authentication failed. Please check your Bluelink credentials in the environment variables.",
+                "auth",
+                error
+            )
+        
+        # Vehicle not found
+        if any(phrase in error_msg for phrase in [
+            'vehicle not found', 'no vehicles', 'invalid vehicle'
+        ]):
+            return APIError(
+                "Vehicle not found. Please verify your vehicle ID is correct.",
+                "vehicle_not_found",
+                error
+            )
+        
+        # Network/Connection errors
+        if any(phrase in error_msg for phrase in [
+            'connection', 'timeout', 'network', 'unreachable', 
+            'ssl', 'certificate', 'handshake'
+        ]):
+            return APIError(
+                "Network error connecting to Hyundai/Kia servers. Please check your internet connection and try again.",
+                "network",
+                error
+            )
+        
+        # Service unavailable
+        if any(phrase in error_msg for phrase in [
+            'service unavailable', '503', 'maintenance', 'temporarily unavailable',
+            '500', 'server error', '502', 'bad gateway'
+        ]):
+            return APIError(
+                "Hyundai/Kia servers are temporarily unavailable. This is usually temporary - please try again in a few minutes.",
+                "service_unavailable",
+                error
+            )
+        
+        # Vehicle communication errors
+        if any(phrase in error_msg for phrase in [
+            'vehicle offline', 'cannot reach vehicle', 'vehicle communication',
+            'remote command failed', 'vehicle not responding'
+        ]):
+            return APIError(
+                "Cannot communicate with vehicle. Make sure your vehicle is in an area with cellular coverage and try again.",
+                "vehicle_offline",
+                error
+            )
+        
+        # Default error
+        return APIError(
+            f"An unexpected error occurred: {error_type}: {str(error)}",
+            "unknown",
+            error
+        )
+    
     def _update_vehicle_with_retry(self, max_retries=3):
         """Update vehicle data with exponential backoff for rate limits"""
+        last_error = None
+        
         for attempt in range(max_retries):
             try:
                 # Add jitter to prevent thundering herd
@@ -373,29 +472,34 @@ class CachedVehicleClient:
                     logger.info(f"Rate limit retry {attempt + 1}/{max_retries}, waiting {delay:.1f}s")
                     time.sleep(delay)
                 
-                # First update all vehicles
-                self.manager.update_all_vehicles_with_cached_state()
-                logger.info("All vehicles updated successfully")
+                # Force refresh vehicle state to get fresh data from the vehicle
+                if self.vehicle_id:
+                    self.manager.force_refresh_vehicle_state(self.vehicle_id)
+                    logger.info(f"Vehicle {self.vehicle_id} state refreshed successfully")
+                else:
+                    # Fallback to refresh all vehicles if no specific ID
+                    self.manager.force_refresh_all_vehicles_states()
+                    logger.info("All vehicles states refreshed successfully")
                 return True
                 
             except Exception as e:
-                error_msg = str(e).lower()
+                last_error = self._classify_error(e)
                 
-                # Check for rate limit related errors
-                if any(phrase in error_msg for phrase in [
-                    'rate limit', 'too many requests', 'quota exceeded', 
-                    'throttled', '429', 'limit exceeded'
-                ]):
+                # Only retry for rate limit errors
+                if last_error.error_type == "rate_limit":
                     logger.warning(f"Rate limit hit (attempt {attempt + 1}/{max_retries}): {e}")
                     if attempt == max_retries - 1:
                         logger.error("Max retries reached for rate limit")
-                        return False
+                        raise last_error
                     continue
                 else:
                     # Non-rate-limit error, don't retry
-                    logger.error(f"Non-rate-limit error: {e}")
-                    raise e
+                    logger.error(f"Non-retryable error: {last_error.message}")
+                    raise last_error
         
+        # If we get here, we exhausted retries for rate limit
+        if last_error:
+            raise last_error
         return False
     
     def _get_last_successful_cache(self):

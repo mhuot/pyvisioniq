@@ -11,7 +11,7 @@ import pandas as pd
 
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
-from src.api.client import CachedVehicleClient
+from src.api.client import CachedVehicleClient, APIError
 from src.storage.csv_store import CSVStorage
 from src.web.cache_routes import cache_bp
 
@@ -51,6 +51,10 @@ def clean_nan_values(data):
 def index():
     return render_template('index.html')
 
+@app.route('/favicon.ico')
+def favicon():
+    return '', 204  # No content
+
 @app.route('/api/clear-cache')
 def clear_cache():
     """Clear the cache to force fresh API call"""
@@ -89,24 +93,60 @@ def refresh_data():
         signal.alarm(30)
         
         try:
-            data = client.get_vehicle_data()
+            # Force a cache update to get fresh data
+            data = client.force_cache_update()
             signal.alarm(0)  # Cancel timeout
             
             if data:
                 storage.store_vehicle_data(data)
-                return jsonify({"status": "success", "message": "Data refreshed successfully"})
+                
+                # Include data freshness info in response
+                api_updated = data.get('api_last_updated', 'Unknown')
+                if api_updated and api_updated != 'Unknown':
+                    try:
+                        from datetime import datetime
+                        api_time = datetime.fromisoformat(str(api_updated).replace('Z', '+00:00'))
+                        age_minutes = int((datetime.now(api_time.tzinfo) - api_time).total_seconds() / 60)
+                        freshness_msg = f" (vehicle data from {age_minutes} minutes ago)"
+                    except:
+                        freshness_msg = ""
+                else:
+                    freshness_msg = ""
+                
+                return jsonify({
+                    "status": "success", 
+                    "message": f"Data refreshed successfully{freshness_msg}"
+                })
             else:
-                return jsonify({"status": "error", "message": "Failed to fetch data - API may be rate limited. Try again later."}), 500
+                return jsonify({
+                    "status": "error", 
+                    "message": "Failed to fetch data. The vehicle may be offline or in an area without coverage."
+                }), 500
         except TimeoutError:
             signal.alarm(0)  # Cancel timeout
-            return jsonify({"status": "error", "message": "Request timed out - API may be unavailable"}), 500
+            return jsonify({
+                "status": "error", 
+                "message": "Request timed out after 30 seconds. The vehicle may be offline or the Hyundai/Kia servers are slow to respond."
+            }), 504
             
+    except APIError as e:
+        signal.alarm(0)  # Cancel timeout if set
+        # Use our custom error classification
+        status_code = 429 if e.error_type == "rate_limit" else 500
+        return jsonify({
+            "status": "error", 
+            "message": e.message,
+            "error_type": e.error_type
+        }), status_code
+        
     except Exception as e:
         signal.alarm(0)  # Cancel timeout if set
-        error_msg = str(e).lower()
-        if any(phrase in error_msg for phrase in ['rate limit', 'quota exceeded', 'too many requests']):
-            return jsonify({"status": "error", "message": "API rate limit exceeded. Please wait before trying again."}), 429
-        return jsonify({"status": "error", "message": str(e)}), 500
+        # Fallback for unexpected errors
+        app.logger.error(f"Unexpected error in refresh_data: {type(e).__name__}: {str(e)}")
+        return jsonify({
+            "status": "error", 
+            "message": f"An unexpected error occurred. Please try again later. ({type(e).__name__})"
+        }), 500
 
 @app.route('/api/trip/<trip_id>')
 def get_trip_detail(trip_id):
@@ -574,6 +614,7 @@ def get_current_status():
             return jsonify({
                 "battery_level": latest_data.get('battery_level'),
                 "is_charging": latest_data.get('is_charging'),
+                "charging_power": latest_data.get('charging_power'),
                 "range": latest_data.get('range'),
                 "temperature": latest_data.get('temperature'),
                 "odometer": latest_data.get('odometer'),
