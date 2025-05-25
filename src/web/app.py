@@ -7,11 +7,13 @@ from datetime import datetime, timedelta
 import sys
 from pathlib import Path
 import numpy as np
+import pandas as pd
 
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
 from src.api.client import CachedVehicleClient
 from src.storage.csv_store import CSVStorage
+from src.web.cache_routes import cache_bp
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'dev-secret-key'
@@ -19,11 +21,16 @@ app.config['SECRET_KEY'] = 'dev-secret-key'
 # Initialize with error handling
 try:
     client = CachedVehicleClient()
+    app.config['cache_client'] = client  # Store client in app config for blueprints
 except Exception as e:
     print(f"Warning: Failed to initialize API client: {e}")
     client = None
+    app.config['cache_client'] = None
 
 storage = CSVStorage()
+
+# Register the cache blueprint
+app.register_blueprint(cache_bp)
 
 def clean_nan_values(data):
     """Replace NaN and None values with None for JSON serialization"""
@@ -71,14 +78,128 @@ def refresh_data():
         return jsonify({"status": "error", "message": "API client not initialized. Please check your .env configuration."}), 500
     
     try:
-        data = client.get_vehicle_data()
-        if data:
-            storage.store_vehicle_data(data)
-            return jsonify({"status": "success", "message": "Data refreshed successfully"})
-        else:
-            return jsonify({"status": "error", "message": "Failed to fetch data"}), 500
+        # Add timeout protection
+        import signal
+        
+        def timeout_handler(signum, frame):
+            raise TimeoutError("API request timed out")
+        
+        # Set 30 second timeout
+        signal.signal(signal.SIGALRM, timeout_handler)
+        signal.alarm(30)
+        
+        try:
+            data = client.get_vehicle_data()
+            signal.alarm(0)  # Cancel timeout
+            
+            if data:
+                storage.store_vehicle_data(data)
+                return jsonify({"status": "success", "message": "Data refreshed successfully"})
+            else:
+                return jsonify({"status": "error", "message": "Failed to fetch data - API may be rate limited. Try again later."}), 500
+        except TimeoutError:
+            signal.alarm(0)  # Cancel timeout
+            return jsonify({"status": "error", "message": "Request timed out - API may be unavailable"}), 500
+            
     except Exception as e:
+        signal.alarm(0)  # Cancel timeout if set
+        error_msg = str(e).lower()
+        if any(phrase in error_msg for phrase in ['rate limit', 'quota exceeded', 'too many requests']):
+            return jsonify({"status": "error", "message": "API rate limit exceeded. Please wait before trying again."}), 429
         return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route('/api/trip/<trip_id>')
+def get_trip_detail(trip_id):
+    """Get detailed information about a specific trip"""
+    try:
+        import base64
+        import pandas as pd
+        
+        app.logger.info(f"=== Trip Detail Request ===")
+        app.logger.info(f"Raw trip_id: {trip_id}")
+        
+        trips_df = storage.get_trips_df()
+        
+        if trips_df.empty:
+            app.logger.error("No trips found in database")
+            return jsonify({"error": "No trips found"}), 404
+        
+        app.logger.info(f"Total trips in database: {len(trips_df)}")
+        
+        # Trip ID is composed of date_distance_odometer
+        parts = trip_id.split('_')
+        app.logger.info(f"Trip ID parts: {parts}")
+        
+        if len(parts) < 2:
+            app.logger.error(f"Invalid trip ID format: {parts}")
+            return jsonify({"error": "Invalid trip ID"}), 400
+        
+        # Decode the base64 encoded date
+        try:
+            # Add padding if needed
+            encoded_date = parts[0]
+            padding = 4 - (len(encoded_date) % 4)
+            if padding != 4:
+                encoded_date += '=' * padding
+            date_str = base64.b64decode(encoded_date).decode('utf-8')
+            app.logger.info(f"Decoded date from base64: '{date_str}'")
+        except Exception as e:
+            # Fallback to old format if decoding fails
+            date_str = parts[0]
+            app.logger.warning(f"Base64 decode failed: {e}, using raw date: '{date_str}'")
+        
+        distance = float(parts[1])
+        odometer = float(parts[2]) if len(parts) > 2 and parts[2] else None
+        
+        app.logger.info(f"Parsed values - date: '{date_str}', distance: {distance}, odometer: {odometer}")
+        
+        # Find the trip - handle various date formats
+        # The date might come as "2025-05-25T10:05:49" (from JSON) but CSV has "2025-05-25 10:05:49.0"
+        # Convert T to space for matching
+        clean_date_str = date_str.replace('T', ' ').replace('.0', '').strip()
+        trips_df['clean_date'] = trips_df['date'].astype(str).str.replace('.0', '').str.strip()
+        
+        # Debug logging - show all available trips
+        app.logger.info(f"=== Searching for trip ===")
+        app.logger.info(f"Looking for: date='{clean_date_str}', distance={distance}, odometer={odometer}")
+        app.logger.info(f"Available trips (first 10):")
+        for idx, row in trips_df.head(10).iterrows():
+            app.logger.info(f"  Trip {idx}: date='{row['clean_date']}', distance={row['distance']}, odometer={row.get('odometer_start', 'N/A')}")
+        
+        mask = (trips_df['clean_date'] == clean_date_str) & \
+               (trips_df['distance'] == distance)
+        if odometer is not None:
+            mask = mask & (trips_df['odometer_start'] == odometer)
+        
+        trip_data = trips_df[mask]
+        
+        app.logger.info(f"Matching trips found: {len(trip_data)}")
+        
+        if trip_data.empty:
+            app.logger.error(f"Trip not found! No match for date='{clean_date_str}', distance={distance}, odometer={odometer}")
+            return jsonify({"error": "Trip not found"}), 404
+        
+        # Get the first matching trip (should be unique after deduplication)
+        trip = trip_data.iloc[0].to_dict()
+        
+        # Clean NaN values
+        trip = {k: (None if pd.isna(v) else v) for k, v in trip.items()}
+        
+        # Calculate energy efficiency if possible
+        if trip['distance'] and trip['total_consumed']:
+            trip['efficiency_wh_per_km'] = round(trip['total_consumed'] / trip['distance'], 1)
+        else:
+            trip['efficiency_wh_per_km'] = None
+        
+        # Calculate net energy (consumed - regenerated)
+        if trip['total_consumed'] and trip['regenerated_energy']:
+            trip['net_energy'] = trip['total_consumed'] - trip['regenerated_energy']
+        else:
+            trip['net_energy'] = trip['total_consumed']
+        
+        return jsonify(trip)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/api/trips')
 def get_trips():
@@ -153,7 +274,8 @@ def get_battery_history():
                 y=battery_df['battery_level'],
                 mode='lines+markers',
                 name='Battery Level',
-                line=dict(color='#2ecc71', width=3)
+                line=dict(color='#2ecc71', width=3),
+                connectgaps=False  # Show gaps for missing data
             )
             
             # Create temperature chart
@@ -163,7 +285,8 @@ def get_battery_history():
                 mode='lines+markers',
                 name='Temperature',
                 line=dict(color='#e74c3c', width=2),
-                yaxis='y2'
+                yaxis='y2',
+                connectgaps=False  # Show gaps for missing data
             )
             
             layout = go.Layout(
@@ -219,7 +342,8 @@ def debug_api():
         # Check cache status
         cache_info = {
             "cache_enabled": client.cache_enabled,
-            "cache_duration_hours": client.cache_duration.total_seconds() / 3600,
+            "cache_validity_minutes": client.cache_validity.total_seconds() / 60,
+            "cache_retention_hours": client.cache_retention.total_seconds() / 3600,
             "cache_directory": str(client.cache_dir)
         }
         
@@ -239,6 +363,164 @@ def debug_api():
         })
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route('/api/efficiency-stats')
+def get_efficiency_stats():
+    """Get efficiency statistics for different time periods"""
+    try:
+        from datetime import datetime, timedelta
+        import pandas as pd
+        
+        trips_df = storage.get_trips_df()
+        
+        if trips_df.empty:
+            return jsonify({"error": "No trips found"}), 404
+        
+        # Convert date column to datetime, handling .0 suffix
+        trips_df['date'] = trips_df['date'].astype(str).str.replace(r'\.0+$', '', regex=True)
+        trips_df['date'] = pd.to_datetime(trips_df['date'])
+        
+        # Calculate efficiency in Wh/km for each trip
+        trips_df['efficiency_wh_per_km'] = trips_df.apply(
+            lambda row: row['total_consumed'] / row['distance'] if row['distance'] > 0 else None, axis=1
+        )
+        
+        # Convert to mi/kWh (miles per kilowatt-hour)
+        # 1 Wh/km = 1.60934 Wh/mi
+        # mi/kWh = 1000 / (Wh/mi) = 1000 / (Wh/km * 1.60934)
+        trips_df['efficiency_mi_per_kwh'] = trips_df['efficiency_wh_per_km'].apply(
+            lambda x: 1000 / (x * 1.60934) if x and x > 0 else None
+        )
+        
+        now = datetime.now()
+        today = now.date()
+        
+        # Define time periods
+        periods = {
+            'last_day': now - timedelta(days=1),
+            'last_week': now - timedelta(weeks=1),
+            'last_month': now - timedelta(days=30),
+            'last_year': now - timedelta(days=365)
+        }
+        
+        stats = {}
+        
+        # Calculate stats for each period
+        for period_name, start_date in periods.items():
+            period_trips = trips_df[trips_df['date'] >= start_date]
+            
+            if not period_trips.empty:
+                # Filter out None values
+                valid_efficiencies = period_trips['efficiency_mi_per_kwh'].dropna()
+                
+                if not valid_efficiencies.empty:
+                    stats[period_name] = {
+                        'average': round(valid_efficiencies.mean(), 2),
+                        'best': round(valid_efficiencies.max(), 2),
+                        'worst': round(valid_efficiencies.min(), 2),
+                        'trip_count': len(valid_efficiencies)
+                    }
+                else:
+                    stats[period_name] = None
+            else:
+                stats[period_name] = None
+        
+        # Overall stats
+        valid_efficiencies_all = trips_df['efficiency_mi_per_kwh'].dropna()
+        if not valid_efficiencies_all.empty:
+            stats['all_time'] = {
+                'average': round(valid_efficiencies_all.mean(), 2),
+                'best': round(valid_efficiencies_all.max(), 2),
+                'worst': round(valid_efficiencies_all.min(), 2),
+                'trip_count': len(valid_efficiencies_all)
+            }
+        else:
+            stats['all_time'] = None
+        
+        # Also calculate total energy and distance for context
+        stats['totals'] = {
+            'last_day': {
+                'distance_km': float(trips_df[trips_df['date'] >= periods['last_day']]['distance'].sum()),
+                'energy_kwh': float(trips_df[trips_df['date'] >= periods['last_day']]['total_consumed'].sum() / 1000)
+            },
+            'last_week': {
+                'distance_km': float(trips_df[trips_df['date'] >= periods['last_week']]['distance'].sum()),
+                'energy_kwh': float(trips_df[trips_df['date'] >= periods['last_week']]['total_consumed'].sum() / 1000)
+            },
+            'last_month': {
+                'distance_km': float(trips_df[trips_df['date'] >= periods['last_month']]['distance'].sum()),
+                'energy_kwh': float(trips_df[trips_df['date'] >= periods['last_month']]['total_consumed'].sum() / 1000)
+            },
+            'all_time': {
+                'distance_km': float(trips_df['distance'].sum()),
+                'energy_kwh': float(trips_df['total_consumed'].sum() / 1000)
+            }
+        }
+        
+        return jsonify(stats)
+        
+    except Exception as e:
+        app.logger.error(f"Error calculating efficiency stats: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/locations')
+def get_all_locations():
+    """Get all trip locations for mapping"""
+    try:
+        trips_df = storage.get_trips_df()
+        
+        if trips_df.empty:
+            app.logger.warning("No trips found in DataFrame")
+            return jsonify([])
+        
+        app.logger.info(f"Found {len(trips_df)} trips total")
+        
+        # Get locations with valid coordinates
+        locations = []
+        coords_count = 0
+        for _, trip in trips_df.iterrows():
+            if pd.notna(trip.get('end_latitude')) and pd.notna(trip.get('end_longitude')):
+                coords_count += 1
+                locations.append({
+                    'lat': float(trip['end_latitude']),
+                    'lng': float(trip['end_longitude']),
+                    'date': str(trip['date']),
+                    'distance': float(trip['distance']) if pd.notna(trip['distance']) else 0,
+                    'duration': int(trip['duration']) if pd.notna(trip['duration']) else 0,
+                    'efficiency': round(trip['total_consumed'] / trip['distance'], 1) if trip['distance'] and trip['distance'] > 0 else None,
+                    'temperature': float(trip['end_temperature']) if pd.notna(trip.get('end_temperature')) else None
+                })
+        
+        # Also add current location if available
+        battery_df = storage.get_battery_df()
+        if not battery_df.empty:
+            latest = battery_df.iloc[-1]
+            # Get location from API client
+            if client:
+                try:
+                    data = client.get_vehicle_data()
+                    if data and data.get('location'):
+                        loc = data['location']
+                        if loc.get('latitude') and loc.get('longitude'):
+                            locations.append({
+                                'lat': float(loc['latitude']),
+                                'lng': float(loc['longitude']),
+                                'date': 'Current Location',
+                                'distance': 0,
+                                'duration': 0,
+                                'efficiency': None,
+                                'temperature': None,
+                                'is_current': True
+                            })
+                except:
+                    pass
+        
+        app.logger.info(f"Found {coords_count} trips with coordinates, returning {len(locations)} locations")
+        return jsonify(locations)
+        
+    except Exception as e:
+        app.logger.error(f"Error getting locations: {e}")
+        return jsonify([])
 
 @app.route('/api/collection-status')
 def get_collection_status():

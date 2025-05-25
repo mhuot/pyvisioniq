@@ -6,11 +6,14 @@
     <title>PyVisionic - Vehicle Data Dashboard</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
     <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 </head>
 <body>
     <header>
         <h1>PyVisionic Dashboard</h1>
         <div class="header-controls">
+            <a href="/cache/" class="cache-link" aria-label="View cache manager">Cache Manager</a>
             <button id="units-toggle" class="units-button" aria-label="Toggle between metric and imperial units">
                 <span class="units-text">km</span>
             </button>
@@ -44,9 +47,46 @@
             <p class="last-updated">Last updated: <span id="last-updated">Never</span></p>
         </section>
 
+        <section class="efficiency-stats" aria-labelledby="efficiency-heading">
+            <h2 id="efficiency-heading">Efficiency Statistics</h2>
+            <div class="efficiency-grid" id="efficiency-grid">
+                <div class="efficiency-card">
+                    <h3>Last 24 Hours</h3>
+                    <p class="efficiency-value" id="efficiency-day">--</p>
+                    <p class="efficiency-detail" id="efficiency-day-detail">--</p>
+                </div>
+                <div class="efficiency-card">
+                    <h3>Last Week</h3>
+                    <p class="efficiency-value" id="efficiency-week">--</p>
+                    <p class="efficiency-detail" id="efficiency-week-detail">--</p>
+                </div>
+                <div class="efficiency-card">
+                    <h3>Last Month</h3>
+                    <p class="efficiency-value" id="efficiency-month">--</p>
+                    <p class="efficiency-detail" id="efficiency-month-detail">--</p>
+                </div>
+                <div class="efficiency-card">
+                    <h3>All Time</h3>
+                    <p class="efficiency-value" id="efficiency-all">--</p>
+                    <p class="efficiency-detail" id="efficiency-all-detail">--</p>
+                </div>
+            </div>
+        </section>
+                
         <section class="chart-section" aria-labelledby="chart-heading">
             <h2 id="chart-heading">Battery & Temperature History</h2>
             <div id="battery-chart" class="chart-container" role="img" aria-label="Battery level and temperature chart"></div>
+        </section>
+
+        <section class="chart-section" aria-labelledby="energy-chart-heading">
+            <h2 id="energy-chart-heading">Energy Usage Breakdown</h2>
+            <div id="energy-chart" class="chart-container" role="img" aria-label="Energy consumption breakdown chart"></div>
+        </section>
+
+
+        <section class="map-section" aria-labelledby="map-heading">
+            <h2 id="map-heading">Trip Locations</h2>
+            <div id="locations-map" class="map-container" role="application" aria-label="Map showing trip locations"></div>
         </section>
 
         <section class="trips-section" aria-labelledby="trips-heading">
@@ -83,6 +123,7 @@
                             <th scope="col" rowspan="2">Duration</th>
                             <th scope="col" rowspan="2">Avg Speed</th>
                             <th scope="col" colspan="5">Energy Usage (Wh)</th>
+                            <th scope="col" rowspan="2">End Location</th>
                         </tr>
                         <tr>
                             <th scope="col">Drivetrain</th>
@@ -94,7 +135,7 @@
                     </thead>
                     <tbody id="trips-tbody">
                         <tr>
-                            <td colspan="9" class="no-data">No trip data available</td>
+                            <td colspan="10" class="no-data">No trip data available</td>
                         </tr>
                     </tbody>
                 </table>
@@ -113,6 +154,7 @@
                 </select>
             </div>
         </section>
+
         <section class="collection-status" aria-labelledby="collection-heading">
             <h2 id="collection-heading">Data Collection Status</h2>
             <div class="collection-info">

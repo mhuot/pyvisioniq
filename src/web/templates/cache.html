@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cache Manager - PyVisionic</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <style>
+        .cache-container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .cache-stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 30px;
+        }
+        .stat-card {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid #dee2e6;
+        }
+        .stat-card h3 {
+            margin: 0 0 10px 0;
+            font-size: 0.9em;
+            color: #6c757d;
+        }
+        .stat-card .value {
+            font-size: 1.5em;
+            font-weight: bold;
+            color: #495057;
+        }
+        .file-list {
+            background: white;
+            border: 1px solid #dee2e6;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        .file-item {
+            display: flex;
+            align-items: center;
+            padding: 15px;
+            border-bottom: 1px solid #dee2e6;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        .file-item:hover {
+            background-color: #f8f9fa;
+        }
+        .file-item:last-child {
+            border-bottom: none;
+        }
+        .file-icon {
+            margin-right: 15px;
+            font-size: 1.5em;
+        }
+        .file-info {
+            flex: 1;
+        }
+        .file-name {
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+        .file-meta {
+            font-size: 0.85em;
+            color: #6c757d;
+        }
+        .file-actions {
+            display: flex;
+            gap: 10px;
+        }
+        .btn {
+            padding: 5px 15px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.9em;
+            transition: opacity 0.2s;
+        }
+        .btn:hover {
+            opacity: 0.8;
+        }
+        .btn-primary {
+            background: #007bff;
+            color: white;
+        }
+        .btn-danger {
+            background: #dc3545;
+            color: white;
+        }
+        .btn-success {
+            background: #28a745;
+            color: white;
+        }
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.5);
+            z-index: 1000;
+        }
+        .modal-content {
+            background: white;
+            margin: 50px auto;
+            max-width: 90%;
+            max-height: 80vh;
+            overflow: auto;
+            padding: 20px;
+            border-radius: 8px;
+            position: relative;
+        }
+        .modal-close {
+            position: absolute;
+            top: 10px;
+            right: 15px;
+            font-size: 1.5em;
+            cursor: pointer;
+        }
+        pre {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 4px;
+            overflow-x: auto;
+            font-size: 0.85em;
+        }
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #6c757d;
+        }
+        .error {
+            background: #f8d7da;
+            color: #721c24;
+            padding: 15px;
+            border-radius: 4px;
+            margin: 20px 0;
+        }
+        .success {
+            background: #d4edda;
+            color: #155724;
+            padding: 15px;
+            border-radius: 4px;
+            margin: 20px 0;
+        }
+        .tag {
+            display: inline-block;
+            padding: 2px 8px;
+            font-size: 0.75em;
+            border-radius: 3px;
+            margin-left: 5px;
+        }
+        .tag-current {
+            background: #007bff;
+            color: white;
+        }
+        .tag-valid {
+            background: #28a745;
+            color: white;
+        }
+        .tag-history {
+            background: #6c757d;
+            color: white;
+        }
+        .tag-error {
+            background: #dc3545;
+            color: white;
+        }
+    </style>
+</head>
+<body>
+    <nav>
+        <h1>PyVisionic Cache Manager</h1>
+        <a href="/">← Back to Dashboard</a>
+    </nav>
+
+    <div class="cache-container">
+        <div class="cache-stats" id="cache-stats">
+            <div class="loading">Loading cache statistics...</div>
+        </div>
+
+        <div style="margin: 20px 0; display: flex; gap: 10px;">
+            <button class="btn btn-success" onclick="forceUpdate()">Force Cache Update</button>
+            <button class="btn btn-danger" onclick="clearOldCache()">Clear Old Files</button>
+            <button class="btn btn-primary" onclick="loadFiles()">Refresh List</button>
+        </div>
+
+        <div class="file-list" id="file-list">
+            <div class="loading">Loading cache files...</div>
+        </div>
+    </div>
+
+    <div id="file-modal" class="modal" onclick="if(event.target === this) closeModal()">
+        <div class="modal-content">
+            <span class="modal-close" onclick="closeModal()">&times;</span>
+            <div id="modal-body"></div>
+        </div>
+    </div>
+
+    <script>
+        let currentFiles = [];
+
+        async function loadFiles() {
+            try {
+                const response = await fetch('/cache/api/files');
+                const data = await response.json();
+                
+                if (response.ok) {
+                    displayStats(data.stats);
+                    displayFiles(data.files);
+                    currentFiles = data.files;
+                } else {
+                    showError(data.error || 'Failed to load cache files');
+                }
+            } catch (error) {
+                showError('Failed to connect to server');
+            }
+        }
+
+        function displayStats(stats) {
+            document.getElementById('cache-stats').innerHTML = `
+                <div class="stat-card">
+                    <h3>Total Files</h3>
+                    <div class="value">${stats.total_files}</div>
+                </div>
+                <div class="stat-card">
+                    <h3>Current Cache</h3>
+                    <div class="value">${stats.current_files}</div>
+                </div>
+                <div class="stat-card">
+                    <h3>History Files</h3>
+                    <div class="value">${stats.history_files}</div>
+                </div>
+                <div class="stat-card">
+                    <h3>Error Files</h3>
+                    <div class="value">${stats.error_files}</div>
+                </div>
+                <div class="stat-card">
+                    <h3>Total Size</h3>
+                    <div class="value">${formatBytes(stats.total_size)}</div>
+                </div>
+                <div class="stat-card">
+                    <h3>Cache Validity</h3>
+                    <div class="value">${Math.round(stats.cache_validity_minutes)} min</div>
+                </div>
+                <div class="stat-card">
+                    <h3>Retention Period</h3>
+                    <div class="value">${Math.round(stats.cache_retention_hours)} hrs</div>
+                </div>
+            `;
+        }
+
+        function displayFiles(files) {
+            const container = document.getElementById('file-list');
+            
+            if (files.length === 0) {
+                container.innerHTML = '<div class="loading">No cache files found</div>';
+                return;
+            }
+            
+            container.innerHTML = files.map(file => {
+                let icon = '📄';
+                let tags = [];
+                
+                if (file.is_history) {
+                    icon = '📚';
+                    tags.push('<span class="tag tag-history">history</span>');
+                } else if (file.is_error) {
+                    icon = '⚠️';
+                    tags.push('<span class="tag tag-error">error</span>');
+                } else {
+                    icon = '💾';
+                }
+                
+                return `
+                    <div class="file-item">
+                        <div class="file-icon">${icon}</div>
+                        <div class="file-info">
+                            <div class="file-name">
+                                ${file.name}
+                                ${tags.join('')}
+                            </div>
+                            <div class="file-meta">
+                                ${formatBytes(file.size)} • ${file.age_hours} hours ago • ${new Date(file.modified).toLocaleString()}
+                            </div>
+                        </div>
+                        <div class="file-actions">
+                            <button class="btn btn-primary" onclick="viewFile('${file.name}')">View</button>
+                            <button class="btn btn-danger" onclick="deleteFile('${file.name}')">Delete</button>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        async function viewFile(filename) {
+            try {
+                const response = await fetch(`/cache/api/file/${filename}`);
+                const data = await response.json();
+                
+                if (response.ok) {
+                    let modalContent = `<h2>${filename}</h2>`;
+                    
+                    if (data.is_current) {
+                        modalContent += '<span class="tag tag-current">current cache</span>';
+                    }
+                    if (data.is_valid) {
+                        modalContent += '<span class="tag tag-valid">valid</span>';
+                    }
+                    
+                    modalContent += `<pre>${JSON.stringify(data.content, null, 2)}</pre>`;
+                    
+                    document.getElementById('modal-body').innerHTML = modalContent;
+                    document.getElementById('file-modal').style.display = 'block';
+                } else {
+                    showError(data.error || 'Failed to load file');
+                }
+            } catch (error) {
+                showError('Failed to load file');
+            }
+        }
+
+        async function deleteFile(filename) {
+            if (!confirm(`Delete ${filename}?`)) return;
+            
+            try {
+                const response = await fetch(`/cache/api/delete/${filename}`, {
+                    method: 'DELETE'
+                });
+                const data = await response.json();
+                
+                if (response.ok) {
+                    showSuccess(data.message);
+                    loadFiles();
+                } else {
+                    showError(data.error || 'Failed to delete file');
+                }
+            } catch (error) {
+                showError('Failed to delete file');
+            }
+        }
+
+        async function forceUpdate() {
+            if (!confirm('Force a cache update? This will count against your daily API limit.')) return;
+            
+            try {
+                showInfo('Updating cache from API...');
+                const response = await fetch('/cache/api/force-update', {
+                    method: 'POST'
+                });
+                const data = await response.json();
+                
+                if (response.ok) {
+                    showSuccess(`Cache updated! Battery: ${data.data.battery_level}%, Range: ${data.data.range}km, Temp: ${data.data.temperature}°F`);
+                    loadFiles();
+                } else {
+                    showError(data.error || 'Failed to update cache');
+                }
+            } catch (error) {
+                showError('Failed to update cache');
+            }
+        }
+
+        async function clearOldCache() {
+            if (!confirm('Clear all cache files older than retention period?')) return;
+            
+            try {
+                const response = await fetch('/cache/api/clear-old', {
+                    method: 'POST'
+                });
+                const data = await response.json();
+                
+                if (response.ok) {
+                    showSuccess(data.message);
+                    loadFiles();
+                } else {
+                    showError(data.error || 'Failed to clear old cache');
+                }
+            } catch (error) {
+                showError('Failed to clear old cache');
+            }
+        }
+
+        function closeModal() {
+            document.getElementById('file-modal').style.display = 'none';
+        }
+
+        function formatBytes(bytes) {
+            if (bytes === 0) return '0 B';
+            const k = 1024;
+            const sizes = ['B', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        }
+
+        function showError(message) {
+            showMessage(message, 'error');
+        }
+
+        function showSuccess(message) {
+            showMessage(message, 'success');
+        }
+
+        function showInfo(message) {
+            showMessage(message, 'info');
+        }
+
+        function showMessage(message, type) {
+            const container = document.querySelector('.cache-container');
+            const existing = document.querySelector('.message-alert');
+            if (existing) existing.remove();
+            
+            const alert = document.createElement('div');
+            alert.className = `message-alert ${type}`;
+            alert.textContent = message;
+            container.insertBefore(alert, container.firstChild);
+            
+            if (type !== 'info') {
+                setTimeout(() => alert.remove(), 5000);
+            }
+        }
+
+        // Load files on page load
+        loadFiles();
+        
+        // Refresh every 30 seconds
+        setInterval(loadFiles, 30000);
+    </script>
+</body>
+</html>

@@ -25,9 +25,13 @@ Usage:
     locations_df = storage.get_locations_df()
 """
 import csv
+import logging
 from datetime import datetime
 from pathlib import Path
 import pandas as pd
+
+# Set up logging
+logger = logging.getLogger(__name__)
 class CSVStorage:
     """CSVStorage class for storing and retrieving vehicle data in CSV files.
     This class manages three types of data: trips, battery status, and locations,
@@ -59,7 +63,8 @@ class CSVStorage:
                     'average_speed', 'max_speed', 'idle_time', 'trips_count',
                     'total_consumed', 'regenerated_energy',
                     'accessories_consumed', 'climate_consumed', 'drivetrain_consumed',
-                    'battery_care_consumed', 'odometer_start'
+                    'battery_care_consumed', 'odometer_start',
+                    'end_latitude', 'end_longitude', 'end_temperature'
                 ])
                 writer.writeheader()
         
@@ -103,7 +108,9 @@ class CSVStorage:
                 if not existing_df.empty:
                     # Create unique identifier from date and distance (and odometer if available)
                     for _, row in existing_df.iterrows():
-                        trip_id = f"{row['date']}_{row['distance']}"
+                        # Normalize date format (remove .0 from end)
+                        date_str = str(row['date']).replace('.0', '') if pd.notna(row['date']) else ''
+                        trip_id = f"{date_str}_{row['distance']}"
                         if pd.notna(row.get('odometer_start')):
                             trip_id += f"_{row['odometer_start']}"
                         existing_trips.add(trip_id)
@@ -112,7 +119,9 @@ class CSVStorage:
             new_trips = []
             skipped_count = 0
             for trip in trips:
-                trip_id = f"{trip['date']}_{trip['distance']}"
+                # Normalize date format (remove .0 from end)
+                date_str = str(trip['date']).replace('.0', '') if trip.get('date') else ''
+                trip_id = f"{date_str}_{trip['distance']}"
                 if trip.get('odometer_start') is not None:
                     trip_id += f"_{trip['odometer_start']}"
                 
@@ -133,7 +142,8 @@ class CSVStorage:
                         'average_speed', 'max_speed', 'idle_time', 'trips_count',
                         'total_consumed', 'regenerated_energy',
                         'accessories_consumed', 'climate_consumed', 'drivetrain_consumed',
-                        'battery_care_consumed', 'odometer_start'
+                        'battery_care_consumed', 'odometer_start',
+                        'end_latitude', 'end_longitude', 'end_temperature'
                     ])
                     for trip in new_trips:
                         trip['timestamp'] = timestamp

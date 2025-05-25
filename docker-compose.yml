@@ -4,17 +4,22 @@ services:
     ports:
       - "${PORT:-5000}:${PORT:-5000}"
     environment:
-      - HYUNDAI_USERNAME=${BLUELINKUSER}
-      - HYUNDAI_PASSWORD=${BLUELINKPASS}
-      - HYUNDAI_PIN=${BLUELINKPIN}
-      - VEHICLE_ID=${BLUELINKVID}
+      - BLUELINKUSER=${BLUELINKUSER}
+      - BLUELINKPASS=${BLUELINKPASS}
+      - BLUELINKPIN=${BLUELINKPIN}
+      - BLUELINKVID=${BLUELINKVID}
+      - BLUELINKREGION=${BLUELINKREGION:-3}
+      - BLUELINKBRAND=${BLUELINKBRAND:-2}
       - FLASK_ENV=${FLASK_ENV:-production}
       - PORT=${PORT:-5000}
       - API_DAILY_LIMIT=${API_DAILY_LIMIT:-30}
+      - API_CACHE_ENABLED=${API_CACHE_ENABLED:-true}
+      - CACHE_DURATION_HOURS=${CACHE_DURATION_HOURS:-48}
       - TZ=${TZ:-UTC}
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs
+      - ./cache:/app/cache
     restart: unless-stopped
     command: >
       sh -c "nohup python data_collector.py > /app/logs/collector.log 2>&1 &

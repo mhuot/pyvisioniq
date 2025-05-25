@@ -43,6 +43,27 @@ header {
     gap: 1.5rem;
 }
 
+.cache-link {
+    padding: 0.75rem 1.5rem;
+    background-color: #17a2b8;
+    color: white;
+    text-decoration: none;
+    border-radius: var(--border-radius);
+    font-size: 1rem;
+    font-weight: 500;
+    transition: all 0.3s ease;
+}
+
+.cache-link:hover {
+    background-color: #138496;
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-hover);
+}
+
+.cache-link:active {
+    transform: translateY(0);
+}
+
 .units-button {
     background-color: rgba(255, 255, 255, 0.2);
     color: white;
@@ -175,6 +196,45 @@ h2 {
     margin-top: 1rem;
 }
 
+.efficiency-stats {
+    background-color: var(--card-bg);
+}
+
+.efficiency-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 1.5rem;
+    margin-top: 1rem;
+}
+
+.efficiency-card {
+    background-color: var(--bg-color);
+    padding: 1.5rem;
+    border-radius: var(--border-radius);
+    text-align: center;
+    border: 1px solid rgba(0, 0, 0, 0.1);
+}
+
+.efficiency-card h3 {
+    font-size: 0.9rem;
+    color: var(--text-light);
+    margin-bottom: 0.5rem;
+    font-weight: 500;
+}
+
+.efficiency-value {
+    font-size: 2rem;
+    font-weight: 700;
+    color: var(--success-color);
+    margin: 0.5rem 0;
+}
+
+.efficiency-detail {
+    font-size: 0.8rem;
+    color: var(--text-light);
+    margin: 0;
+}
+
 .collection-status {
     background-color: var(--bg-color);
     border-left: 4px solid var(--secondary-color);
@@ -201,6 +261,40 @@ h2 {
     width: 100%;
     height: 400px;
     margin-top: 1rem;
+}
+
+.map-container {
+    width: 100%;
+    height: 400px;
+    margin-top: 1rem;
+    border-radius: var(--border-radius);
+    overflow: hidden;
+}
+
+.map-section {
+    background-color: var(--card-bg);
+    padding: 2rem;
+    margin-bottom: 2rem;
+    border-radius: var(--border-radius);
+    box-shadow: var(--shadow);
+}
+
+#trip-map {
+    height: 300px;
+    margin: 20px 0;
+    border-radius: var(--border-radius);
+}
+
+.no-data {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 200px;
+    color: #666;
+    font-style: italic;
+    background-color: var(--bg-color);
+    border: 1px dashed #ddd;
+    border-radius: 8px;
 }
 
 /* Trips Filters */
@@ -355,6 +449,81 @@ a:focus {
     }
 }
 
+/* Modal styles */
+.modal {
+    display: none;
+    position: fixed;
+    z-index: 1000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    overflow: auto;
+    background-color: rgba(0, 0, 0, 0.5);
+}
+
+.modal-content {
+    background-color: var(--card-bg);
+    margin: 50px auto;
+    padding: 30px;
+    border: 1px solid var(--border-color, #dee2e6);
+    width: 90%;
+    max-width: 1000px;
+    max-height: 90vh;
+    overflow-y: auto;
+    border-radius: var(--border-radius);
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+    position: relative;
+}
+
+.modal-close {
+    color: var(--text-light);
+    float: right;
+    font-size: 28px;
+    font-weight: bold;
+    cursor: pointer;
+    line-height: 20px;
+}
+
+.modal-close:hover,
+.modal-close:focus {
+    color: var(--text-color);
+    text-decoration: none;
+}
+
+.trip-stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 15px;
+    margin: 20px 0;
+}
+
+.trip-stats-grid .stat-card {
+    background-color: var(--bg-color);
+    padding: 15px;
+    border-radius: var(--border-radius);
+    text-align: center;
+}
+
+.trip-stats-grid .stat-card h3 {
+    font-size: 0.85rem;
+    color: var(--text-light);
+    margin-bottom: 5px;
+}
+
+.trip-stats-grid .stat-card p {
+    font-size: 1.25rem;
+    font-weight: bold;
+    color: var(--primary-color);
+    margin: 0;
+}
+
+/* Trip row hover effect */
+.trip-row:hover {
+    background-color: var(--bg-color);
+    transition: background-color 0.2s;
+}
+
 /* Responsive design */
 @media (max-width: 768px) {
     header {
@@ -369,13 +538,18 @@ a:focus {
         gap: 1rem;
     }
     
-    .units-button {
-        order: 2;
+    .cache-link {
+        order: 1;
         width: 100%;
     }
     
     .refresh-button {
-        order: 1;
+        order: 2;
+        width: 100%;
+    }
+    
+    .units-button {
+        order: 3;
         width: 100%;
     }
     

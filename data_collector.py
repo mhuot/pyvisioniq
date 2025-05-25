@@ -108,8 +108,18 @@ class DataCollector:
         self.calls_today = 0
         self.last_reset = datetime.now().date()
         self.last_call_time = None
+        self._rate_limit_backoff = 1.0  # Reset backoff on daily reset
         self.save_call_history()
         logger.info("Daily API call counter reset")
+    
+    def _extend_next_collection_interval(self):
+        """Extend the next collection interval due to rate limiting"""
+        if hasattr(self, '_rate_limit_backoff'):
+            self._rate_limit_backoff = min(self._rate_limit_backoff * 1.5, 4.0)  # Cap at 4x
+        else:
+            self._rate_limit_backoff = 1.5  # Start with 50% longer interval
+        
+        logger.info(f"Extended collection interval by {self._rate_limit_backoff:.1f}x due to rate limits")
     
     def can_make_api_call(self):
         """Check if we can make an API call without exceeding limits"""
@@ -154,9 +164,21 @@ class DataCollector:
                 logger.error("Failed to collect data - no data returned")
                 return False
                 
-        except (IOError, ValueError, KeyError) as e:
-            logger.error("Error collecting data: %s", e)
-            return False
+        except Exception as e:
+            error_msg = str(e).lower()
+            
+            # Check for rate limit errors
+            if any(phrase in error_msg for phrase in [
+                'rate limit', 'too many requests', 'quota exceeded', 
+                'throttled', '429', 'limit exceeded'
+            ]):
+                logger.warning("Rate limit exceeded, will extend next collection interval")
+                # Extend the next collection by 50% to avoid further rate limits
+                self._extend_next_collection_interval()
+                return False
+            else:
+                logger.error("Error collecting data: %s", e)
+                return False
     
     def calculate_next_collection_time(self):
         """Calculate optimal collection times based on last call and interval"""
@@ -164,10 +186,16 @@ class DataCollector:
         
         # If we have a last call time, calculate next time based on interval
         if self.last_call_time:
-            next_time = self.last_call_time + timedelta(minutes=self.collection_interval_minutes)
+            # Apply rate limit backoff if active
+            backoff_multiplier = getattr(self, '_rate_limit_backoff', 1.0)
+            adjusted_interval = self.collection_interval_minutes * backoff_multiplier
+            
+            next_time = self.last_call_time + timedelta(minutes=adjusted_interval)
             
             # If next time is in the future, use it
             if next_time > now:
+                if backoff_multiplier > 1.0:
+                    logger.info(f"Next collection delayed by {backoff_multiplier:.1f}x due to rate limits")
                 return next_time
         
         # Otherwise, use the scheduled times for today

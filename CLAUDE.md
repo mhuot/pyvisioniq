@@ -50,3 +50,8 @@ When implementing tests, ensure coverage for:
 - Data storage and retrieval
 - Chart data transformation
 - WCAG AAA compliance verification
+
+## Reminders
+
+- Don't forget to use the venv
+- Use docker compose not docker-compose
