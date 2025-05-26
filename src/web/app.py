@@ -54,7 +54,8 @@ def index():
 @app.route('/favicon.ico')
 def favicon():
     # Check if we have a favicon.png to serve
-    favicon_path = Path('src/web/static/favicon.png')
+    # Use absolute path relative to the app file location
+    favicon_path = Path(__file__).parent / 'static' / 'favicon.png'
     if favicon_path.exists():
         return send_file(favicon_path, mimetype='image/png')
     return '', 204  # No content
@@ -86,55 +87,37 @@ def refresh_data():
         return jsonify({"status": "error", "message": "API client not initialized. Please check your .env configuration."}), 500
     
     try:
-        # Add timeout protection
-        import signal
+        # Force a cache update to get fresh data
+        # Note: timeout is handled within the client
+        data = client.force_cache_update()
         
-        def timeout_handler(signum, frame):
-            raise TimeoutError("API request timed out")
-        
-        # Set 30 second timeout
-        signal.signal(signal.SIGALRM, timeout_handler)
-        signal.alarm(30)
-        
-        try:
-            # Force a cache update to get fresh data
-            data = client.force_cache_update()
-            signal.alarm(0)  # Cancel timeout
+        if data:
+            storage.store_vehicle_data(data)
             
-            if data:
-                storage.store_vehicle_data(data)
-                
-                # Include data freshness info in response
-                api_updated = data.get('api_last_updated', 'Unknown')
-                if api_updated and api_updated != 'Unknown':
-                    try:
-                        from datetime import datetime
-                        api_time = datetime.fromisoformat(str(api_updated).replace('Z', '+00:00'))
-                        age_minutes = int((datetime.now(api_time.tzinfo) - api_time).total_seconds() / 60)
-                        freshness_msg = f" (vehicle data from {age_minutes} minutes ago)"
-                    except:
-                        freshness_msg = ""
-                else:
+            # Include data freshness info in response
+            api_updated = data.get('api_last_updated', 'Unknown')
+            if api_updated and api_updated != 'Unknown':
+                try:
+                    from datetime import datetime
+                    api_time = datetime.fromisoformat(str(api_updated).replace('Z', '+00:00'))
+                    age_minutes = int((datetime.now(api_time.tzinfo) - api_time).total_seconds() / 60)
+                    freshness_msg = f" (vehicle data from {age_minutes} minutes ago)"
+                except:
                     freshness_msg = ""
-                
-                return jsonify({
-                    "status": "success", 
-                    "message": f"Data refreshed successfully{freshness_msg}"
-                })
             else:
-                return jsonify({
-                    "status": "error", 
-                    "message": "Failed to fetch data. The vehicle may be offline or in an area without coverage."
-                }), 500
-        except TimeoutError:
-            signal.alarm(0)  # Cancel timeout
+                freshness_msg = ""
+            
+            return jsonify({
+                "status": "success", 
+                "message": f"Data refreshed successfully{freshness_msg}"
+            })
+        else:
             return jsonify({
                 "status": "error", 
-                "message": "Request timed out after 30 seconds. The vehicle may be offline or the Hyundai/Kia servers are slow to respond."
-            }), 504
+                "message": "Failed to fetch data. The vehicle may be offline or in an area without coverage."
+            }), 500
             
     except APIError as e:
-        signal.alarm(0)  # Cancel timeout if set
         # Use our custom error classification
         status_code = 429 if e.error_type == "rate_limit" else 500
         return jsonify({
@@ -144,7 +127,6 @@ def refresh_data():
         }), status_code
         
     except Exception as e:
-        signal.alarm(0)  # Cancel timeout if set
         # Fallback for unexpected errors
         app.logger.error(f"Unexpected error in refresh_data: {type(e).__name__}: {str(e)}")
         return jsonify({
@@ -408,6 +390,108 @@ def debug_api():
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
+@app.route('/api/temperature-efficiency')
+def get_temperature_efficiency():
+    """Get efficiency data correlated with temperature"""
+    try:
+        trips_df = storage.get_trips_df()
+        battery_df = storage.get_battery_df()
+        
+        if trips_df.empty or battery_df.empty:
+            return jsonify({"error": "No data available"}), 404
+        
+        # Merge trips with battery data to get temperature
+        # First, get the closest battery reading for each trip
+        efficiency_data = []
+        
+        for _, trip in trips_df.iterrows():
+            if trip['distance'] > 0 and trip['total_consumed'] and trip['total_consumed'] > 0:
+                # Calculate efficiency
+                efficiency_wh_per_km = trip['total_consumed'] / trip['distance']
+                efficiency_mi_per_kwh = 1000 / (efficiency_wh_per_km * 1.60934)
+                
+                # Find closest battery reading to get temperature
+                trip_time = pd.to_datetime(trip['date'])
+                battery_df['timestamp'] = pd.to_datetime(battery_df['timestamp'])
+                time_diffs = abs(battery_df['timestamp'] - trip_time)
+                closest_idx = time_diffs.idxmin()
+                
+                if time_diffs[closest_idx] < pd.Timedelta(hours=1):  # Within 1 hour
+                    temp = battery_df.loc[closest_idx, 'temperature']
+                    if pd.notna(temp):
+                        efficiency_data.append({
+                            'temperature': float(temp),
+                            'efficiency': float(efficiency_mi_per_kwh),
+                            'distance': float(trip['distance']),
+                            'date': trip['date'].isoformat() if hasattr(trip['date'], 'isoformat') else str(trip['date'])
+                        })
+        
+        if not efficiency_data:
+            return jsonify({"error": "No efficiency data with temperature available"}), 404
+        
+        # Create temperature bins (5°C ranges)
+        temp_bins = {}
+        for data_point in efficiency_data:
+            temp = data_point['temperature']
+            # Create 5°C bins: -20 to -15, -15 to -10, etc.
+            bin_start = int(temp // 5) * 5
+            bin_label = f"{bin_start} to {bin_start + 5}°C"
+            
+            if bin_label not in temp_bins:
+                temp_bins[bin_label] = {
+                    'temperatures': [],
+                    'efficiencies': [],
+                    'count': 0,
+                    'total_distance': 0
+                }
+            
+            temp_bins[bin_label]['temperatures'].append(temp)
+            temp_bins[bin_label]['efficiencies'].append(data_point['efficiency'])
+            temp_bins[bin_label]['count'] += 1
+            temp_bins[bin_label]['total_distance'] += data_point['distance']
+        
+        # Calculate averages for each bin
+        bin_stats = []
+        for bin_label, data in temp_bins.items():
+            if data['efficiencies']:
+                avg_efficiency = sum(data['efficiencies']) / len(data['efficiencies'])
+                avg_temp = sum(data['temperatures']) / len(data['temperatures'])
+                
+                bin_stats.append({
+                    'temperature_range': bin_label,
+                    'avg_temperature': round(avg_temp, 1),
+                    'avg_efficiency': round(avg_efficiency, 2),
+                    'trip_count': data['count'],
+                    'total_distance': round(data['total_distance'], 1),
+                    'best_efficiency': round(max(data['efficiencies']), 2),
+                    'worst_efficiency': round(min(data['efficiencies']), 2)
+                })
+        
+        # Sort by average temperature
+        bin_stats.sort(key=lambda x: x['avg_temperature'])
+        
+        return jsonify({
+            'raw_data': efficiency_data,
+            'temperature_bins': bin_stats,
+            'summary': {
+                'total_trips': len(efficiency_data),
+                'temperature_range': {
+                    'min': round(min(d['temperature'] for d in efficiency_data), 1),
+                    'max': round(max(d['temperature'] for d in efficiency_data), 1)
+                },
+                'efficiency_range': {
+                    'min': round(min(d['efficiency'] for d in efficiency_data), 2),
+                    'max': round(max(d['efficiency'] for d in efficiency_data), 2)
+                }
+            }
+        })
+        
+    except Exception as e:
+        app.logger.error(f"Error in temperature-efficiency analysis: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
 @app.route('/api/efficiency-stats')
 def get_efficiency_stats():
     """Get efficiency statistics for different time periods"""
@@ -566,6 +650,43 @@ def get_all_locations():
         app.logger.error(f"Error getting locations: {e}")
         return jsonify([])
 
+@app.route('/api/charging-sessions')
+def get_charging_sessions():
+    """Get charging session history"""
+    try:
+        sessions_df = storage.get_charging_sessions_df()
+        
+        if sessions_df.empty:
+            return jsonify([])
+        
+        # Sort by start time descending (most recent first)
+        sessions_df = sessions_df.sort_values('start_time', ascending=False)
+        
+        # Convert to JSON-friendly format
+        sessions = []
+        for _, session in sessions_df.iterrows():
+            session_data = {
+                'session_id': session['session_id'],
+                'start_time': session['start_time'].isoformat() if pd.notna(session['start_time']) else None,
+                'end_time': session['end_time'].isoformat() if pd.notna(session['end_time']) else None,
+                'duration_minutes': session['duration_minutes'],
+                'start_battery': session['start_battery'],
+                'end_battery': session['end_battery'],
+                'energy_added': session['energy_added'],
+                'avg_power': session['avg_power'],
+                'max_power': session['max_power'],
+                'location_lat': session['location_lat'],
+                'location_lon': session['location_lon'],
+                'is_complete': session['is_complete']
+            }
+            sessions.append(session_data)
+        
+        return jsonify(sessions)
+        
+    except Exception as e:
+        app.logger.error(f"Error getting charging sessions: {e}")
+        return jsonify([])
+
 @app.route('/api/collection-status')
 def get_collection_status():
     """Get data collection status"""
@@ -581,9 +702,32 @@ def get_collection_status():
             
             if calls_today < daily_limit:
                 # Calculate based on evenly distributed collections
-                last_call = datetime.fromisoformat(history.get('last_call', datetime.now().isoformat()))
+                last_call_str = history.get('last_call')
                 interval_minutes = (24 * 60) // daily_limit
-                next_collection = last_call + timedelta(minutes=interval_minutes)
+                now = datetime.now()
+                
+                if last_call_str:
+                    last_call = datetime.fromisoformat(last_call_str)
+                    next_collection = last_call + timedelta(minutes=interval_minutes)
+                    
+                    # If the calculated time has passed, find the next scheduled slot
+                    if next_collection <= now:
+                        # Calculate today's scheduled times
+                        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+                        
+                        # Find next available slot
+                        for i in range(calls_today, daily_limit):
+                            scheduled_time = today_start + timedelta(minutes=interval_minutes * i)
+                            if scheduled_time > now:
+                                next_collection = scheduled_time
+                                break
+                        else:
+                            # No more slots today, schedule for tomorrow
+                            tomorrow = today_start + timedelta(days=1)
+                            next_collection = tomorrow
+                else:
+                    # No last call, schedule for next available slot
+                    next_collection = now + timedelta(minutes=1)
             else:
                 # Next collection tomorrow at midnight
                 tomorrow = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
@@ -615,15 +759,47 @@ def get_current_status():
             latest_json = battery_df.iloc[[-1]].to_json(orient='records', date_format='iso')
             latest_data = json.loads(latest_json)[0]
             
-            return jsonify({
+            # Get weather data if using meteo
+            weather_data = None
+            weather_source = os.getenv('WEATHER_SOURCE', 'meteo').lower()
+            if weather_source == 'meteo':
+                # Get latest location
+                location_df = storage.get_locations_df()
+                if not location_df.empty:
+                    latest_location = location_df.iloc[-1]
+                    lat = latest_location.get('latitude')
+                    lon = latest_location.get('longitude')
+                    
+                    if lat and lon:
+                        from src.utils.weather import WeatherService
+                        weather_service = WeatherService()
+                        weather_data = weather_service.get_current_weather(lat, lon)
+            
+            response_data = {
                 "battery_level": latest_data.get('battery_level'),
                 "is_charging": latest_data.get('is_charging'),
                 "charging_power": latest_data.get('charging_power'),
                 "range": latest_data.get('range'),
                 "temperature": latest_data.get('temperature'),
+                "meteo_temp": latest_data.get('meteo_temp'),
+                "vehicle_temp": latest_data.get('vehicle_temp'),
                 "odometer": latest_data.get('odometer'),
-                "last_updated": latest_data.get('timestamp')
-            })
+                "last_updated": latest_data.get('timestamp'),
+                "weather_source": weather_source
+            }
+            
+            # Add weather data if available
+            if weather_data:
+                response_data['weather'] = {
+                    'temperature': weather_data.get('temperature'),
+                    'temperature_unit': weather_data.get('temperature_unit', 'F'),
+                    'feels_like': weather_data.get('feels_like'),
+                    'humidity': weather_data.get('humidity'),
+                    'description': weather_data.get('description'),
+                    'wind_speed': weather_data.get('wind_speed')
+                }
+            
+            return jsonify(response_data)
         return jsonify({
             "battery_level": None,
             "is_charging": None,

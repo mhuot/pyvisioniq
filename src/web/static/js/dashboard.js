@@ -6,6 +6,7 @@ let mapMarkers = [];
 // Chart instances
 let batteryChart = null;
 let energyChart = null;
+let tempEfficiencyChart = null;
 
 document.addEventListener('DOMContentLoaded', function() {
     const refreshBtn = document.getElementById('refresh-btn');
@@ -100,10 +101,53 @@ document.addEventListener('DOMContentLoaded', function() {
                 range.textContent = Math.round(rangeValue) + (currentUnits === 'metric' ? ' km' : ' mi');
             }
             
-            if (data.temperature !== null && temperature) {
-                const tempValue = currentUnits === 'metric' ? 
-                    data.temperature : conversions.celsiusToFahrenheit(data.temperature);
-                temperature.textContent = Math.round(tempValue) + '°' + (currentUnits === 'metric' ? 'C' : 'F');
+            if (temperature) {
+                // Check if we have weather data from Meteo
+                if (data.weather && data.weather_source === 'meteo') {
+                    // Weather data from Meteo comes in Fahrenheit
+                    const tempF = data.weather.temperature;
+                    const tempValue = currentUnits === 'metric' ? 
+                        conversions.fahrenheitToCelsius(tempF) : tempF;
+                    
+                    let weatherText = Math.round(tempValue) + '°' + (currentUnits === 'metric' ? 'C' : 'F');
+                    
+                    // Add weather description if available
+                    if (data.weather.description) {
+                        weatherText += ` - ${data.weather.description}`;
+                    }
+                    
+                    temperature.innerHTML = weatherText;
+                    
+                    // Add title attribute with more details including vehicle sensor comparison
+                    let titleText = '';
+                    if (data.weather.feels_like && data.weather.humidity) {
+                        const feelsLike = currentUnits === 'metric' ? 
+                            conversions.fahrenheitToCelsius(data.weather.feels_like) : data.weather.feels_like;
+                        titleText = `Feels like: ${Math.round(feelsLike)}°, Humidity: ${data.weather.humidity}%, Wind: ${data.weather.wind_speed} mph`;
+                    }
+                    
+                    // Add vehicle sensor comparison if available
+                    if (data.vehicle_temp !== null && data.vehicle_temp !== undefined) {
+                        const vehicleTempValue = currentUnits === 'metric' ? 
+                            data.vehicle_temp : conversions.celsiusToFahrenheit(data.vehicle_temp);
+                        titleText += `\nVehicle sensor: ${Math.round(vehicleTempValue)}°${currentUnits === 'metric' ? 'C' : 'F'}`;
+                        
+                        // Show difference
+                        if (data.meteo_temp !== null) {
+                            const diff = Math.abs(data.meteo_temp - data.vehicle_temp);
+                            titleText += ` (${diff.toFixed(1)}° difference)`;
+                        }
+                    }
+                    
+                    if (titleText) {
+                        temperature.title = titleText;
+                    }
+                } else if (data.temperature !== null) {
+                    // Fallback to vehicle sensor (already in Celsius)
+                    const tempValue = currentUnits === 'metric' ? 
+                        data.temperature : conversions.celsiusToFahrenheit(data.temperature);
+                    temperature.textContent = Math.round(tempValue) + '°' + (currentUnits === 'metric' ? 'C' : 'F') + ' (vehicle)';
+                }
             }
             
             if (data.odometer !== null && odometer) {
@@ -126,6 +170,8 @@ document.addEventListener('DOMContentLoaded', function() {
     loadBatteryHistory();
     loadCollectionStatus();
     loadEfficiencyStats();
+    loadChargingSessions();
+    loadTemperatureEfficiency();
     
     // Initialize and load map
     initializeLocationsMap();
@@ -148,6 +194,8 @@ document.addEventListener('DOMContentLoaded', function() {
                 loadTripsWithPagination();
                 loadEfficiencyStats();
                 loadLocationsMap();
+                loadChargingSessions();
+                loadTemperatureEfficiency();
             } else {
                 // Show specific error message with appropriate styling
                 const errorType = data.error_type || 'error';
@@ -538,16 +586,31 @@ document.addEventListener('DOMContentLoaded', function() {
     }
     
     function formatDate(date) {
-        if (!(date instanceof Date)) {
-            date = new Date(date);
+        // Handle special cases
+        if (date === 'Current Location' || !date) {
+            return 'Current Location';
         }
+        
+        // Clean pandas timestamp format (remove .0 suffix)
+        if (typeof date === 'string') {
+            date = date.replace(/\.0+$/, '');
+        }
+        
+        // Try to create Date object
+        const dateObj = new Date(date);
+        
+        // Check if date is valid
+        if (isNaN(dateObj.getTime())) {
+            return date.toString(); // Return original if can't parse
+        }
+        
         const options = { 
             month: 'short', 
             day: 'numeric', 
             hour: '2-digit', 
             minute: '2-digit' 
         };
-        return date.toLocaleDateString('en-US', options);
+        return dateObj.toLocaleDateString('en-US', options);
     }
     
     async function loadCollectionStatus() {
@@ -701,6 +764,238 @@ document.addEventListener('DOMContentLoaded', function() {
             
         } catch (error) {
             console.error('Error loading efficiency stats:', error);
+        }
+    }
+    
+    async function loadTemperatureEfficiency() {
+        try {
+            const response = await fetch('/api/temperature-efficiency');
+            const data = await response.json();
+            
+            if (!response.ok || !data.raw_data || data.raw_data.length === 0) {
+                document.getElementById('temperature-stats').innerHTML = 
+                    '<div class="no-data">Not enough data to show temperature impact on efficiency</div>';
+                return;
+            }
+            
+            // Create scatter plot with trend line
+            const ctx = document.getElementById('temperature-efficiency-chart').getContext('2d');
+            
+            // Prepare data for scatter plot
+            const scatterData = data.raw_data.map(point => ({
+                x: point.temperature,
+                y: point.efficiency
+            }));
+            
+            // Prepare data for bar chart (binned data)
+            const barLabels = data.temperature_bins.map(bin => bin.temperature_range);
+            const barData = data.temperature_bins.map(bin => bin.avg_efficiency);
+            const tripCounts = data.temperature_bins.map(bin => bin.trip_count);
+            
+            // Update or create chart
+            if (tempEfficiencyChart) {
+                tempEfficiencyChart.data.datasets[0].data = scatterData;
+                tempEfficiencyChart.data.datasets[1].data = barData;
+                tempEfficiencyChart.data.labels = barLabels;
+                tempEfficiencyChart.update('none');
+            } else {
+                tempEfficiencyChart = new Chart(ctx, {
+                    type: 'scatter',
+                    data: {
+                        labels: barLabels,
+                        datasets: [{
+                            label: 'Trip Efficiency',
+                            data: scatterData,
+                            backgroundColor: 'rgba(52, 152, 219, 0.5)',
+                            borderColor: 'rgba(52, 152, 219, 1)',
+                            pointRadius: 5,
+                            type: 'scatter'
+                        }, {
+                            label: 'Average by Temperature Range',
+                            data: barData,
+                            backgroundColor: 'rgba(231, 76, 60, 0.7)',
+                            borderColor: 'rgba(231, 76, 60, 1)',
+                            borderWidth: 2,
+                            type: 'bar',
+                            yAxisID: 'y',
+                            xAxisID: 'x2'
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        interaction: {
+                            mode: 'index',
+                            intersect: false
+                        },
+                        plugins: {
+                            title: {
+                                display: true,
+                                text: 'How Temperature Affects Your EV Efficiency',
+                                font: { size: 16 }
+                            },
+                            legend: {
+                                display: true,
+                                position: 'top'
+                            },
+                            tooltip: {
+                                callbacks: {
+                                    label: function(context) {
+                                        if (context.dataset.type === 'scatter') {
+                                            return `${context.parsed.x.toFixed(1)}°C: ${context.parsed.y.toFixed(2)} mi/kWh`;
+                                        } else {
+                                            const binIndex = context.dataIndex;
+                                            const bin = data.temperature_bins[binIndex];
+                                            return [
+                                                `Average: ${context.parsed.y.toFixed(2)} mi/kWh`,
+                                                `Trips: ${bin.trip_count}`,
+                                                `Distance: ${bin.total_distance} km`
+                                            ];
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        scales: {
+                            x: {
+                                type: 'linear',
+                                position: 'bottom',
+                                title: {
+                                    display: true,
+                                    text: 'Temperature (°C)'
+                                },
+                                grid: {
+                                    display: true
+                                }
+                            },
+                            x2: {
+                                type: 'category',
+                                position: 'bottom',
+                                display: false,
+                                grid: {
+                                    display: false
+                                }
+                            },
+                            y: {
+                                type: 'linear',
+                                title: {
+                                    display: true,
+                                    text: 'Efficiency (mi/kWh)'
+                                },
+                                min: 0
+                            }
+                        }
+                    }
+                });
+            }
+            
+            // Display statistics
+            let statsHtml = '<div class="temp-efficiency-stats">';
+            statsHtml += '<h3>Temperature Impact Summary</h3>';
+            statsHtml += '<div class="stats-grid">';
+            
+            // Find best and worst temperature ranges
+            const bestBin = data.temperature_bins.reduce((a, b) => 
+                a.avg_efficiency > b.avg_efficiency ? a : b
+            );
+            const worstBin = data.temperature_bins.reduce((a, b) => 
+                a.avg_efficiency < b.avg_efficiency ? a : b
+            );
+            
+            statsHtml += `
+                <div class="stat-item">
+                    <span class="stat-label">Best Efficiency Range:</span>
+                    <span class="stat-value">${bestBin.temperature_range}</span>
+                    <span class="stat-detail">${bestBin.avg_efficiency} mi/kWh average</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">Worst Efficiency Range:</span>
+                    <span class="stat-value">${worstBin.temperature_range}</span>
+                    <span class="stat-detail">${worstBin.avg_efficiency} mi/kWh average</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">Efficiency Loss:</span>
+                    <span class="stat-value">${((1 - worstBin.avg_efficiency / bestBin.avg_efficiency) * 100).toFixed(1)}%</span>
+                    <span class="stat-detail">From best to worst conditions</span>
+                </div>
+            `;
+            
+            statsHtml += '</div></div>';
+            document.getElementById('temperature-stats').innerHTML = statsHtml;
+            
+        } catch (error) {
+            console.error('Error loading temperature efficiency data:', error);
+            document.getElementById('temperature-stats').innerHTML = 
+                '<div class="no-data">Error loading temperature efficiency data</div>';
+        }
+    }
+    
+    async function loadChargingSessions() {
+        try {
+            const response = await fetch('/api/charging-sessions');
+            const sessions = await response.json();
+            
+            const container = document.getElementById('charging-sessions-container');
+            if (!container) return;
+            
+            if (sessions.length === 0) {
+                container.innerHTML = '<div class="no-data">No charging sessions recorded yet</div>';
+                return;
+            }
+            
+            let html = '<div class="sessions-grid">';
+            
+            sessions.forEach(session => {
+                const startTime = new Date(session.start_time);
+                const endTime = session.end_time ? new Date(session.end_time) : null;
+                const duration = session.duration_minutes;
+                
+                const formatDuration = (minutes) => {
+                    if (!minutes) return '--';
+                    const hours = Math.floor(minutes / 60);
+                    const mins = Math.round(minutes % 60);
+                    return hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
+                };
+                
+                const sessionClass = session.is_complete ? 'session-complete' : 'session-active';
+                
+                html += `
+                    <div class="charging-session ${sessionClass}">
+                        <div class="session-header">
+                            <h4>${formatDate(startTime)}</h4>
+                            ${!session.is_complete ? '<span class="charging-badge">Active</span>' : ''}
+                        </div>
+                        <div class="session-details">
+                            <div class="session-stat">
+                                <span class="stat-label">Duration</span>
+                                <span class="stat-value">${formatDuration(duration)}</span>
+                            </div>
+                            <div class="session-stat">
+                                <span class="stat-label">Battery</span>
+                                <span class="stat-value">${session.start_battery}% → ${session.end_battery}%</span>
+                            </div>
+                            <div class="session-stat">
+                                <span class="stat-label">Energy Added</span>
+                                <span class="stat-value">${session.energy_added.toFixed(1)} kWh</span>
+                            </div>
+                            <div class="session-stat">
+                                <span class="stat-label">Max Power</span>
+                                <span class="stat-value">${session.max_power.toFixed(1)} kW</span>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            });
+            
+            html += '</div>';
+            container.innerHTML = html;
+            
+        } catch (error) {
+            console.error('Error loading charging sessions:', error);
+            const container = document.getElementById('charging-sessions-container');
+            if (container) {
+                container.innerHTML = '<div class="no-data">Error loading charging sessions</div>';
+            }
         }
     }
     

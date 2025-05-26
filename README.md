@@ -146,10 +146,19 @@ pyvisionic/
 │   ├── storage/      # CSV data storage
 │   └── web/          # Flask web application
 ├── tools/            # Data management scripts
+├── docs/             # Architecture documentation
 ├── data/             # CSV data files
 ├── cache/            # Cached API responses
 └── logs/             # Application logs
 ```
+
+### Architecture Documentation
+For detailed architectural diagrams and technical documentation, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), which includes:
+- System architecture overview
+- Data flow diagrams
+- Web UI structure
+- API endpoint mappings
+- Data storage schema
 
 ### Adding Features
 1. API changes: Modify `src/api/client.py`
@@ -180,6 +189,6 @@ MIT License - See LICENSE file for details
 Built with:
 - [hyundai-kia-connect-api](https://github.com/Hyundai-Kia-Connect/hyundai_kia_connect_api) for vehicle connectivity
 - Flask for web framework
-- Plotly.js for interactive charts
+- Chart.js for interactive charts
 - Leaflet.js for mapping
 - Docker for containerization

@@ -26,9 +26,13 @@ Usage:
 """
 import csv
 import logging
+import os
 from datetime import datetime
 from pathlib import Path
 import pandas as pd
+import sys
+sys.path.append(str(Path(__file__).parent.parent.parent))
+from src.utils.weather import WeatherService
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -51,6 +55,11 @@ class CSVStorage:
         self.trips_file = self.data_dir / "trips.csv"
         self.battery_file = self.data_dir / "battery_status.csv"
         self.location_file = self.data_dir / "locations.csv"
+        self.charging_sessions_file = self.data_dir / "charging_sessions.csv"
+        
+        # Initialize weather service
+        self.weather_service = WeatherService()
+        self.use_meteo = os.getenv('WEATHER_SOURCE', 'meteo').lower() == 'meteo'
         
         self._init_files()
     
@@ -72,7 +81,8 @@ class CSVStorage:
             with open(self.battery_file, 'w', newline='', encoding='utf-8') as f:
                 writer = csv.DictWriter(f, fieldnames=[
                     'timestamp', 'battery_level', 'is_charging', 'charging_power',
-                    'remaining_time', 'range', 'temperature', 'odometer'
+                    'remaining_time', 'range', 'temperature', 'odometer',
+                    'meteo_temp', 'vehicle_temp'
                 ])
                 writer.writeheader()
         
@@ -80,6 +90,15 @@ class CSVStorage:
             with open(self.location_file, 'w', newline='', encoding='utf-8') as f:
                 writer = csv.DictWriter(f, fieldnames=[
                     'timestamp', 'latitude', 'longitude', 'last_updated'
+                ])
+                writer.writeheader()
+        
+        if not self.charging_sessions_file.exists():
+            with open(self.charging_sessions_file, 'w', newline='', encoding='utf-8') as f:
+                writer = csv.DictWriter(f, fieldnames=[
+                    'session_id', 'start_time', 'end_time', 'duration_minutes',
+                    'start_battery', 'end_battery', 'energy_added', 'avg_power',
+                    'max_power', 'location_lat', 'location_lon', 'is_complete'
                 ])
                 writer.writeheader()
     
@@ -152,14 +171,37 @@ class CSVStorage:
         # Store battery status
         battery = data.get('battery', {})
         if battery:
+            # Get BOTH temperatures for logging
+            meteo_temp = None
+            vehicle_temp = None
+            
+            # Get vehicle sensor temperature
+            temp_f_vehicle = data.get('raw_data', {}).get('airTemp', {}).get('value')
+            vehicle_temp = round((temp_f_vehicle - 32) * 5/9, 1) if temp_f_vehicle else None
+            
+            # Get Meteo weather temperature
+            location = data.get('location', {})
+            lat = location.get('latitude')
+            lon = location.get('longitude')
+            
+            if lat and lon:
+                weather_data = self.weather_service.get_current_weather(lat, lon)
+                if weather_data:
+                    temp_f_meteo = weather_data.get('temperature')
+                    meteo_temp = self.weather_service.get_temperature_in_celsius(temp_f_meteo) if temp_f_meteo else None
+                    logger.info(f"Temperatures - Meteo: {temp_f_meteo}°F ({meteo_temp}°C), Vehicle: {temp_f_vehicle}°F ({vehicle_temp}°C)")
+            else:
+                logger.warning("No vehicle location available for weather data")
+            
+            # Use the configured source for the main temperature field
+            temperature = meteo_temp if self.use_meteo else vehicle_temp
+            
             with open(self.battery_file, 'a', newline='', encoding='utf-8') as f:
                 writer = csv.DictWriter(f, fieldnames=[
                     'timestamp', 'battery_level', 'is_charging', 'charging_power',
-                    'remaining_time', 'range', 'temperature', 'odometer'
+                    'remaining_time', 'range', 'temperature', 'odometer',
+                    'meteo_temp', 'vehicle_temp'
                 ])
-                # Convert temperature from F to C if present
-                temp_f = data.get('raw_data', {}).get('airTemp', {}).get('value')
-                temp_c = round((temp_f - 32) * 5/9, 1) if temp_f else None
                 
                 writer.writerow({
                     'timestamp': timestamp,
@@ -168,9 +210,14 @@ class CSVStorage:
                     'charging_power': battery.get('charging_power'),
                     'remaining_time': battery.get('remaining_time'),
                     'range': battery.get('range'),
-                    'temperature': temp_c,
-                    'odometer': data.get('odometer')
+                    'temperature': temperature,
+                    'odometer': data.get('odometer'),
+                    'meteo_temp': meteo_temp,
+                    'vehicle_temp': vehicle_temp
                 })
+            
+            # Track charging sessions
+            self._track_charging_session(timestamp, battery, location)
         
         # Store location
         location = data.get('location', {})
@@ -203,6 +250,114 @@ class CSVStorage:
         if self.location_file.exists():
             return pd.read_csv(self.location_file, parse_dates=['timestamp', 'last_updated'])
         return pd.DataFrame()
+    
+    def get_charging_sessions_df(self):
+        """Get charging sessions data as a DataFrame"""
+        if self.charging_sessions_file.exists():
+            return pd.read_csv(self.charging_sessions_file, parse_dates=['start_time', 'end_time'])
+        return pd.DataFrame()
+    
+    def _track_charging_session(self, timestamp, battery, location):
+        """Track charging sessions - detect start/stop and update session data"""
+        is_charging = battery.get('is_charging', False)
+        battery_level = battery.get('level')
+        charging_power = battery.get('charging_power', 0)
+        
+        if not battery_level:
+            return
+        
+        # Read existing sessions to find active one
+        sessions_df = self.get_charging_sessions_df()
+        active_session = None
+        
+        if not sessions_df.empty:
+            # Find incomplete sessions
+            incomplete = sessions_df[sessions_df['is_complete'] == False]
+            if not incomplete.empty:
+                active_session = incomplete.iloc[-1]
+        
+        if is_charging:
+            if active_session is None:
+                # Start new charging session
+                session_id = f"charge_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                new_session = {
+                    'session_id': session_id,
+                    'start_time': timestamp,
+                    'end_time': None,
+                    'duration_minutes': 0,
+                    'start_battery': battery_level,
+                    'end_battery': battery_level,
+                    'energy_added': 0,
+                    'avg_power': charging_power or 0,
+                    'max_power': charging_power or 0,
+                    'location_lat': location.get('latitude') if location else None,
+                    'location_lon': location.get('longitude') if location else None,
+                    'is_complete': False
+                }
+                
+                with open(self.charging_sessions_file, 'a', newline='', encoding='utf-8') as f:
+                    writer = csv.DictWriter(f, fieldnames=[
+                        'session_id', 'start_time', 'end_time', 'duration_minutes',
+                        'start_battery', 'end_battery', 'energy_added', 'avg_power',
+                        'max_power', 'location_lat', 'location_lon', 'is_complete'
+                    ])
+                    writer.writerow(new_session)
+            else:
+                # Update existing session
+                self._update_charging_session(active_session['session_id'], timestamp, battery_level, charging_power)
+        else:
+            if active_session is not None:
+                # End charging session
+                self._complete_charging_session(active_session['session_id'], timestamp, battery_level)
+    
+    def _update_charging_session(self, session_id, timestamp, battery_level, charging_power):
+        """Update an ongoing charging session"""
+        sessions_df = self.get_charging_sessions_df()
+        
+        if sessions_df.empty:
+            return
+        
+        # Update the session
+        idx = sessions_df[sessions_df['session_id'] == session_id].index
+        if len(idx) > 0:
+            idx = idx[0]
+            sessions_df.loc[idx, 'end_battery'] = battery_level
+            sessions_df.loc[idx, 'end_time'] = timestamp
+            
+            # Calculate duration
+            start_time = pd.to_datetime(sessions_df.loc[idx, 'start_time'])
+            end_time = pd.to_datetime(timestamp)
+            duration = (end_time - start_time).total_seconds() / 60
+            sessions_df.loc[idx, 'duration_minutes'] = round(duration, 1)
+            
+            # Update max power
+            if charging_power and charging_power > sessions_df.loc[idx, 'max_power']:
+                sessions_df.loc[idx, 'max_power'] = charging_power
+            
+            # Estimate energy added (rough calculation)
+            battery_diff = battery_level - sessions_df.loc[idx, 'start_battery']
+            if battery_diff > 0:
+                # Assume 77.4 kWh battery (Ioniq 5 standard)
+                energy_added = (battery_diff / 100) * 77.4
+                sessions_df.loc[idx, 'energy_added'] = round(energy_added, 2)
+            
+            # Calculate average power
+            if duration > 0 and sessions_df.loc[idx, 'energy_added'] > 0:
+                avg_power = sessions_df.loc[idx, 'energy_added'] / (duration / 60)
+                sessions_df.loc[idx, 'avg_power'] = round(avg_power, 2)
+            
+            # Save updated dataframe
+            sessions_df.to_csv(self.charging_sessions_file, index=False)
+    
+    def _complete_charging_session(self, session_id, timestamp, battery_level):
+        """Mark a charging session as complete"""
+        self._update_charging_session(session_id, timestamp, battery_level, 0)
+        
+        sessions_df = self.get_charging_sessions_df()
+        idx = sessions_df[sessions_df['session_id'] == session_id].index
+        if len(idx) > 0:
+            sessions_df.loc[idx[0], 'is_complete'] = True
+            sessions_df.to_csv(self.charging_sessions_file, index=False)
     
     def get_latest_trips(self, limit=10):
         """Get the latest trips data"""

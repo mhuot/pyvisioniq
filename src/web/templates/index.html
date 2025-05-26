@@ -40,7 +40,7 @@
                     <p class="status-value" id="range">--</p>
                 </div>
                 <div class="status-card" role="listitem">
-                    <h3>Temperature</h3>
+                    <h3>Weather</h3>
                     <p class="status-value" id="temperature">--</p>
                 </div>
                 <div class="status-card" role="listitem">
@@ -81,6 +81,16 @@
             <h2 id="chart-heading">Battery & Temperature History</h2>
             <div class="chart-container">
                 <canvas id="battery-chart" role="img" aria-label="Battery level and temperature chart"></canvas>
+            </div>
+        </section>
+
+        <section class="chart-section" aria-labelledby="temp-efficiency-heading">
+            <h2 id="temp-efficiency-heading">Temperature Impact on Efficiency</h2>
+            <div class="chart-container">
+                <canvas id="temperature-efficiency-chart"></canvas>
+            </div>
+            <div class="temperature-stats" id="temperature-stats">
+                <div class="no-data">Loading temperature efficiency data...</div>
             </div>
         </section>
 
@@ -160,6 +170,13 @@
                     <option value="20">20 per page</option>
                     <option value="50">50 per page</option>
                 </select>
+            </div>
+        </section>
+
+        <section class="charging-sessions" aria-labelledby="charging-heading">
+            <h2 id="charging-heading">Charging History</h2>
+            <div class="sessions-container" id="charging-sessions-container">
+                <div class="no-data">Loading charging sessions...</div>
             </div>
         </section>
 
