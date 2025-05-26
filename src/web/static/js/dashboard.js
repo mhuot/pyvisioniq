@@ -167,18 +167,146 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Load initial data
     loadCurrentStatus();
-    loadBatteryHistory();
+    loadBatteryHistory(24); // Default to 24 hours
     loadCollectionStatus();
-    loadEfficiencyStats();
-    loadChargingSessions();
-    loadTemperatureEfficiency();
+    loadEfficiencyStats(24);
+    loadChargingSessions(24);
+    loadTemperatureEfficiency(24);
     
     // Initialize and load map
     initializeLocationsMap();
-    loadLocationsMap();
+    loadLocationsMap(24);
+    
+    // Master time range button handlers
+    const timeRangeButtons = document.querySelectorAll('.master-time-range-controls .time-range-btn');
+    let currentTimeRange = '24'; // Default to 24 hours
+    let currentStartDate = null;
+    let currentEndDate = null;
+    
+    const customDateRange = document.getElementById('custom-date-range');
+    const applyCustomRangeBtn = document.getElementById('apply-custom-range');
+    const masterStartDate = document.getElementById('master-start-date');
+    const masterEndDate = document.getElementById('master-end-date');
+    
+    timeRangeButtons.forEach(button => {
+        button.addEventListener('click', function() {
+            // Update active state
+            timeRangeButtons.forEach(btn => {
+                btn.classList.remove('active');
+                btn.setAttribute('aria-pressed', 'false');
+            });
+            this.classList.add('active');
+            this.setAttribute('aria-pressed', 'true');
+            
+            // Update current time range
+            currentTimeRange = this.getAttribute('data-hours');
+            
+            // Show/hide custom date range
+            if (currentTimeRange === 'custom') {
+                customDateRange.style.display = 'flex';
+                // Set default dates if not already set
+                if (!masterStartDate.value) {
+                    const today = new Date();
+                    const lastWeek = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000);
+                    masterStartDate.value = lastWeek.toISOString().split('T')[0];
+                    masterEndDate.value = today.toISOString().split('T')[0];
+                }
+            } else {
+                customDateRange.style.display = 'none';
+                currentStartDate = null;
+                currentEndDate = null;
+                // Reload all time-dependent data
+                loadAllDataForTimeRange(currentTimeRange);
+            }
+        });
+    });
+    
+    // Custom date range apply button
+    if (applyCustomRangeBtn) {
+        applyCustomRangeBtn.addEventListener('click', function() {
+            currentStartDate = masterStartDate.value;
+            currentEndDate = masterEndDate.value;
+            
+            if (!currentStartDate || !currentEndDate) {
+                showNotification('Please select both start and end dates', 'warning');
+                return;
+            }
+            
+            if (currentStartDate > currentEndDate) {
+                showNotification('Start date must be before end date', 'warning');
+                return;
+            }
+            
+            // Load data with custom date range
+            loadAllDataForTimeRange('custom', currentStartDate, currentEndDate);
+        });
+    }
+    
+    // Function to load all data for a specific time range
+    async function loadAllDataForTimeRange(hours, startDate = null, endDate = null) {
+        // Show loading indicator
+        showNotification('Updating data for selected time range...', 'info');
+        
+        // Load all time-dependent data in parallel
+        await Promise.all([
+            loadBatteryHistory(hours, startDate, endDate),
+            loadTripsWithPagination(hours, startDate, endDate),
+            loadLocationsMap(hours, startDate, endDate),
+            loadEfficiencyStats(hours, startDate, endDate),
+            loadChargingSessions(hours, startDate, endDate),
+            loadTemperatureEfficiency(hours, startDate, endDate)
+        ]);
+        
+        showNotification('Data updated', 'success');
+    }
 
     // Refresh button handler
     refreshBtn.addEventListener('click', async function() {
+        // First, get current API usage
+        try {
+            const statusResponse = await fetch('/api/collection-status');
+            const statusData = await statusResponse.json();
+            
+            const callsToday = statusData.calls_today || 0;
+            const dailyLimit = statusData.daily_limit || 30;
+            const callsRemaining = dailyLimit - callsToday;
+            
+            // Show warning dialog with accessible formatting
+            const message = `Manual refresh will use 1 of your ${dailyLimit} daily API calls.\n\n` +
+                          `Current usage: ${callsToday} of ${dailyLimit} calls\n` +
+                          `Calls remaining: ${callsRemaining}\n\n` +
+                          `Do you want to continue?`;
+            
+            // For screen readers, announce the warning
+            const announcement = `Warning: Manual refresh will use 1 API call. You have used ${callsToday} of ${dailyLimit} calls today.`;
+            const liveRegion = document.createElement('div');
+            liveRegion.setAttribute('role', 'alert');
+            liveRegion.setAttribute('aria-live', 'assertive');
+            liveRegion.className = 'sr-only';
+            liveRegion.textContent = announcement;
+            document.body.appendChild(liveRegion);
+            
+            // Give screen readers time to announce before showing dialog
+            await new Promise(resolve => setTimeout(resolve, 100));
+            
+            const userConfirmed = confirm(message);
+            document.body.removeChild(liveRegion);
+            
+            if (!userConfirmed) {
+                return;
+            }
+            
+            // Check if limit reached
+            if (callsToday >= dailyLimit) {
+                showNotification('Daily API limit reached. Try again tomorrow.', 'warning');
+                return;
+            }
+            
+        } catch (error) {
+            console.error('Error checking API status:', error);
+            // Continue anyway if we can't check status
+        }
+        
         refreshBtn.disabled = true;
         refreshBtn.textContent = 'Refreshing...';
         
@@ -188,14 +316,19 @@ document.addEventListener('DOMContentLoaded', function() {
             
             if (response.ok) {
                 showNotification(data.message || 'Data refreshed successfully', 'success');
-                // Reload all data
+                // Reload all data including collection status
                 loadCurrentStatus();
-                loadBatteryHistory();
-                loadTripsWithPagination();
-                loadEfficiencyStats();
-                loadLocationsMap();
-                loadChargingSessions();
-                loadTemperatureEfficiency();
+                if (currentTimeRange === 'custom') {
+                    loadAllDataForTimeRange('custom', currentStartDate, currentEndDate);
+                } else {
+                    loadBatteryHistory(currentTimeRange);
+                    loadTripsWithPagination(currentTimeRange);
+                    loadEfficiencyStats(currentTimeRange);
+                    loadLocationsMap(currentTimeRange);
+                    loadChargingSessions(currentTimeRange);
+                    loadTemperatureEfficiency(currentTimeRange);
+                }
+                loadCollectionStatus(); // Update API usage display
             } else {
                 // Show specific error message with appropriate styling
                 const errorType = data.error_type || 'error';
@@ -214,14 +347,41 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
     
-    async function loadBatteryHistory() {
+    async function loadBatteryHistory(hours = 24, startDate = null, endDate = null) {
         try {
-            const response = await fetch('/api/battery-history');
+            // Show loading state
+            const chartContainer = document.querySelector('#battery-chart').parentElement;
+            const originalContent = chartContainer.innerHTML;
+            chartContainer.style.position = 'relative';
+            
+            // Add loading overlay
+            const loadingOverlay = document.createElement('div');
+            loadingOverlay.className = 'chart-loading';
+            loadingOverlay.innerHTML = '<div class="loading-spinner"></div><p>Loading data...</p>';
+            chartContainer.appendChild(loadingOverlay);
+            
+            // Build query parameters
+            const params = new URLSearchParams({ hours });
+            if (startDate) params.append('start_date', startDate);
+            if (endDate) params.append('end_date', endDate);
+            
+            const response = await fetch(`/api/battery-history?${params}`);
             const data = await response.json();
             currentData.batteryHistory = data;
+            
+            // Remove loading overlay
+            if (loadingOverlay.parentElement) {
+                loadingOverlay.remove();
+            }
+            
             updateBatteryChart(data);
         } catch (error) {
             console.error('Error loading battery history:', error);
+            // Remove loading overlay on error
+            const loadingOverlay = document.querySelector('.chart-loading');
+            if (loadingOverlay) {
+                loadingOverlay.remove();
+            }
         }
     }
     
@@ -620,10 +780,33 @@ document.addEventListener('DOMContentLoaded', function() {
             
             const callsToday = document.getElementById('api-calls-today');
             const nextCollection = document.getElementById('next-collection');
+            const headerApiCalls = document.getElementById('header-api-calls');
             
             if (callsToday) {
                 callsToday.textContent = `${data.calls_today}/${data.daily_limit}`;
                 callsToday.className = data.calls_today >= data.daily_limit ? 'limit-reached' : '';
+            }
+            
+            // Update header API usage indicator
+            if (headerApiCalls) {
+                const callsText = `${data.calls_today}/${data.daily_limit}`;
+                headerApiCalls.textContent = callsText;
+                
+                // Update aria-label for screen readers
+                const percentage = Math.round((data.calls_today / data.daily_limit) * 100);
+                let ariaLabel = `${data.calls_today} of ${data.daily_limit} API calls used today (${percentage}%)`;
+                
+                // Apply warning classes and update aria-label
+                headerApiCalls.className = '';
+                if (data.calls_today >= data.daily_limit) {
+                    headerApiCalls.className = 'limit-reached';
+                    ariaLabel += '. Daily limit reached.';
+                } else if (data.calls_today >= data.daily_limit * 0.8) {
+                    headerApiCalls.className = 'limit-warning';
+                    ariaLabel += '. Approaching daily limit.';
+                }
+                
+                headerApiCalls.setAttribute('aria-label', ariaLabel);
             }
             
             if (nextCollection && data.next_collection) {
@@ -674,14 +857,18 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
     
-    async function loadLocationsMap() {
+    async function loadLocationsMap(hours = 'all', startDate = null, endDate = null) {
         try {
             if (!locationsMap) {
                 console.warn('Locations map not initialized, skipping load');
                 return;
             }
             
-            const response = await fetch('/api/locations');
+            const params = new URLSearchParams({ hours });
+            if (startDate) params.append('start_date', startDate);
+            if (endDate) params.append('end_date', endDate);
+            
+            const response = await fetch(`/api/locations?${params}`);
             if (response.ok) {
                 const locations = await response.json();
                 console.log(`Loaded ${locations.length} locations`);
@@ -737,9 +924,13 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
     
-    async function loadEfficiencyStats() {
+    async function loadEfficiencyStats(hours = 'all', startDate = null, endDate = null) {
         try {
-            const response = await fetch('/api/efficiency-stats');
+            const params = new URLSearchParams({ hours });
+            if (startDate) params.append('start_date', startDate);
+            if (endDate) params.append('end_date', endDate);
+            
+            const response = await fetch(`/api/efficiency-stats?${params}`);
             if (!response.ok) {
                 throw new Error(`HTTP error! status: ${response.status}`);
             }
@@ -767,9 +958,13 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
     
-    async function loadTemperatureEfficiency() {
+    async function loadTemperatureEfficiency(hours = 'all', startDate = null, endDate = null) {
         try {
-            const response = await fetch('/api/temperature-efficiency');
+            const params = new URLSearchParams({ hours });
+            if (startDate) params.append('start_date', startDate);
+            if (endDate) params.append('end_date', endDate);
+            
+            const response = await fetch(`/api/temperature-efficiency?${params}`);
             const data = await response.json();
             
             if (!response.ok || !data.raw_data || data.raw_data.length === 0) {
@@ -930,9 +1125,13 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
     
-    async function loadChargingSessions() {
+    async function loadChargingSessions(hours = 'all', startDate = null, endDate = null) {
         try {
-            const response = await fetch('/api/charging-sessions');
+            const params = new URLSearchParams({ hours });
+            if (startDate) params.append('start_date', startDate);
+            if (endDate) params.append('end_date', endDate);
+            
+            const response = await fetch(`/api/charging-sessions?${params}`);
             const sessions = await response.json();
             
             const container = document.getElementById('charging-sessions-container');
@@ -1014,7 +1213,7 @@ document.addEventListener('DOMContentLoaded', function() {
         prevPageBtn.addEventListener('click', () => {
             if (currentPage > 1) {
                 currentPage--;
-                loadTripsWithPagination();
+                loadTripsWithPagination(currentTimeRange);
             }
         });
     }
@@ -1023,7 +1222,7 @@ document.addEventListener('DOMContentLoaded', function() {
         nextPageBtn.addEventListener('click', () => {
             if (currentPage < totalPages) {
                 currentPage++;
-                loadTripsWithPagination();
+                loadTripsWithPagination(currentTimeRange);
             }
         });
     }
@@ -1032,13 +1231,32 @@ document.addEventListener('DOMContentLoaded', function() {
         perPageSelect.addEventListener('change', (e) => {
             perPage = parseInt(e.target.value);
             currentPage = 1;
-            loadTripsWithPagination();
+            loadTripsWithPagination(currentTimeRange);
         });
     }
     
-    async function loadTripsWithPagination() {
+    async function loadTripsWithPagination(hours = 'all', startDate = null, endDate = null) {
         try {
-            const response = await fetch(`/api/trips?page=${currentPage}&per_page=${perPage}`);
+            // Get filter values
+            const minDistance = document.getElementById('min-distance').value;
+            const maxDistance = document.getElementById('max-distance').value;
+            
+            const params = new URLSearchParams({
+                page: currentPage,
+                per_page: perPage,
+                hours: hours
+            });
+            
+            // Use master date range if custom
+            if (hours === 'custom' && startDate && endDate) {
+                params.append('start_date', startDate);
+                params.append('end_date', endDate);
+            }
+            
+            if (minDistance) params.append('min_distance', minDistance);
+            if (maxDistance) params.append('max_distance', maxDistance);
+            
+            const response = await fetch(`/api/trips?${params}`);
             const data = await response.json();
             
             totalPages = data.total_pages || 1;
@@ -1061,7 +1279,7 @@ document.addEventListener('DOMContentLoaded', function() {
     }
     
     // Replace initial loadTrips with pagination version
-    loadTripsWithPagination();
+    loadTripsWithPagination(24);
     
     // Modal handling
     const modal = document.getElementById('tripModal');

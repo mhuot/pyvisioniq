@@ -237,6 +237,7 @@ def get_trips():
         end_date = request.args.get('end_date')
         min_distance = request.args.get('min_distance', type=float)
         max_distance = request.args.get('max_distance', type=float)
+        hours = request.args.get('hours')  # Time range filter
         
         # Get all trips
         trips_df = storage.get_trips_df()
@@ -250,7 +251,17 @@ def get_trips():
                 'total_pages': 0
             })
         
-        # Apply filters
+        # Apply time range filter first if specified
+        if hours and hours != 'all':
+            try:
+                trips_df['date'] = pd.to_datetime(trips_df['date'])
+                hours_int = int(hours)
+                cutoff = pd.Timestamp.now() - pd.Timedelta(hours=hours_int)
+                trips_df = trips_df[trips_df['date'] >= cutoff]
+            except (ValueError, TypeError):
+                pass
+        
+        # Apply other filters
         if start_date:
             trips_df = trips_df[trips_df['date'] >= start_date]
         if end_date:
@@ -290,7 +301,32 @@ def get_trips():
 @app.route('/api/battery-history')
 def get_battery_history():
     try:
-        battery_df = storage.get_battery_history(days=7)
+        # Get parameters from query string
+        hours = request.args.get('hours', '24')
+        start_date = request.args.get('start_date')
+        end_date = request.args.get('end_date')
+        
+        # If custom date range is provided
+        if hours == 'custom' and start_date and end_date:
+            battery_df = storage.get_battery_df()
+            if not battery_df.empty:
+                battery_df['timestamp'] = pd.to_datetime(battery_df['timestamp'])
+                # Filter by date range
+                start = pd.to_datetime(start_date)
+                end = pd.to_datetime(end_date) + pd.Timedelta(days=1)  # Include end date
+                battery_df = battery_df[(battery_df['timestamp'] >= start) & (battery_df['timestamp'] < end)]
+        else:
+            # Convert hours to days for the storage function
+            if hours == 'all':
+                days = None  # Get all data
+            else:
+                try:
+                    hours_int = int(hours)
+                    days = hours_int / 24.0
+                except ValueError:
+                    days = 1  # Default to 1 day if invalid
+            
+            battery_df = storage.get_battery_history(days=days)
         if not battery_df.empty:
             # Fill NaN values with None before any processing
             battery_df = battery_df.fillna(value=np.nan).replace([np.nan], [None])
@@ -595,7 +631,29 @@ def get_efficiency_stats():
 def get_all_locations():
     """Get all trip locations for mapping"""
     try:
+        # Get parameters from query string
+        hours = request.args.get('hours', 'all')
+        start_date = request.args.get('start_date')
+        end_date = request.args.get('end_date')
+        
         trips_df = storage.get_trips_df()
+        
+        if not trips_df.empty:
+            if hours == 'custom' and start_date and end_date:
+                # Filter by custom date range
+                trips_df['date'] = pd.to_datetime(trips_df['date'])
+                start = pd.to_datetime(start_date)
+                end = pd.to_datetime(end_date) + pd.Timedelta(days=1)
+                trips_df = trips_df[(trips_df['date'] >= start) & (trips_df['date'] < end)]
+            elif hours != 'all':
+                try:
+                    # Filter trips by time range
+                    trips_df['date'] = pd.to_datetime(trips_df['date'])
+                    hours_int = int(hours)
+                    cutoff = pd.Timestamp.now() - pd.Timedelta(hours=hours_int)
+                    trips_df = trips_df[trips_df['date'] >= cutoff]
+                except (ValueError, TypeError):
+                    pass  # Use all data if conversion fails
         
         if trips_df.empty:
             app.logger.warning("No trips found in DataFrame")

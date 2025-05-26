@@ -26,3 +26,8 @@ nohup.out
 # OS
 .DS_Store
 Thumbs.db
+
+# SSL/Nginx
+nginx/ssl/
+nginx/logs/
+certbot/

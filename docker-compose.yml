@@ -1,8 +1,9 @@
 services:
   pyvisionic:
+    container_name: pyvisionic
     build: .
-    ports:
-      - "${PORT:-5000}:${PORT:-5000}"
+    expose:
+      - "${PORT:-5000}"
     environment:
       - BLUELINKUSER=${BLUELINKUSER}
       - BLUELINKPASS=${BLUELINKPASS}
@@ -16,6 +17,10 @@ services:
       - API_CACHE_ENABLED=${API_CACHE_ENABLED:-true}
       - CACHE_DURATION_HOURS=${CACHE_DURATION_HOURS:-48}
       - TZ=${TZ:-UTC}
+      - VIRTUAL_HOST=${VIRTUAL_HOST:-pyvisionic.local}
+      - VIRTUAL_PORT=${PORT:-5000}
+      - LETSENCRYPT_HOST=${LETSENCRYPT_HOST:-}
+      - LETSENCRYPT_EMAIL=${LETSENCRYPT_EMAIL:-}
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs
@@ -24,3 +29,9 @@ services:
     command: >
       sh -c "nohup python data_collector.py > /app/logs/collector.log 2>&1 &
              python -m gunicorn --bind 0.0.0.0:${PORT:-5000} --workers 4 --threads 2 --timeout 120 src.web.app:app"
+    networks:
+      - nginx-proxy-network
+
+networks:
+  nginx-proxy-network:
+    external: true

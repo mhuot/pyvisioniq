@@ -20,11 +20,40 @@
             <button id="units-toggle" class="units-button" aria-label="Toggle between metric and imperial units">
                 <span class="units-text">km</span>
             </button>
-            <button id="refresh-btn" class="refresh-button" aria-label="Refresh vehicle data">
-                Refresh Data
-            </button>
+            <div class="refresh-group">
+                <button id="refresh-btn" class="refresh-button" aria-label="Refresh vehicle data">
+                    Refresh Data
+                </button>
+                <span class="api-usage-indicator" id="header-api-usage" role="status" aria-live="polite" aria-label="API usage">
+                    <span class="api-usage-icon" aria-hidden="true">📊</span>
+                    <span id="header-api-calls" aria-label="API calls used today">--/--</span>
+                </span>
+            </div>
         </div>
     </header>
+    
+    <div class="master-time-range-section">
+        <label for="time-range-group" class="time-range-label">Time Range:</label>
+        <div id="time-range-group" class="master-time-range-controls" role="group" aria-label="Master time range selection">
+            <button class="time-range-btn active" data-hours="24" aria-pressed="true">24h</button>
+            <button class="time-range-btn" data-hours="48" aria-pressed="false">48h</button>
+            <button class="time-range-btn" data-hours="168" aria-pressed="false">7d</button>
+            <button class="time-range-btn" data-hours="720" aria-pressed="false">30d</button>
+            <button class="time-range-btn" data-hours="all" aria-pressed="false">All</button>
+            <button class="time-range-btn" data-hours="custom" aria-pressed="false">Custom</button>
+        </div>
+        <div id="custom-date-range" class="custom-date-range" style="display: none;">
+            <div class="date-input-group">
+                <label for="master-start-date">From:</label>
+                <input type="date" id="master-start-date" name="master-start-date">
+            </div>
+            <div class="date-input-group">
+                <label for="master-end-date">To:</label>
+                <input type="date" id="master-end-date" name="master-end-date">
+            </div>
+            <button id="apply-custom-range" class="btn-primary">Apply</button>
+        </div>
+    </div>
 
     <main>
         <section class="status-section" aria-labelledby="status-heading">
@@ -109,24 +138,16 @@
 
         <section class="trips-section" aria-labelledby="trips-heading">
             <h2 id="trips-heading">Recent Trips</h2>
-            
+            <h3 id="trips-subheading">Click on rows below to see details</h3>
             <!-- Filter Controls -->
             <div class="trips-filters">
                 <div class="filter-group">
-                    <label for="start-date">Start Date:</label>
-                    <input type="date" id="start-date" name="start-date">
+                    <label for="min-distance">Min Distance (km):</label>
+                    <input type="number" id="min-distance" name="min-distance" min="0" step="0.1" placeholder="0">
                 </div>
                 <div class="filter-group">
-                    <label for="end-date">End Date:</label>
-                    <input type="date" id="end-date" name="end-date">
-                </div>
-                <div class="filter-group">
-                    <label for="min-distance">Min Distance:</label>
-                    <input type="number" id="min-distance" name="min-distance" min="0" step="0.1">
-                </div>
-                <div class="filter-group">
-                    <label for="max-distance">Max Distance:</label>
-                    <input type="number" id="max-distance" name="max-distance" min="0" step="0.1">
+                    <label for="max-distance">Max Distance (km):</label>
+                    <input type="number" id="max-distance" name="max-distance" min="0" step="0.1" placeholder="Any">
                 </div>
                 <button id="apply-filters" class="btn-primary">Apply Filters</button>
                 <button id="clear-filters" class="btn-secondary">Clear</button>

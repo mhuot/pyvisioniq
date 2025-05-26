@@ -367,11 +367,16 @@ class CSVStorage:
         return df
     
     def get_battery_history(self, days=7):
-        """Get battery history for the last 'days' days"""
+        """Get battery history for the last 'days' days. If days is None, return all data."""
         df = self.get_battery_df()
         if not df.empty:
             # Ensure timestamp is datetime (handle mixed formats)
             df['timestamp'] = pd.to_datetime(df['timestamp'], format='mixed')
-            cutoff = pd.Timestamp.now() - pd.Timedelta(days=days)
-            return df[df['timestamp'] >= cutoff].sort_values('timestamp')
+            
+            if days is not None:
+                cutoff = pd.Timestamp.now() - pd.Timedelta(days=days)
+                return df[df['timestamp'] >= cutoff].sort_values('timestamp')
+            else:
+                # Return all data
+                return df.sort_values('timestamp')
         return df
