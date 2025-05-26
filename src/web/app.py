@@ -1,4 +1,4 @@
-from flask import Flask, render_template, jsonify, Response, request
+from flask import Flask, render_template, jsonify, Response, send_file, request
 import plotly.graph_objs as go
 import plotly.utils
 import json
@@ -53,6 +53,10 @@ def index():
 
 @app.route('/favicon.ico')
 def favicon():
+    # Check if we have a favicon.png to serve
+    favicon_path = Path('src/web/static/favicon.png')
+    if favicon_path.exists():
+        return send_file(favicon_path, mimetype='image/png')
     return '', 204  # No content
 
 @app.route('/api/clear-cache')

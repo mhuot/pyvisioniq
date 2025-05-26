@@ -157,6 +157,9 @@ pyvisionic/
 3. Web UI changes: Edit `src/web/app.py` and templates
 4. New tools: Add scripts to `tools/` directory
 
+## Known issues
+- The temperature doesn't seem to be updated correctly
+
 ## Troubleshooting
 
 ### Common Issues
