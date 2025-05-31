@@ -14,6 +14,7 @@ sys.path.append(str(Path(__file__).parent.parent.parent))
 from src.api.client import CachedVehicleClient, APIError
 from src.storage.csv_store import CSVStorage
 from src.web.cache_routes import cache_bp
+from src.web.debug_routes import debug_bp
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'dev-secret-key'
@@ -29,8 +30,9 @@ except Exception as e:
 
 storage = CSVStorage()
 
-# Register the cache blueprint
+# Register blueprints
 app.register_blueprint(cache_bp)
+app.register_blueprint(debug_bp)
 
 def clean_nan_values(data):
     """Replace NaN and None values with None for JSON serialization"""
@@ -283,6 +285,19 @@ def get_trips():
         # Get page of trips
         page_trips = trips_df.iloc[start_idx:end_idx]
         
+        # Add efficiency calculations
+        page_trips = page_trips.copy()  # Create a copy to avoid SettingWithCopyWarning
+        for idx, row in page_trips.iterrows():
+            if pd.notna(row.get('distance')) and row['distance'] > 0:
+                # Use total consumed for efficiency calculation
+                total_consumed = row.get('total_consumed', 0) if pd.notna(row.get('total_consumed')) else 0
+                
+                # Efficiency in Wh/km
+                efficiency_wh_per_km = round(total_consumed / row['distance'], 1) if total_consumed > 0 else 0
+                page_trips.loc[idx, 'efficiency_wh_per_km'] = efficiency_wh_per_km
+            else:
+                page_trips.loc[idx, 'efficiency_wh_per_km'] = 0
+        
         # Convert to JSON string with proper NaN handling
         json_str = page_trips.to_json(orient='records', date_format='iso')
         json_str = json_str.replace('NaN', 'null')
@@ -387,10 +402,9 @@ def get_battery_history():
 @app.route('/api/debug')
 def debug_api():
     """Debug endpoint to check API configuration and connectivity"""
-    if not client:
-        return jsonify({
-            "status": "error",
-            "message": "API client not initialized",
+    debug_info = {
+        "api_client": {
+            "initialized": client is not None,
             "config": {
                 "username": os.getenv("BLUELINKUSER", "NOT_SET"),
                 "region": os.getenv("BLUELINKREGION", "NOT_SET"),
@@ -398,7 +412,7 @@ def debug_api():
                 "vehicle_id": os.getenv("BLUELINKVID", "NOT_SET"),
                 "cache_enabled": os.getenv("API_CACHE_ENABLED", "true")
             }
-        })
+        }}
     
     try:
         # Check cache status
@@ -639,20 +653,29 @@ def get_all_locations():
         trips_df = storage.get_trips_df()
         
         if not trips_df.empty:
+            # Convert dates first
+            trips_df['date'] = pd.to_datetime(trips_df['date'], errors='coerce')
+            # Remove any trips with invalid dates
+            trips_df = trips_df[trips_df['date'].notna()]
+            
+            app.logger.info(f"Before filtering: {len(trips_df)} trips, date range: {trips_df['date'].min()} to {trips_df['date'].max()}")
+            
             if hours == 'custom' and start_date and end_date:
                 # Filter by custom date range
-                trips_df['date'] = pd.to_datetime(trips_df['date'])
                 start = pd.to_datetime(start_date)
                 end = pd.to_datetime(end_date) + pd.Timedelta(days=1)
                 trips_df = trips_df[(trips_df['date'] >= start) & (trips_df['date'] < end)]
+                app.logger.info(f"Custom date filter: {start} to {end}, {len(trips_df)} trips remain")
             elif hours != 'all':
                 try:
                     # Filter trips by time range
-                    trips_df['date'] = pd.to_datetime(trips_df['date'])
                     hours_int = int(hours)
                     cutoff = pd.Timestamp.now() - pd.Timedelta(hours=hours_int)
+                    app.logger.info(f"Time filter: last {hours_int} hours, cutoff: {cutoff}")
                     trips_df = trips_df[trips_df['date'] >= cutoff]
-                except (ValueError, TypeError):
+                    app.logger.info(f"After time filter: {len(trips_df)} trips remain")
+                except (ValueError, TypeError) as e:
+                    app.logger.error(f"Error filtering by hours: {e}")
                     pass  # Use all data if conversion fails
         
         if trips_df.empty:
@@ -714,36 +737,114 @@ def get_charging_sessions():
     try:
         sessions_df = storage.get_charging_sessions_df()
         
+        app.logger.info(f"Loading charging sessions, found {len(sessions_df)} sessions")
+        
         if sessions_df.empty:
+            app.logger.warning("No charging sessions found in storage")
             return jsonify([])
+        
+        # Apply time filtering
+        hours = request.args.get('hours', 'all')
+        start_date = request.args.get('start_date')
+        end_date = request.args.get('end_date')
+        
+        app.logger.info(f"Filtering charging sessions: hours={hours}, start_date={start_date}, end_date={end_date}")
+        
+        # Convert start_time to datetime if it's a string
+        sessions_df['start_time'] = pd.to_datetime(sessions_df['start_time'], errors='coerce')
+        
+        # For sessions with missing start_time, try to extract from session_id
+        for idx, row in sessions_df.iterrows():
+            if pd.isna(row['start_time']) and row['session_id'].startswith('charge_'):
+                # Extract date from session_id format: charge_YYYYMMDD_HHMMSS
+                try:
+                    date_part = row['session_id'].split('_')[1]
+                    time_part = row['session_id'].split('_')[2]
+                    # Reconstruct datetime
+                    datetime_str = f"{date_part[:4]}-{date_part[4:6]}-{date_part[6:8]} {time_part[:2]}:{time_part[2:4]}:{time_part[4:6]}"
+                    sessions_df.at[idx, 'start_time'] = pd.to_datetime(datetime_str)
+                    app.logger.info(f"Reconstructed start_time for {row['session_id']}: {datetime_str}")
+                except Exception as e:
+                    app.logger.error(f"Failed to reconstruct start_time for {row['session_id']}: {e}")
+        
+        # Remove sessions that still have invalid start_time
+        sessions_df = sessions_df[sessions_df['start_time'].notna()]
+        
+        # Debug: Log all sessions before filtering
+        app.logger.info("All sessions before filtering:")
+        for idx, row in sessions_df.iterrows():
+            app.logger.info(f"  - {row['session_id']}: start={row['start_time']}, complete={row['is_complete']}")
+        
+        # Apply date filtering
+        if start_date and end_date:
+            # Custom date range
+            start_dt = pd.to_datetime(start_date)
+            end_dt = pd.to_datetime(end_date) + pd.Timedelta(days=1)  # Include end date
+            sessions_df = sessions_df[
+                (sessions_df['start_time'] >= start_dt) & 
+                (sessions_df['start_time'] < end_dt)
+            ]
+        elif hours != 'all':
+            # Hours-based filtering
+            try:
+                hours_int = int(hours)
+                # Use timezone-aware datetime if sessions have timezone info
+                if sessions_df['start_time'].dt.tz is not None:
+                    from datetime import timezone
+                    cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours_int)
+                else:
+                    cutoff_time = datetime.now() - timedelta(hours=hours_int)
+                
+                app.logger.info(f"Current time: {datetime.now()}")
+                app.logger.info(f"Cutoff time ({hours_int}h ago): {cutoff_time}")
+                app.logger.info(f"Filtering sessions from {cutoff_time} onwards")
+                
+                # Debug: show which sessions pass the filter
+                for idx, row in sessions_df.iterrows():
+                    passes = row['start_time'] >= cutoff_time
+                    app.logger.info(f"  - {row['session_id']}: {row['start_time']} >= {cutoff_time} ? {passes}")
+                
+                sessions_df = sessions_df[sessions_df['start_time'] >= cutoff_time]
+            except ValueError:
+                pass  # If hours is invalid, show all
+        
+        # Log the filtered dataframe info
+        app.logger.info(f"After filtering: {len(sessions_df)} sessions remain")
+        if not sessions_df.empty:
+            app.logger.info(f"Sessions dates: {sessions_df['start_time'].min()} to {sessions_df['start_time'].max()}")
+            app.logger.info(f"Active sessions: {len(sessions_df[~sessions_df['is_complete']])}")
         
         # Sort by start time descending (most recent first)
         sessions_df = sessions_df.sort_values('start_time', ascending=False)
         
         # Convert to JSON-friendly format
         sessions = []
-        for _, session in sessions_df.iterrows():
+        for idx, session in sessions_df.iterrows():
+            is_active = not session['is_complete']
+            app.logger.debug(f"Processing session {session['session_id']}: is_complete={session['is_complete']}, is_active={is_active}")
+            
             session_data = {
                 'session_id': session['session_id'],
                 'start_time': session['start_time'].isoformat() if pd.notna(session['start_time']) else None,
                 'end_time': session['end_time'].isoformat() if pd.notna(session['end_time']) else None,
-                'duration_minutes': session['duration_minutes'],
-                'start_battery': session['start_battery'],
-                'end_battery': session['end_battery'],
-                'energy_added': session['energy_added'],
-                'avg_power': session['avg_power'],
-                'max_power': session['max_power'],
-                'location_lat': session['location_lat'],
-                'location_lon': session['location_lon'],
-                'is_complete': session['is_complete']
+                'duration_minutes': float(session['duration_minutes']) if pd.notna(session['duration_minutes']) else 0,
+                'start_battery': int(session['start_battery']) if pd.notna(session['start_battery']) else 0,
+                'end_battery': int(session['end_battery']) if pd.notna(session['end_battery']) else 0,
+                'energy_added': float(session['energy_added']) if pd.notna(session['energy_added']) else 0,
+                'avg_power': float(session['avg_power']) if pd.notna(session['avg_power']) else 0,
+                'max_power': float(session['max_power']) if pd.notna(session['max_power']) else 0,
+                'location_lat': float(session['location_lat']) if pd.notna(session['location_lat']) else None,
+                'location_lon': float(session['location_lon']) if pd.notna(session['location_lon']) else None,
+                'is_complete': str(session['is_complete']).lower() == 'true' if isinstance(session['is_complete'], str) else bool(session['is_complete'])
             }
             sessions.append(session_data)
         
+        app.logger.info(f"Returning {len(sessions)} charging sessions")
         return jsonify(sessions)
         
     except Exception as e:
-        app.logger.error(f"Error getting charging sessions: {e}")
-        return jsonify([])
+        app.logger.error(f"Error getting charging sessions: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/api/collection-status')
 def get_collection_status():

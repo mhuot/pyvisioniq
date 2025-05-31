@@ -33,8 +33,8 @@
     </header>
     
     <div class="master-time-range-section">
-        <label for="time-range-group" class="time-range-label">Time Range:</label>
-        <div id="time-range-group" class="master-time-range-controls" role="group" aria-label="Master time range selection">
+        <span class="time-range-label" id="time-range-label">Time Range:</span>
+        <div id="time-range-group" class="master-time-range-controls" role="group" aria-labelledby="time-range-label">
             <button class="time-range-btn active" data-hours="24" aria-pressed="true">24h</button>
             <button class="time-range-btn" data-hours="48" aria-pressed="false">48h</button>
             <button class="time-range-btn" data-hours="168" aria-pressed="false">7d</button>
@@ -161,6 +161,7 @@
                             <th scope="col" rowspan="2">Distance</th>
                             <th scope="col" rowspan="2">Duration</th>
                             <th scope="col" rowspan="2">Avg Speed</th>
+                            <th scope="col" rowspan="2">Efficiency</th>
                             <th scope="col" colspan="5">Energy Usage (Wh)</th>
                             <th scope="col" rowspan="2">End Location</th>
                         </tr>
@@ -174,7 +175,7 @@
                     </thead>
                     <tbody id="trips-tbody">
                         <tr>
-                            <td colspan="10" class="no-data">No trip data available</td>
+                            <td colspan="11" class="no-data">No trip data available</td>
                         </tr>
                     </tbody>
                 </table>

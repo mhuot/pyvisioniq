@@ -1,0 +1,27 @@
+{
+  "error_id": "20250530_195215_026447",
+  "timestamp": "2025-05-30T19:52:15.026464",
+  "context": "_track_charging_session",
+  "message": "Start battery validation failed",
+  "error_type": "ValueError",
+  "error_message": "Invalid battery level in start_battery_from_session: 65 (<class 'numpy.int64'>): Unexpected type: <class 'numpy.int64'>",
+  "traceback": "Traceback (most recent call last):\n  File \"/home/ubuntu/new-pyvisionic/src/utils/debug.py\", line 127, in validate_battery_level\n    raise ValueError(f\"Unexpected type: {type(value)}\")\nValueError: Unexpected type: <class 'numpy.int64'>\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/ubuntu/new-pyvisionic/src/storage/csv_store.py\", line 443, in _update_charging_session\n    start_battery = DataValidator.validate_battery_level(\n  File \"/home/ubuntu/new-pyvisionic/src/utils/debug.py\", line 136, in validate_battery_level\n    raise ValueError(f\"Invalid battery level in {context}: {value} ({type(value)}): {e}\")\nValueError: Invalid battery level in start_battery_from_session: 65 (<class 'numpy.int64'>): Unexpected type: <class 'numpy.int64'>\n",
+  "data": {
+    "start_battery_raw": "65",
+    "session_idx": "1",
+    "session_data": {
+      "session_id": "charge_20250530_195213",
+      "start_time": "NaT",
+      "end_time": "2025-05-30 19:52:15.008798",
+      "duration_minutes": NaN,
+      "start_battery": 65,
+      "end_battery": 68,
+      "energy_added": 0.0,
+      "avg_power": 7.2,
+      "max_power": 7.2,
+      "location_lat": 44.88585,
+      "location_lon": -93.13727,
+      "is_complete": false
+    }
+  }
+}

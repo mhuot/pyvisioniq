@@ -227,6 +227,8 @@ h2 {
     border-radius: var(--border-radius);
     text-align: center;
     transition: transform 0.2s ease;
+    position: relative;
+    overflow: visible;
 }
 
 .status-card:hover {
@@ -246,6 +248,50 @@ h2 {
     font-size: 2rem;
     font-weight: 700;
     color: var(--primary-color);
+    transition: all 0.3s ease;
+}
+
+/* Charging animation for battery level */
+.status-value.charging {
+    color: var(--success-color);
+    text-shadow: 0 0 20px rgba(46, 204, 113, 0.6);
+    position: relative;
+}
+
+/* Respect reduced motion preference */
+@media (prefers-reduced-motion: no-preference) {
+    .status-value.charging {
+        animation: charging-glow 2s ease-in-out infinite;
+    }
+}
+
+@keyframes charging-glow {
+    0%, 100% {
+        text-shadow: 0 0 20px rgba(46, 204, 113, 0.6);
+        transform: scale(1);
+    }
+    50% {
+        text-shadow: 0 0 30px rgba(46, 204, 113, 0.8), 0 0 40px rgba(46, 204, 113, 0.4);
+        transform: scale(1.02);
+    }
+}
+
+/* Lightning bolt icon for charging */
+.status-value.charging::after {
+    content: '⚡';
+    position: absolute;
+    top: -10px;
+    right: -25px;
+    font-size: 1.2rem;
+    color: var(--warning-color);
+    filter: drop-shadow(0 0 3px rgba(255, 193, 7, 0.8));
+}
+
+/* For reduced motion, use static indicator */
+@media (prefers-reduced-motion: reduce) {
+    .status-value.charging::after {
+        animation: none;
+    }
 }
 
 /* Weather text can be longer, so make it smaller */
@@ -377,7 +423,42 @@ h2 {
 }
 
 .session-active {
-    border: 2px solid var(--success-color);
+    border: 3px solid var(--success-color);
+    background-color: rgba(46, 204, 113, 0.08);
+    box-shadow: 0 0 0 2px rgba(46, 204, 113, 0.2);
+    position: relative;
+}
+
+/* Only animate if user hasn't requested reduced motion */
+@media (prefers-reduced-motion: no-preference) {
+    .session-active {
+        animation: subtle-glow 4s ease-in-out infinite;
+    }
+}
+
+/* Very subtle animation that's WCAG AAA compliant */
+@keyframes subtle-glow {
+    0%, 100% {
+        box-shadow: 0 0 0 2px rgba(46, 204, 113, 0.2);
+    }
+    50% {
+        box-shadow: 0 0 0 3px rgba(46, 204, 113, 0.3);
+    }
+}
+
+/* Add a static indicator for reduced motion preference */
+@media (prefers-reduced-motion: reduce) {
+    .session-active::before {
+        content: '';
+        position: absolute;
+        top: -5px;
+        right: -5px;
+        width: 12px;
+        height: 12px;
+        background-color: var(--success-color);
+        border-radius: 50%;
+        border: 2px solid white;
+    }
 }
 
 .session-header {
@@ -607,6 +688,63 @@ h2 {
     margin-top: 1rem;
     color: var(--text-primary);
     font-weight: 500;
+}
+
+/* Empty state styling */
+.empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 3rem 2rem;
+    text-align: center;
+    background-color: #f8f9fa;
+    border-radius: var(--border-radius);
+    border: 2px dashed #e0e0e0;
+    margin: 1rem 0;
+}
+
+.empty-state-icon {
+    font-size: 3rem;
+    margin-bottom: 1rem;
+    opacity: 0.6;
+}
+
+.empty-state h3 {
+    color: #1a1a1a;
+    font-size: 1.25rem;
+    font-weight: 600;
+    margin-bottom: 0.5rem;
+}
+
+.empty-state p {
+    color: #666;
+    font-size: 1rem;
+    margin-bottom: 1.5rem;
+    max-width: 300px;
+}
+
+.expand-range-btn {
+    background-color: var(--secondary-color);
+    color: white;
+    border: none;
+    padding: 0.75rem 1.5rem;
+    border-radius: var(--border-radius);
+    font-size: 1rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    min-height: 44px; /* WCAG AAA touch target */
+}
+
+.expand-range-btn:hover {
+    background-color: #2980b9;
+    transform: translateY(-1px);
+}
+
+.expand-range-btn:focus {
+    outline: 3px solid rgba(52, 152, 219, 0.5);
+    outline-offset: 2px;
 }
 
 .map-container {
@@ -952,6 +1090,23 @@ a:focus {
     
     #apply-custom-range {
         width: 100%;
+    }
+    
+    .empty-state {
+        padding: 2rem 1rem;
+    }
+    
+    .empty-state-icon {
+        font-size: 2.5rem;
+    }
+    
+    .empty-state h3 {
+        font-size: 1.1rem;
+    }
+    
+    .expand-range-btn {
+        padding: 0.75rem 1rem;
+        font-size: 0.9rem;
     }
 }
 

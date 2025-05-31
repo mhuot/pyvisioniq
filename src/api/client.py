@@ -365,7 +365,13 @@ class CachedVehicleClient:
         except Exception as e:
             print(f"Error fetching vehicle data: {type(e).__name__}: {e}")
             
-            # Save error for debugging
+            # Check if this is a vehicleStatus KeyError
+            if isinstance(e, KeyError) and str(e) == "'vehicleStatus'":
+                logger.info("vehicleStatus not available in API response, using last successful cache")
+                # Don't save error file for this known issue
+                return self._get_last_successful_cache()
+            
+            # Save error for debugging (non-maintenance window errors)
             error_data = {
                 "timestamp": datetime.now().isoformat(),
                 "error_type": type(e).__name__,
@@ -461,8 +467,9 @@ class CachedVehicleClient:
     def _update_vehicle_with_retry(self, max_retries=3):
         """Update vehicle data with exponential backoff for rate limits"""
         last_error = None
-        
+        last_action = None
         for attempt in range(max_retries):
+            print(f"Attempt {attempt + 1} of {max_retries} to update vehicle data...")
             try:
                 # Add jitter to prevent thundering herd
                 if attempt > 0:
@@ -474,16 +481,36 @@ class CachedVehicleClient:
                 
                 # Force refresh vehicle state to get fresh data from the vehicle
                 if self.vehicle_id:
+                    last_action = f"Forcing refresh of state for vehicle {self.vehicle_id}"
                     self.manager.force_refresh_vehicle_state(self.vehicle_id)
                     logger.info(f"Vehicle {self.vehicle_id} state refreshed successfully")
                 else:
                     # Fallback to refresh all vehicles if no specific ID
+                    last_action = "Forcing refresh of state for all vehicles"
                     self.manager.force_refresh_all_vehicles_states()
                     logger.info("All vehicles states refreshed successfully")
                 return True
                 
             except Exception as e:
                 last_error = self._classify_error(e)
+                print(f"Error during vehicle update: {last_error.message} (attempt {attempt + 1}/{max_retries})")
+                print(f"Last action: {last_action}")
+                
+                # Check if it's a KeyError for vehicleStatus
+                if isinstance(e, KeyError) and str(e) == "'vehicleStatus'":
+                    logger.info("vehicleStatus not available in API response, attempting cached state")
+                    try:
+                        # Try cached state instead
+                        if self.vehicle_id:
+                            self.manager.update_vehicle_with_cached_state(self.vehicle_id)
+                            logger.info(f"Successfully retrieved cached state for vehicle {self.vehicle_id}")
+                        else:
+                            self.manager.update_all_vehicles_with_cached_state()
+                            logger.info("Successfully retrieved cached state for all vehicles")
+                        return True
+                    except Exception as cached_error:
+                        logger.error(f"Cached state fallback also failed: {cached_error}")
+                        # Continue with original error handling
                 
                 # Only retry for rate limit errors
                 if last_error.error_type == "rate_limit":

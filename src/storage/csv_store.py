@@ -33,9 +33,11 @@ import pandas as pd
 import sys
 sys.path.append(str(Path(__file__).parent.parent.parent))
 from src.utils.weather import WeatherService
+from src.utils.debug import DebugLogger, DataValidator
 
 # Set up logging
 logger = logging.getLogger(__name__)
+debug_logger = DebugLogger(__name__)
 class CSVStorage:
     """CSVStorage class for storing and retrieving vehicle data in CSV files.
     This class manages three types of data: trips, battery status, and locations,
@@ -254,61 +256,160 @@ class CSVStorage:
     def get_charging_sessions_df(self):
         """Get charging sessions data as a DataFrame"""
         if self.charging_sessions_file.exists():
-            return pd.read_csv(self.charging_sessions_file, parse_dates=['start_time', 'end_time'])
+            try:
+                # Read CSV without parsing dates first to handle mixed formats
+                df = pd.read_csv(self.charging_sessions_file)
+                # Convert dates manually to handle mixed formats and missing values
+                if 'start_time' in df.columns:
+                    df['start_time'] = pd.to_datetime(df['start_time'], errors='coerce')
+                if 'end_time' in df.columns:
+                    df['end_time'] = pd.to_datetime(df['end_time'], errors='coerce')
+                return df
+            except Exception as e:
+                logger.error(f"Error reading charging sessions CSV: {e}")
+                return pd.DataFrame()
         return pd.DataFrame()
     
     def _track_charging_session(self, timestamp, battery, location):
         """Track charging sessions - detect start/stop and update session data"""
-        is_charging = battery.get('is_charging', False)
-        battery_level = battery.get('level')
-        charging_power = battery.get('charging_power', 0)
+        debug_logger.push_context("_track_charging_session")
         
-        if not battery_level:
-            return
-        
-        # Read existing sessions to find active one
-        sessions_df = self.get_charging_sessions_df()
-        active_session = None
-        
-        if not sessions_df.empty:
-            # Find incomplete sessions
-            incomplete = sessions_df[sessions_df['is_complete'] == False]
-            if not incomplete.empty:
-                active_session = incomplete.iloc[-1]
-        
-        if is_charging:
-            if active_session is None:
-                # Start new charging session
-                session_id = f"charge_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-                new_session = {
-                    'session_id': session_id,
-                    'start_time': timestamp,
-                    'end_time': None,
-                    'duration_minutes': 0,
-                    'start_battery': battery_level,
-                    'end_battery': battery_level,
-                    'energy_added': 0,
-                    'avg_power': charging_power or 0,
-                    'max_power': charging_power or 0,
-                    'location_lat': location.get('latitude') if location else None,
-                    'location_lon': location.get('longitude') if location else None,
-                    'is_complete': False
-                }
-                
-                with open(self.charging_sessions_file, 'a', newline='', encoding='utf-8') as f:
-                    writer = csv.DictWriter(f, fieldnames=[
-                        'session_id', 'start_time', 'end_time', 'duration_minutes',
-                        'start_battery', 'end_battery', 'energy_added', 'avg_power',
-                        'max_power', 'location_lat', 'location_lon', 'is_complete'
-                    ])
-                    writer.writerow(new_session)
+        try:
+            # Extract and validate data
+            is_charging = battery.get('is_charging', False)
+            battery_level_raw = battery.get('level')
+            charging_power_raw = battery.get('charging_power', 0)
+            
+            # Log raw data in debug mode
+            debug_logger.log_data('debug', 'Raw charging data', {
+                'timestamp': timestamp,
+                'battery': battery,
+                'location': location
+            })
+            
+            # Validate battery level
+            try:
+                battery_level = DataValidator.validate_battery_level(
+                    battery_level_raw, 
+                    context="charging_session_tracking"
+                )
+            except ValueError as e:
+                logger.error(f"Battery validation failed: {e}")
+                debug_logger.log_error_with_data("Battery validation failed", e, {
+                    'battery_level_raw': battery_level_raw,
+                    'battery_data': battery
+                })
+                return
+            
+            if battery_level is None:
+                return
+            
+            # Validate charging power
+            try:
+                charging_power = DataValidator.validate_numeric(
+                    charging_power_raw,
+                    context="charging_power",
+                    min_val=0,
+                    max_val=350  # Max DC fast charging
+                ) or 0
+            except ValueError as e:
+                logger.warning(f"Charging power validation failed, using 0: {e}")
+                charging_power = 0
+            
+            # Read existing sessions to find active one
+            sessions_df = self.get_charging_sessions_df()
+            active_session = None
+            
+            if not sessions_df.empty:
+                # Find incomplete sessions
+                incomplete = sessions_df[sessions_df['is_complete'] == False]
+                if not incomplete.empty:
+                    active_session = incomplete.iloc[-1].to_dict()
+            
+            if is_charging:
+                if active_session is None:
+                    # Start new charging session
+                    session_id = f"charge_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                    new_session = {
+                        'session_id': session_id,
+                        'start_time': timestamp,
+                        'end_time': None,
+                        'duration_minutes': 0,
+                        'start_battery': battery_level,
+                        'end_battery': battery_level,
+                        'energy_added': 0,
+                        'avg_power': charging_power or 0,
+                        'max_power': charging_power or 0,
+                        'location_lat': location.get('latitude') if location else None,
+                        'location_lon': location.get('longitude') if location else None,
+                        'is_complete': False
+                    }
+                    
+                    with open(self.charging_sessions_file, 'a', newline='', encoding='utf-8') as f:
+                        writer = csv.DictWriter(f, fieldnames=[
+                            'session_id', 'start_time', 'end_time', 'duration_minutes',
+                            'start_battery', 'end_battery', 'energy_added', 'avg_power',
+                            'max_power', 'location_lat', 'location_lon', 'is_complete'
+                        ])
+                        writer.writerow(new_session)
+                else:
+                    # Check if this is truly the same session or a new one
+                    # If more than 30 minutes have passed since last update, consider it a new session
+                    if 'end_time' in active_session and pd.notna(active_session['end_time']):
+                        last_update = pd.to_datetime(active_session['end_time'])
+                        current_time = pd.to_datetime(timestamp)
+                        time_diff = (current_time - last_update).total_seconds() / 60
+                        
+                        if time_diff > 30:  # More than 30 minutes gap
+                            # Complete the old session first
+                            self._complete_charging_session(active_session['session_id'], 
+                                                         active_session['end_time'], 
+                                                         active_session.get('end_battery', battery_level))
+                            
+                            # Start new charging session
+                            session_id = f"charge_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                            new_session = {
+                                'session_id': session_id,
+                                'start_time': timestamp,
+                                'end_time': None,
+                                'duration_minutes': 0,
+                                'start_battery': battery_level,
+                                'end_battery': battery_level,
+                                'energy_added': 0,
+                                'avg_power': charging_power or 0,
+                                'max_power': charging_power or 0,
+                                'location_lat': location.get('latitude') if location else None,
+                                'location_lon': location.get('longitude') if location else None,
+                                'is_complete': False
+                            }
+                            
+                            with open(self.charging_sessions_file, 'a', newline='', encoding='utf-8') as f:
+                                writer = csv.DictWriter(f, fieldnames=[
+                                    'session_id', 'start_time', 'end_time', 'duration_minutes',
+                                    'start_battery', 'end_battery', 'energy_added', 'avg_power',
+                                    'max_power', 'location_lat', 'location_lon', 'is_complete'
+                                ])
+                                writer.writerow(new_session)
+                        else:
+                            # Update existing session
+                            self._update_charging_session(active_session['session_id'], timestamp, battery_level, charging_power)
+                    else:
+                        # Update existing session
+                        self._update_charging_session(active_session['session_id'], timestamp, battery_level, charging_power)
             else:
-                # Update existing session
-                self._update_charging_session(active_session['session_id'], timestamp, battery_level, charging_power)
-        else:
-            if active_session is not None:
-                # End charging session
-                self._complete_charging_session(active_session['session_id'], timestamp, battery_level)
+                if active_session is not None:
+                    # End charging session
+                    self._complete_charging_session(active_session['session_id'], timestamp, battery_level)
+                    
+        except Exception as e:
+            logger.error(f"Error tracking charging session: {e}")
+            debug_logger.log_error_with_data("Charging session tracking failed", e, {
+                'timestamp': timestamp,
+                'battery': battery,
+                'location': location
+            })
+        finally:
+            debug_logger.pop_context()
     
     def _update_charging_session(self, session_id, timestamp, battery_level, charging_power):
         """Update an ongoing charging session"""
@@ -334,8 +435,28 @@ class CSVStorage:
             if charging_power and charging_power > sessions_df.loc[idx, 'max_power']:
                 sessions_df.loc[idx, 'max_power'] = charging_power
             
-            # Estimate energy added (rough calculation)
-            battery_diff = battery_level - sessions_df.loc[idx, 'start_battery']
+            # Calculate energy added
+            start_battery_raw = sessions_df.loc[idx, 'start_battery']
+            
+            # Validate start battery
+            try:
+                start_battery = DataValidator.validate_battery_level(
+                    start_battery_raw,
+                    context="start_battery_from_session"
+                )
+                if start_battery is None:
+                    logger.warning(f"Missing start_battery for session {idx}, using 0")
+                    start_battery = 0
+            except ValueError as e:
+                logger.error(f"Start battery validation failed: {e}")
+                debug_logger.log_error_with_data("Start battery validation failed", e, {
+                    'start_battery_raw': start_battery_raw,
+                    'session_idx': idx,
+                    'session_data': sessions_df.loc[idx].to_dict() if idx in sessions_df.index else None
+                })
+                start_battery = 0
+            
+            battery_diff = battery_level - start_battery
             if battery_diff > 0:
                 # Assume 77.4 kWh battery (Ioniq 5 standard)
                 energy_added = (battery_diff / 100) * 77.4

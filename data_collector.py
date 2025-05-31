@@ -16,18 +16,22 @@ from src.storage.csv_store import CSVStorage
 
 sys.path.append(str(Path(__file__).parent))
 
-# Set up logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('data_collector.log'),
-        logging.StreamHandler()
-    ]
-)
-logger = logging.getLogger(__name__)
-
+# Load environment first
 load_dotenv()
+
+# Import debug utilities
+sys.path.append(str(Path(__file__).parent))
+from src.utils.debug import setup_debug_logging, DebugLogger
+
+# Set up logging based on debug mode
+DEBUG_MODE = os.getenv('DEBUG_MODE', 'false').lower() == 'true'
+log_level = setup_debug_logging(DEBUG_MODE)
+
+logger = logging.getLogger(__name__)
+debug_logger = DebugLogger(__name__)
+
+if DEBUG_MODE:
+    logger.info("Running in DEBUG mode - verbose logging enabled")
 
 class DataCollector:
     """DataCollector class for collecting vehicle data from the API
