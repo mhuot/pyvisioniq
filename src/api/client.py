@@ -295,6 +295,8 @@ class CachedVehicleClient:
         
         if cached_data:
             print(f"Using cached vehicle data (age: {self._get_cache_age(cache_key)})")
+            # Mark data as coming from cache
+            cached_data['is_cached'] = True
             return cached_data
         
         if not self.manager:
@@ -356,6 +358,8 @@ class CachedVehicleClient:
             data = self._process_vehicle_data(vehicle)
             
             if data:
+                # Mark data as fresh (not cached)
+                data['is_cached'] = False
                 self._save_to_cache(cache_key, data)
                 return data
             else:
@@ -551,7 +555,10 @@ class CachedVehicleClient:
             
             logger.info(f"Using fallback cache from {file_age} ago")
             with open(latest_cache, 'r') as f:
-                return json.load(f)
+                data = json.load(f)
+                # Mark fallback data as cached
+                data['is_cached'] = True
+                return data
                 
         except Exception as e:
             logger.error(f"Error loading fallback cache: {e}")

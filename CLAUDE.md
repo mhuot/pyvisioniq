@@ -36,6 +36,7 @@ python tools/fix_charging_sessions.py       # Fix charging session data issues
 python tools/migrate_trips_location.py      # Add location data to trips
 python tools/add_temperature_columns.py     # Add temperature data to CSVs
 python tools/fix_cache_odometer.py          # Fix odometer readings in cache
+python tools/add_is_cached_column.py        # Add is_cached column to battery_status.csv
 ```
 
 ### Testing

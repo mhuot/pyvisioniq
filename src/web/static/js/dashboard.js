@@ -484,7 +484,8 @@ document.addEventListener('DOMContentLoaded', function() {
             x: new Date(d.timestamp),
             battery: d.battery_level,
             temperature: d.temperature !== null && units === 'imperial' ? 
-                conversions.celsiusToFahrenheit(d.temperature) : d.temperature
+                conversions.celsiusToFahrenheit(d.temperature) : d.temperature,
+            is_cached: d.is_cached
         }));
         
         // Update existing chart or create new one
@@ -492,6 +493,15 @@ document.addEventListener('DOMContentLoaded', function() {
             // Update existing chart data
             batteryChart.data.datasets[0].data = chartData.map(d => ({x: d.x, y: d.battery}));
             batteryChart.data.datasets[1].data = chartData.map(d => ({x: d.x, y: d.temperature}));
+            
+            // Update point colors based on cache status
+            batteryChart.data.datasets[0].pointBackgroundColor = chartData.map(d => 
+                d.is_cached ? 'rgba(52, 152, 219, 0.5)' : '#3498db'
+            );
+            batteryChart.data.datasets[0].pointBorderColor = chartData.map(d => 
+                d.is_cached ? 'rgba(52, 152, 219, 0.8)' : '#2980b9'
+            );
+            
             batteryChart.options.scales.y1.title.text = `Temperature (°${units === 'imperial' ? 'F' : 'C'})`;
             batteryChart.update('none'); // Update without animation for performance
             return;
@@ -510,7 +520,14 @@ document.addEventListener('DOMContentLoaded', function() {
                     spanGaps: false,  // This creates gaps for null values
                     tension: 0.1,
                     pointRadius: 3,
-                    pointHoverRadius: 5
+                    pointHoverRadius: 5,
+                    // Different colors for cached vs fresh data
+                    pointBackgroundColor: chartData.map(d => 
+                        d.is_cached ? 'rgba(52, 152, 219, 0.5)' : '#3498db'
+                    ),
+                    pointBorderColor: chartData.map(d => 
+                        d.is_cached ? 'rgba(52, 152, 219, 0.8)' : '#2980b9'
+                    )
                 }, {
                     label: `Temperature (°${units === 'imperial' ? 'F' : 'C'})`,
                     data: chartData.map(d => ({x: d.x, y: d.temperature})),
@@ -541,7 +558,28 @@ document.addEventListener('DOMContentLoaded', function() {
                         position: 'top',
                         labels: {
                             usePointStyle: true,
-                            padding: 15
+                            padding: 15,
+                            generateLabels: function(chart) {
+                                const original = Chart.defaults.plugins.legend.labels.generateLabels(chart);
+                                // Add custom legend items for data source
+                                original.push({
+                                    text: 'Fresh data',
+                                    fillStyle: '#3498db',
+                                    strokeStyle: '#2980b9',
+                                    lineWidth: 2,
+                                    hidden: false,
+                                    index: original.length
+                                });
+                                original.push({
+                                    text: 'Cached data',
+                                    fillStyle: 'rgba(52, 152, 219, 0.5)',
+                                    strokeStyle: 'rgba(52, 152, 219, 0.8)',
+                                    lineWidth: 2,
+                                    hidden: false,
+                                    index: original.length + 1
+                                });
+                                return original;
+                            }
                         }
                     },
                     tooltip: {
@@ -557,6 +595,15 @@ document.addEventListener('DOMContentLoaded', function() {
                                     else label += '°';
                                 }
                                 return label;
+                            },
+                            afterLabel: function(context) {
+                                // Add cache status for battery level dataset
+                                if (context.datasetIndex === 0) {
+                                    const dataIndex = context.dataIndex;
+                                    const isCached = chartData[dataIndex].is_cached;
+                                    return isCached ? '(Cached data)' : '(Fresh data)';
+                                }
+                                return '';
                             }
                         }
                     }

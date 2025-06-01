@@ -202,7 +202,7 @@ class CSVStorage:
                 writer = csv.DictWriter(f, fieldnames=[
                     'timestamp', 'battery_level', 'is_charging', 'charging_power',
                     'remaining_time', 'range', 'temperature', 'odometer',
-                    'meteo_temp', 'vehicle_temp'
+                    'meteo_temp', 'vehicle_temp', 'is_cached'
                 ])
                 
                 writer.writerow({
@@ -215,7 +215,8 @@ class CSVStorage:
                     'temperature': temperature,
                     'odometer': data.get('odometer'),
                     'meteo_temp': meteo_temp,
-                    'vehicle_temp': vehicle_temp
+                    'vehicle_temp': vehicle_temp,
+                    'is_cached': data.get('is_cached', False)
                 })
             
             # Track charging sessions
