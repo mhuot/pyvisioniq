@@ -34,12 +34,23 @@ python tools/reprocess_cache_complete.py    # Rebuild CSV files from cache
 python tools/deduplicate_trips_v2.py        # Remove duplicate trips
 python tools/fix_charging_sessions.py       # Fix charging session data issues
 python tools/migrate_trips_location.py      # Add location data to trips
+python tools/add_temperature_columns.py     # Add temperature data to CSVs
+python tools/fix_cache_odometer.py          # Fix odometer readings in cache
 ```
 
 ### Testing
 ```bash
 # Test charging session tracking
 python test_charging_session.py
+```
+
+### Development and Debugging
+```bash
+# Run with debug mode enabled for verbose logging
+DEBUG_MODE=true python -m src.web.app
+
+# Analyze error data
+python analyze_errors.py    # Processes debug/*.json error files
 ```
 
 ## High-Level Architecture
@@ -84,12 +95,26 @@ Hyundai/Kia API → CachedVehicleClient → Cache Files → CSVStorage → Flask
 - **Session Management**: Charging sessions tracked with incomplete/complete states
 - **Docker Deployment**: Code is COPY'd into image, not mounted. Only data/logs/cache are volumes. Rebuild required for code changes.
 
+### API Endpoints
+Flask app provides 12 endpoints at `http://localhost:5000/api/`:
+- `/trips` - Trip history with energy consumption
+- `/battery_status` - Battery level and charging status
+- `/locations` - GPS coordinates
+- `/charging_sessions` - Charging session data
+- `/last_update` - Last data collection timestamp
+- `/weather/[lat]/[lon]` - Weather data for coordinates
+- Additional endpoints for summaries and statistics
+
 ## Environment Variables
 Critical settings in `.env`:
 - `BLUELINKVID`: Vehicle ID - obtain from first run if not set
 - `API_DAILY_LIMIT`: Default 30, enforced by rate limiter
 - `DEBUG_MODE`: Enables verbose logging and debug routes
 - `TZ`: Timezone for data collection (default: America/Chicago)
+- `HYUNDAI_USERNAME`: Hyundai/Kia Connect account username
+- `HYUNDAI_PASSWORD`: Hyundai/Kia Connect account password
+- `HYUNDAI_BRAND`: "hyundai" or "kia"
+- `HYUNDAI_REGION_CODE`: Region code (e.g., "US")
 
 ## Known Issues
 - Temperature data may not update correctly from API

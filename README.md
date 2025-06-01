@@ -50,8 +50,13 @@ cd pyvisionic
 
 2. Create `.env` file with your credentials:
 ```bash
-cp .env.example .env
-# Edit .env with your Hyundai/Kia Connect credentials
+# Create .env file with your Hyundai/Kia Connect credentials
+cat > .env << EOF
+BLUELINKUSER=your_username
+BLUELINKPASS=your_password
+BLUELINKREGION=3  # 1=USA, 2=Canada, 3=Europe
+BLUELINKBRAND=2   # 1=Hyundai, 2=Kia, 3=Genesis
+EOF
 ```
 
 3. Run with docker-compose:
@@ -60,6 +65,11 @@ docker compose up -d
 ```
 
 The web interface will be available at http://localhost:5000
+
+**Note**: After code changes, rebuild the Docker image:
+```bash
+docker compose down && docker compose build && docker compose up -d
+```
 
 ### Manual Setup
 
@@ -76,14 +86,19 @@ pip install -r requirements.txt
 
 3. Set up environment variables:
 ```bash
-cp .env.example .env
-# Edit .env with your credentials
+# Create .env file with your credentials
+cat > .env << EOF
+BLUELINKUSER=your_username
+BLUELINKPASS=your_password
+BLUELINKREGION=3  # 1=USA, 2=Canada, 3=Europe
+BLUELINKBRAND=2   # 1=Hyundai, 2=Kia, 3=Genesis
+EOF
 ```
 
 4. Run the application:
 ```bash
-python data_collector.py &  # Start background data collector
-python -m src.web.app       # Start web server
+python data_collector.py &  # Start background data collector (runs every 48 minutes)
+python -m src.web.app       # Start Flask web server on port 5000
 ```
 
 ## Configuration
@@ -91,12 +106,13 @@ python -m src.web.app       # Start web server
 ### Environment Variables
 - `BLUELINKUSER`: Your Hyundai/Kia Connect username
 - `BLUELINKPASS`: Your Hyundai/Kia Connect password
-- `BLUELINKPIN`: Your Hyundai/Kia Connect PIN
-- `BLUELINKVID`: Your vehicle ID (obtained from first run)
+- `BLUELINKPIN`: Your Hyundai/Kia Connect PIN (optional, only needed for remote commands)
+- `BLUELINKVID`: Your vehicle ID (obtained from first run if not set)
 - `BLUELINKREGION`: Region code (1=USA, 2=Canada, 3=Europe)
 - `BLUELINKBRAND`: Brand (1=Hyundai, 2=Kia, 3=Genesis)
 - `API_DAILY_LIMIT`: API call limit (default: 30)
-- `CACHE_DURATION_HOURS`: Cache retention time (default: 48)
+- `DEBUG_MODE`: Enable verbose logging and debug routes (true/false)
+- `TZ`: Timezone for data collection (default: America/Chicago)
 - `PORT`: Web server port (default: 5000)
 
 ## Usage
@@ -109,13 +125,18 @@ python -m src.web.app       # Start web server
 - **Cache Management**: Access via `/cache` endpoint
 
 ### API Endpoints
-- `/api/current-status`: Current vehicle data
-- `/api/battery-history`: Historical battery data
-- `/api/trips`: Trip history
-- `/api/efficiency-stats`: Efficiency statistics
-- `/api/locations`: All trip locations for mapping
+- `/api/trips`: Trip history with energy consumption breakdown
+- `/api/battery_status`: Battery level, charging status, and temperature
+- `/api/locations`: GPS coordinates history
+- `/api/charging_sessions`: Charging session data
+- `/api/last_update`: Last data collection timestamp
+- `/api/weather/<lat>/<lon>`: Weather data for coordinates
+- `/api/summary/trips`: Trip summaries and statistics
+- `/api/summary/battery`: Battery usage statistics
+- `/api/trips/<trip_id>`: Individual trip details
+- `/api/force-update`: Force cache refresh
 - `/cache/api/files`: List cached files
-- `/cache/api/force-update`: Force cache refresh
+- `/cache/api/download/<filename>`: Download cached file
 
 ### Data Management Tools
 Located in `tools/` directory:
@@ -123,6 +144,9 @@ Located in `tools/` directory:
 - `deduplicate_trips_v2.py`: Remove duplicate trip entries
 - `migrate_trips_location.py`: Add location data to trips
 - `fix_cache_odometer.py`: Fix odometer readings in cache
+- `fix_charging_sessions.py`: Fix charging session data issues
+- `add_temperature_columns.py`: Add temperature data to CSVs
+- `add_charging_power_column.py`: Add charging power data
 
 ## Data Storage
 
@@ -130,9 +154,11 @@ Located in `tools/` directory:
   - API responses cached with timestamps
   - Automatic cleanup of old files
 - **CSV Files**: `data/` directory
-  - `battery_status.csv`: Battery history
-  - `trips.csv`: Trip records
-  - `locations.csv`: Location history
+  - `battery_status.csv`: Battery level, charging status, temperature
+  - `trips.csv`: Trip records with energy consumption breakdown
+  - `locations.csv`: GPS location history
+  - `charging_sessions.csv`: Charging session tracking
+  - `api_call_history.json`: API call tracking for rate limiting
 - **Logs**: `logs/` directory
   - `collector.log`: Data collection logs
 
@@ -166,8 +192,10 @@ For detailed architectural diagrams and technical documentation, see [docs/ARCHI
 3. Web UI changes: Edit `src/web/app.py` and templates
 4. New tools: Add scripts to `tools/` directory
 
-## Known issues
-- The temperature doesn't seem to be updated correctly
+## Known Issues
+- Temperature data may not update correctly from API
+- Data validation rejects numpy.int64 types in charging session tracking
+- Virtual environment created on macOS may need recreation on Linux
 
 ## Troubleshooting
 
@@ -178,7 +206,11 @@ For detailed architectural diagrams and technical documentation, see [docs/ARCHI
 - **Cache issues**: Use cache management UI to clear old files
 
 ### Debug Mode
-Set `FLASK_ENV=development` in `.env` for detailed error messages
+Set `DEBUG_MODE=true` in `.env` for:
+- Verbose logging to console and files
+- Debug endpoints at `/debug/*`
+- Error tracking in `debug/` directory
+- Detailed error messages in web UI
 
 ## License
 
