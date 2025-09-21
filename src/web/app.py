@@ -298,6 +298,13 @@ def get_trips():
             else:
                 page_trips.loc[idx, 'efficiency_wh_per_km'] = 0
         
+        # Convert energy values from Wh to kWh
+        energy_columns = ['total_consumed', 'regenerated_energy', 'accessories_consumed', 
+                         'climate_consumed', 'drivetrain_consumed', 'battery_care_consumed']
+        for col in energy_columns:
+            if col in page_trips.columns:
+                page_trips[col] = page_trips[col] / 1000.0  # Convert Wh to kWh
+        
         # Convert to JSON string with proper NaN handling
         json_str = page_trips.to_json(orient='records', date_format='iso')
         json_str = json_str.replace('NaN', 'null')
@@ -462,7 +469,7 @@ def get_temperature_efficiency():
                 
                 # Find closest battery reading to get temperature
                 trip_time = pd.to_datetime(trip['date'])
-                battery_df['timestamp'] = pd.to_datetime(battery_df['timestamp'])
+                battery_df['timestamp'] = pd.to_datetime(battery_df['timestamp'], format='ISO8601')
                 time_diffs = abs(battery_df['timestamp'] - trip_time)
                 closest_idx = time_diffs.idxmin()
                 
@@ -736,44 +743,30 @@ def get_charging_sessions():
     """Get charging session history"""
     try:
         sessions_df = storage.get_charging_sessions_df()
-        
         app.logger.info(f"Loading charging sessions, found {len(sessions_df)} sessions")
-        
+
         if sessions_df.empty:
             app.logger.warning("No charging sessions found in storage")
             return jsonify([])
-        
+
         # Apply time filtering
         hours = request.args.get('hours', 'all')
         start_date = request.args.get('start_date')
         end_date = request.args.get('end_date')
-        
+
         app.logger.info(f"Filtering charging sessions: hours={hours}, start_date={start_date}, end_date={end_date}")
-        
-        # Convert start_time to datetime if it's a string
-        sessions_df['start_time'] = pd.to_datetime(sessions_df['start_time'], errors='coerce')
-        
+
+        # Keep a copy so we can fall back to recent history if filters remove everything
+        original_sessions = sessions_df.copy()
+
         # For sessions with missing start_time, try to extract from session_id
-        for idx, row in sessions_df.iterrows():
-            if pd.isna(row['start_time']) and row['session_id'].startswith('charge_'):
-                # Extract date from session_id format: charge_YYYYMMDD_HHMMSS
-                try:
-                    date_part = row['session_id'].split('_')[1]
-                    time_part = row['session_id'].split('_')[2]
-                    # Reconstruct datetime
-                    datetime_str = f"{date_part[:4]}-{date_part[4:6]}-{date_part[6:8]} {time_part[:2]}:{time_part[2:4]}:{time_part[4:6]}"
-                    sessions_df.at[idx, 'start_time'] = pd.to_datetime(datetime_str)
-                    app.logger.info(f"Reconstructed start_time for {row['session_id']}: {datetime_str}")
-                except Exception as e:
-                    app.logger.error(f"Failed to reconstruct start_time for {row['session_id']}: {e}")
-        
-        # Remove sessions that still have invalid start_time
         sessions_df = sessions_df[sessions_df['start_time'].notna()]
-        
-        # Debug: Log all sessions before filtering
-        app.logger.info("All sessions before filtering:")
-        for idx, row in sessions_df.iterrows():
-            app.logger.info(f"  - {row['session_id']}: start={row['start_time']}, complete={row['is_complete']}")
+
+        if sessions_df.empty:
+            app.logger.warning("All charging sessions missing start_time; falling back to original dataframe")
+            sessions_df = original_sessions[original_sessions['start_time'].notna()]
+            if sessions_df.empty:
+                return jsonify([])
         
         # Apply date filtering
         if start_date and end_date:
@@ -813,6 +806,17 @@ def get_charging_sessions():
         if not sessions_df.empty:
             app.logger.info(f"Sessions dates: {sessions_df['start_time'].min()} to {sessions_df['start_time'].max()}")
             app.logger.info(f"Active sessions: {len(sessions_df[~sessions_df['is_complete']])}")
+        elif not original_sessions.empty:
+            # fall back to most recent sessions across full history so UI still has content
+            fallback_candidates = original_sessions[original_sessions['start_time'].notna()]
+            if fallback_candidates.empty:
+                return jsonify([])
+            fallback_count = min(len(fallback_candidates), 10)
+            sessions_df = fallback_candidates.sort_values('start_time', ascending=False).head(fallback_count)
+            app.logger.info(
+                "No sessions matched filter; returning %s most recent sessions instead",
+                fallback_count
+            )
         
         # Sort by start time descending (most recent first)
         sessions_df = sessions_df.sort_values('start_time', ascending=False)
@@ -934,6 +938,18 @@ def get_current_status():
                         weather_service = WeatherService()
                         weather_data = weather_service.get_current_weather(lat, lon)
             
+            # Get the most recent cached data to check api_last_updated
+            latest_cache_data = None
+            if client:
+                cache_key = client._get_cache_key("full_data")
+                cache_path = client._get_cache_path(cache_key)
+                if cache_path.exists():
+                    try:
+                        with open(cache_path) as f:
+                            latest_cache_data = json.load(f)
+                    except:
+                        pass
+            
             response_data = {
                 "battery_level": latest_data.get('battery_level'),
                 "is_charging": latest_data.get('is_charging'),
@@ -944,9 +960,16 @@ def get_current_status():
                 "vehicle_temp": latest_data.get('vehicle_temp'),
                 "odometer": latest_data.get('odometer'),
                 "last_updated": latest_data.get('timestamp'),
+                "is_cached": latest_data.get('is_cached', False),
                 "weather_source": weather_source
             }
             
+            # Add API freshness information
+            if latest_cache_data and 'api_last_updated' in latest_cache_data:
+                response_data['api_last_updated'] = latest_cache_data['api_last_updated']
+            if latest_cache_data:
+                response_data['hyundai_data_fresh'] = latest_cache_data.get('hyundai_data_fresh')
+
             # Add weather data if available
             if weather_data:
                 response_data['weather'] = {

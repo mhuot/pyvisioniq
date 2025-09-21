@@ -1147,3 +1147,43 @@ canvas {
     max-width: 100% \!important;
     height: auto \!important;
 }
+
+/* Data freshness indicator styling */
+.data-freshness {
+    font-size: 0.9em;
+    font-weight: 500;
+    margin-left: 0.5rem;
+    padding: 0.2rem 0.5rem;
+    border-radius: 4px;
+    cursor: help;
+}
+
+.data-freshness.fresh {
+    color: var(--success-color);
+    background-color: rgba(46, 204, 113, 0.1);
+    border: 1px solid rgba(46, 204, 113, 0.3);
+}
+
+.data-freshness.recent {
+    color: #27ae60;
+    background-color: rgba(39, 174, 96, 0.1);
+    border: 1px solid rgba(39, 174, 96, 0.3);
+}
+
+.data-freshness.old {
+    color: var(--warning-color);
+    background-color: rgba(243, 156, 18, 0.1);
+    border: 1px solid rgba(243, 156, 18, 0.3);
+}
+
+.data-freshness.very-old {
+    color: var(--danger-color);
+    background-color: rgba(231, 76, 60, 0.1);
+    border: 1px solid rgba(231, 76, 60, 0.3);
+}
+
+.data-freshness.cached {
+    color: var(--warning-color);
+    background-color: rgba(243, 156, 18, 0.1);
+    border: 1px solid rgba(243, 156, 18, 0.3);
+}

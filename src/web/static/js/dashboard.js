@@ -173,6 +173,76 @@ document.addEventListener('DOMContentLoaded', function() {
                 const date = new Date(data.last_updated);
                 lastUpdated.textContent = date.toLocaleString();
             }
+            
+            // Update data freshness indicator based on api_last_updated
+            const dataFreshness = document.getElementById('data-freshness');
+            if (dataFreshness && data.api_last_updated) {
+                try {
+                    const apiUpdateTime = new Date(data.api_last_updated);
+                    const now = new Date();
+                    const ageMinutes = Math.floor((now - apiUpdateTime) / (1000 * 60));
+                    
+                    let freshnessText, className, title;
+                    
+                    if (ageMinutes < 5) {
+                        // Very fresh data (less than 5 minutes)
+                        freshnessText = ' (fresh - ' + ageMinutes + 'm ago)';
+                        className = 'data-freshness fresh';
+                        title = 'Vehicle data is very recent (' + ageMinutes + ' minutes old)';
+                    } else if (ageMinutes < 60) {
+                        // Recent data (less than 1 hour)
+                        freshnessText = ' (' + ageMinutes + 'm ago)';
+                        className = 'data-freshness recent';
+                        title = 'Vehicle data is ' + ageMinutes + ' minutes old';
+                    } else if (ageMinutes < 1440) {
+                        // Old data (less than 24 hours)
+                        const ageHours = Math.floor(ageMinutes / 60);
+                        const remainingMinutes = ageMinutes % 60;
+                        freshnessText = ' (' + ageHours + 'h ' + remainingMinutes + 'm ago)';
+                        className = 'data-freshness old';
+                        title = 'Vehicle data is ' + ageHours + ' hours and ' + remainingMinutes + ' minutes old - click Refresh Data';
+                    } else {
+                        // Very old data (more than 24 hours)
+                        const ageDays = Math.floor(ageMinutes / 1440);
+                        freshnessText = ' (' + ageDays + ' days ago)';
+                        className = 'data-freshness very-old';
+                        title = 'Vehicle data is ' + ageDays + ' days old - click Refresh Data for current information';
+                    }
+                    
+                    dataFreshness.textContent = freshnessText;
+                    dataFreshness.className = className;
+                    dataFreshness.title = title;
+                    
+                } catch (error) {
+                    // Fallback to is_cached if api_last_updated parsing fails
+                    if (data.is_cached === true) {
+                        dataFreshness.textContent = ' (cached data)';
+                        dataFreshness.className = 'data-freshness cached';
+                        dataFreshness.title = 'This data was served from cache - click Refresh Data for fresh API data';
+                    } else if (data.is_cached === false) {
+                        dataFreshness.textContent = ' (fresh from API)';
+                        dataFreshness.className = 'data-freshness fresh';
+                        dataFreshness.title = 'This data was just fetched from the vehicle API';
+                    } else {
+                        dataFreshness.textContent = '';
+                        dataFreshness.className = 'data-freshness';
+                    }
+                }
+            } else if (dataFreshness) {
+                // Fallback to is_cached if no api_last_updated
+                if (data.is_cached === true) {
+                    dataFreshness.textContent = ' (cached data)';
+                    dataFreshness.className = 'data-freshness cached';
+                    dataFreshness.title = 'This data was served from cache - click Refresh Data for fresh API data';
+                } else if (data.is_cached === false) {
+                    dataFreshness.textContent = ' (fresh from API)';
+                    dataFreshness.className = 'data-freshness fresh';
+                    dataFreshness.title = 'This data was just fetched from the vehicle API';
+                } else {
+                    dataFreshness.textContent = '';
+                    dataFreshness.className = 'data-freshness';
+                }
+            }
         } catch (error) {
             console.error('Error loading current status:', error);
         }

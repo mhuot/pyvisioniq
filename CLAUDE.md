@@ -13,8 +13,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ```bash
 # Start both data collector and web server
 source venv/bin/activate
-python data_collector.py &  # Runs in background, collects data every 48 minutes
-python -m src.web.app       # Starts Flask web server on port 5000
+python data_collector.py &  # Runs in background, collects data every 48 minutes based on API_DAILY_LIMIT
+python -m src.web.app       # Starts Flask web server on port 5000 (or PORT env var)
 ```
 
 ### Docker Operations
@@ -50,7 +50,7 @@ python test_charging_session.py
 # Run with debug mode enabled for verbose logging
 DEBUG_MODE=true python -m src.web.app
 
-# Analyze error data
+# Analyze error data (when debug files exist)
 python analyze_errors.py    # Processes debug/*.json error files
 ```
 
@@ -59,27 +59,30 @@ python analyze_errors.py    # Processes debug/*.json error files
 ### Core Components Interaction
 1. **Data Collector** (`data_collector.py`):
    - Runs continuously in background
-   - Fetches vehicle data every 48 minutes
-   - Respects 30 API calls/day limit
+   - Fetches vehicle data based on API_DAILY_LIMIT setting (default 30/day = every 48 min)
+   - Manages API rate limiting with call history tracking
    - Stores data via CSVStorage
 
 2. **CachedVehicleClient** (`src/api/client.py`):
-   - Handles all Hyundai/Kia Connect API communication
-   - Implements smart caching with separate validity (45.6 min) and retention (48 hours)
-   - Manages authentication and rate limiting
-   - Uses SSL patch for certificate issues
+   - Handles all Hyundai/Kia Connect API communication  
+   - Implements smart caching with separate validity and retention periods:
+     - Cache validity: Calculated from API_DAILY_LIMIT (e.g., 30 calls/day = 45.6 min validity)
+     - Cache retention: Configured via CACHE_DURATION_HOURS (default 48 hours)
+   - Manages authentication and error handling with custom APIError class
+   - Uses SSL patch for certificate issues when DISABLE_SSL_VERIFY=true
 
 3. **CSVStorage** (`src/storage/csv_store.py`):
    - Manages 4 CSV files: trips, battery_status, locations, charging_sessions
-   - Handles deduplication automatically
-   - Tracks charging sessions with state management
-   - Integrates weather data from Open-Meteo API
+   - Handles automatic deduplication based on timestamps
+   - Tracks charging sessions with state management (incomplete/complete)
+   - Integrates weather data from Open-Meteo API or vehicle sensor based on WEATHER_SOURCE
 
 4. **Flask Web App** (`src/web/app.py`):
-   - Serves dashboard at port 5000
-   - Provides 12 API endpoints for data access
-   - Cache management UI at `/cache`
-   - Debug routes available when DEBUG_MODE=true
+   - Serves dashboard at configured PORT (default 5000)
+   - Provides 12+ API endpoints for data access
+   - Cache management UI via cache_bp blueprint at `/cache`
+   - Debug routes via debug_bp blueprint when DEBUG_MODE=true
+   - Handles NaN values for JSON serialization
 
 ### Data Flow
 ```
@@ -87,37 +90,49 @@ Hyundai/Kia API → CachedVehicleClient → Cache Files → CSVStorage → Flask
                        ↓                     ↓
                   Rate Limiting          Deduplication
                   SSL Patching          Weather Integration
+                  Error Classification  Session Tracking
 ```
 
 ### Key Patterns
 - **Caching Strategy**: Two-tier system with validity period for API calls and longer retention for data availability
-- **Error Handling**: Comprehensive error classification in API client with retry logic
-- **Data Validation**: Debug utilities include DataValidator for type checking (handles numpy types)
-- **Session Management**: Charging sessions tracked with incomplete/complete states
-- **Docker Deployment**: Code is COPY'd into image, not mounted. Only data/logs/cache are volumes. Rebuild required for code changes.
+- **Error Handling**: APIError class with error types and user-friendly messages
+- **Data Validation**: Debug utilities with DataValidator for type checking (handles numpy types)
+- **Session Management**: Charging sessions tracked with start/end times, energy added, location
+- **Docker Deployment**: Code is COPY'd into image, not mounted. Only data/logs/cache are volumes
+- **Blueprint Architecture**: Modular routes using Flask blueprints (cache_bp, debug_bp)
 
 ### API Endpoints
-Flask app provides 12 endpoints at `http://localhost:5000/api/`:
-- `/trips` - Trip history with energy consumption
-- `/battery_status` - Battery level and charging status
-- `/locations` - GPS coordinates
+Flask app provides endpoints at `http://localhost:{PORT}/api/`:
+- `/trips` - Trip history with energy consumption breakdown
+- `/battery_status` - Battery level, charging status, temperature  
+- `/locations` - GPS coordinates history
 - `/charging_sessions` - Charging session data
 - `/last_update` - Last data collection timestamp
-- `/weather/[lat]/[lon]` - Weather data for coordinates
-- Additional endpoints for summaries and statistics
+- `/weather/<lat>/<lon>` - Weather data for coordinates
+- `/summary/trips` - Trip statistics and summaries
+- `/summary/battery` - Battery usage statistics
+- `/trips/<trip_id>` - Individual trip details
+- `/force-update` - Force cache refresh (respects rate limits)
+- `/clear-cache` - Clear non-history cache files
+- `/refresh` - Refresh data with timeout handling
 
-## Environment Variables
-Critical settings in `.env`:
+## Environment Variables (.env)
+Critical settings that must be configured:
 - `BLUELINKVID`: Vehicle ID - obtain from first run if not set
-- `API_DAILY_LIMIT`: Default 30, enforced by rate limiter
+- `BLUELINKUSER`: Hyundai/Kia Connect account username  
+- `BLUELINKPASS`: Hyundai/Kia Connect account password
+- `BLUELINKPIN`: Account PIN for remote commands
+- `BLUELINKREGION`: 1=Europe, 2=Canada, 3=USA, 4=China, 5=Australia
+- `BLUELINKBRAND`: 1=Kia, 2=Hyundai, 3=Genesis
+- `API_DAILY_LIMIT`: Default 30, used to calculate cache validity
+- `CACHE_DURATION_HOURS`: How long to retain cache files (default 48)
 - `DEBUG_MODE`: Enables verbose logging and debug routes
 - `TZ`: Timezone for data collection (default: America/Chicago)
-- `HYUNDAI_USERNAME`: Hyundai/Kia Connect account username
-- `HYUNDAI_PASSWORD`: Hyundai/Kia Connect account password
-- `HYUNDAI_BRAND`: "hyundai" or "kia"
-- `HYUNDAI_REGION_CODE`: Region code (e.g., "US")
+- `PORT`: Web server port (default: 5000)
+- `WEATHER_SOURCE`: "meteo" for Open-Meteo API or "vehicle" for car sensor
 
 ## Known Issues
 - Temperature data may not update correctly from API
-- Data validation rejects numpy.int64 types in charging session tracking
+- Data validation rejects numpy.int64 types in charging session tracking  
 - Virtual environment created on macOS may need recreation on Linux
+- SSL certificate issues may require DISABLE_SSL_VERIFY=true

@@ -62,6 +62,11 @@ class CSVStorage:
         # Initialize weather service
         self.weather_service = WeatherService()
         self.use_meteo = os.getenv('WEATHER_SOURCE', 'meteo').lower() == 'meteo'
+        daily_limit = float(os.getenv('API_DAILY_LIMIT', '30'))
+        poll_interval_minutes = (24 * 60) / daily_limit if daily_limit > 0 else 48.0
+        gap_multiplier = float(os.getenv('CHARGING_SESSION_GAP_MULTIPLIER', '1.5'))
+        self.charging_gap_threshold_minutes = max(poll_interval_minutes * gap_multiplier, 5.0)
+        self.battery_capacity_kwh = float(os.getenv('BATTERY_CAPACITY_KWH', '77.4'))
         
         self._init_files()
     
@@ -255,21 +260,115 @@ class CSVStorage:
         return pd.DataFrame()
     
     def get_charging_sessions_df(self):
-        """Get charging sessions data as a DataFrame"""
-        if self.charging_sessions_file.exists():
+        """Get charging sessions data as a DataFrame with normalized fields."""
+        if not self.charging_sessions_file.exists():
+            return pd.DataFrame()
+
+        try:
+            # Read CSV without automatic date parsing so we can handle partial data
+            df = pd.read_csv(self.charging_sessions_file)
+        except Exception as e:
+            logger.error(f"Error reading charging sessions CSV: {e}")
+            return pd.DataFrame()
+
+        if df.empty:
+            return df
+
+        changed = False
+
+        # Normalize start and end timestamps
+        if 'start_time' in df.columns:
+            df['start_time'] = pd.to_datetime(df['start_time'], errors='coerce')
+            missing_start = df['start_time'].isna()
+
+            if missing_start.any() and 'session_id' in df.columns:
+                for idx in df[missing_start].index:
+                    session_id = df.at[idx, 'session_id']
+                    if isinstance(session_id, str) and session_id.startswith('charge_'):
+                        parts = session_id.split('_')
+                        if len(parts) >= 3:
+                            date_part, time_part = parts[1], parts[2]
+                            try:
+                                derived = datetime.strptime(date_part + time_part, "%Y%m%d%H%M%S")
+                                df.at[idx, 'start_time'] = derived
+                                changed = True
+                            except ValueError:
+                                logger.debug(f"Could not reconstruct start_time for {session_id}")
+
+        if 'end_time' in df.columns:
+            df['end_time'] = pd.to_datetime(df['end_time'], errors='coerce')
+
+        # Normalize numeric columns
+        for column in ['start_battery', 'end_battery', 'energy_added', 'avg_power', 'max_power', 'duration_minutes']:
+            if column in df.columns:
+                df[column] = pd.to_numeric(df[column], errors='coerce')
+
+        # Ensure boolean type for completion flag
+        if 'is_complete' in df.columns:
+            df['is_complete'] = df['is_complete'].apply(
+                lambda val: str(val).strip().lower() == 'true' if pd.notna(val) else False
+            )
+
+        # Recompute duration when possible
+        if {'start_time', 'end_time'}.issubset(df.columns):
+            derived_duration = (df['end_time'] - df['start_time']).dt.total_seconds() / 60
+            if 'duration_minutes' in df.columns:
+                existing_duration = df['duration_minutes']
+                needs_update = existing_duration.isna() | (existing_duration <= 0)
+                # Replace clearly wrong values (>1 minute difference)
+                delta = (derived_duration - existing_duration).abs()
+                needs_update |= delta > 1
+            else:
+                needs_update = derived_duration.notna()
+                df['duration_minutes'] = None
+            if needs_update.any():
+                df.loc[needs_update, 'duration_minutes'] = derived_duration.round(1)
+                changed = True
+
+        # Recompute energy_added from battery delta when available
+        if {'start_battery', 'end_battery'}.issubset(df.columns):
+            battery_delta = df['end_battery'] - df['start_battery']
+            estimated_energy = (battery_delta / 100.0) * self.battery_capacity_kwh
+            if 'energy_added' in df.columns:
+                needs_energy = df['energy_added'].isna() | (df['energy_added'] <= 0)
+            else:
+                needs_energy = battery_delta.notna()
+                df['energy_added'] = None
+            needs_energy &= battery_delta > 0
+            if needs_energy.any():
+                df.loc[needs_energy, 'energy_added'] = estimated_energy.round(2)
+                changed = True
+
+        # Recompute average power when we have duration and energy
+        if {'energy_added', 'duration_minutes'}.issubset(df.columns):
+            duration_hours = df['duration_minutes'] / 60.0
+            duration_hours = duration_hours.replace({0: pd.NA})
+            avg_power = df['energy_added'] / duration_hours
+            needs_avg = duration_hours > 0
+            if 'avg_power' in df.columns:
+                existing_avg = df['avg_power']
+                update_mask = needs_avg & (existing_avg.isna() | (existing_avg <= 0))
+                # Replace if differs by more than 0.5 kW to correct rounding issues
+                diff_mask = needs_avg & existing_avg.notna() & (avg_power - existing_avg).abs() > 0.5
+                update_mask |= diff_mask
+            else:
+                update_mask = needs_avg
+                df['avg_power'] = None
+            if update_mask.any():
+                df.loc[update_mask, 'avg_power'] = avg_power.round(2)
+                changed = True
+
+        if changed:
             try:
-                # Read CSV without parsing dates first to handle mixed formats
-                df = pd.read_csv(self.charging_sessions_file)
-                # Convert dates manually to handle mixed formats and missing values
-                if 'start_time' in df.columns:
-                    df['start_time'] = pd.to_datetime(df['start_time'], errors='coerce')
-                if 'end_time' in df.columns:
-                    df['end_time'] = pd.to_datetime(df['end_time'], errors='coerce')
-                return df
+                df.to_csv(
+                    self.charging_sessions_file,
+                    index=False,
+                    date_format='%Y-%m-%d %H:%M:%S.%f'
+                )
             except Exception as e:
-                logger.error(f"Error reading charging sessions CSV: {e}")
-                return pd.DataFrame()
-        return pd.DataFrame()
+                logger.error(f"Failed to persist reconstructed charging session data: {e}")
+
+        return df
     
     def _track_charging_session(self, timestamp, battery, location):
         """Track charging sessions - detect start/stop and update session data"""
@@ -355,13 +454,13 @@ class CSVStorage:
                         writer.writerow(new_session)
                 else:
                     # Check if this is truly the same session or a new one
-                    # If more than 30 minutes have passed since last update, consider it a new session
+                    threshold = getattr(self, 'charging_gap_threshold_minutes', 45.0)
                     if 'end_time' in active_session and pd.notna(active_session['end_time']):
                         last_update = pd.to_datetime(active_session['end_time'])
                         current_time = pd.to_datetime(timestamp)
                         time_diff = (current_time - last_update).total_seconds() / 60
                         
-                        if time_diff > 30:  # More than 30 minutes gap
+                        if time_diff > threshold:
                             # Complete the old session first
                             self._complete_charging_session(active_session['session_id'], 
                                                          active_session['end_time'], 

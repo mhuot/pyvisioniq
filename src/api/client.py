@@ -111,9 +111,13 @@ class CachedVehicleClient:
         cache_path = self._get_cache_path(cache_key)
         if self.cache_enabled and self._is_cache_valid(cache_path):
             with open(cache_path, 'r') as f:
-                return json.load(f)
+                data = json.load(f)
+            # Cached reads are, by definition, not fresh from Hyundai
+            data['is_cached'] = True
+            data['hyundai_data_fresh'] = False
+            return data
         return None
-    
+
     def _save_to_cache(self, cache_key, data):
         cache_path = self._get_cache_path(cache_key)
         with open(cache_path, 'w') as f:
@@ -172,7 +176,8 @@ class CachedVehicleClient:
     def force_cache_update(self):
         """Force an API call and cache the result, bypassing normal cache checks"""
         cache_key = self._get_cache_key("full_data")
-        
+        previous_cache = self._load_cache_entry(cache_key)
+
         if not self.manager:
             print("Error: VehicleManager not initialized")
             return None
@@ -200,6 +205,9 @@ class CachedVehicleClient:
                     # Process and save to cache
                     data = self._process_vehicle_data(vehicle)
                     if data:
+                        is_fresh = self._is_remote_data_fresh(data, previous_cache)
+                        data['hyundai_data_fresh'] = is_fresh
+                        data['is_cached'] = not is_fresh
                         self._save_to_cache(cache_key, data)
                         print("Cache updated successfully!")
                         return data
@@ -211,6 +219,100 @@ class CachedVehicleClient:
             print(f"Error during force cache update: {e}")
             return None
     
+    def _load_cache_entry(self, cache_key):
+        """Load cached data regardless of freshness window."""
+        cache_path = self._get_cache_path(cache_key)
+        if cache_path.exists():
+            try:
+                with open(cache_path, 'r') as f:
+                    return json.load(f)
+            except Exception as e:
+                logger.warning(f"Failed to load cache entry {cache_path}: {e}")
+        return None
+
+    def _parse_remote_timestamp(self, value):
+        """Convert various Hyundai timestamp formats to datetime."""
+        if isinstance(value, datetime):
+            return value
+        if isinstance(value, str):
+            candidate = value.strip()
+            if candidate.endswith('Z'):
+                candidate = candidate[:-1] + '+00:00'
+            try:
+                return datetime.fromisoformat(candidate)
+            except ValueError:
+                if candidate.isdigit() and len(candidate) == 14:
+                    try:
+                        return datetime.strptime(candidate, "%Y%m%d%H%M%S")
+                    except ValueError:
+                        return None
+        return None
+
+    def _extract_remote_timestamp(self, data):
+        """Pick the best timestamp that reflects Hyundai's last update."""
+        if not isinstance(data, dict):
+            return None
+
+        candidates = [
+            data.get('api_last_updated'),
+        ]
+
+        raw_data = data.get('raw_data') if isinstance(data.get('raw_data'), dict) else {}
+        vehicle_status = raw_data.get('vehicleStatus') if isinstance(raw_data.get('vehicleStatus'), dict) else {}
+
+        # Hyundai sometimes stores timestamps as YYYYMMDDHHMMSS strings
+        candidates.append(vehicle_status.get('dateTime'))
+        # Some payloads embed timestamps deeper under evStatus
+        ev_status = vehicle_status.get('evStatus') if isinstance(vehicle_status.get('evStatus'), dict) else {}
+        candidates.append(ev_status.get('lastUpdatedAt'))
+
+        for candidate in candidates:
+            ts = self._parse_remote_timestamp(candidate)
+            if ts:
+                return ts
+        return None
+
+    def _raw_data_signature(self, data):
+        """Create a hash of raw Hyundai data for change detection."""
+        try:
+            raw = data.get('raw_data', {}) if isinstance(data, dict) else {}
+            serialized = json.dumps(raw, sort_keys=True, default=str)
+            return hashlib.md5(serialized.encode('utf-8')).hexdigest()
+        except Exception as e:
+            logger.debug(f"Unable to build raw data signature: {e}")
+            return None
+
+    def _is_remote_data_fresh(self, new_data, previous_data):
+        """Determine whether Hyundai actually delivered fresher vehicle data."""
+        if not isinstance(new_data, dict):
+            return False
+
+        new_ts = self._extract_remote_timestamp(new_data)
+        prev_ts = self._extract_remote_timestamp(previous_data) if previous_data else None
+
+        if new_ts and prev_ts:
+            if new_ts > prev_ts:
+                return True
+            if new_ts < prev_ts:
+                # Unexpected clock skew; treat as fresh to avoid suppressing updates
+                return True
+            # new_ts == prev_ts -> no change detected yet
+            fresh = False
+        elif new_ts and not prev_ts:
+            fresh = True
+        elif not new_ts and prev_ts:
+            fresh = False
+        else:
+            fresh = True
+
+        if not fresh:
+            # Fall back to hashing the raw payload to detect content changes
+            new_sig = self._raw_data_signature(new_data)
+            prev_sig = self._raw_data_signature(previous_data) if previous_data else None
+            if new_sig and prev_sig and new_sig != prev_sig:
+                fresh = True
+        return fresh
+
     def _process_vehicle_data(self, vehicle):
         """Process vehicle object into standardized data format"""
         try:
@@ -220,7 +322,7 @@ class CachedVehicleClient:
                 air_temp = vehicle.air_temperature
             elif hasattr(vehicle, 'data') and 'air_temperature' in vehicle.data:
                 air_temp = vehicle.data['air_temperature']
-            
+
             # Extract range from raw data if available
             ev_range = None
             vehicle_data = getattr(vehicle, 'data', {})
@@ -257,9 +359,17 @@ class CachedVehicleClient:
             else:
                 odometer_km = odometer_value
             
+            raw_api_last_updated = getattr(vehicle, 'last_updated_at', None)
+            if isinstance(raw_api_last_updated, datetime):
+                api_last_updated = raw_api_last_updated.isoformat()
+            elif raw_api_last_updated is not None:
+                api_last_updated = str(raw_api_last_updated)
+            else:
+                api_last_updated = None
+
             data = {
                 "timestamp": datetime.now().isoformat(),
-                "api_last_updated": getattr(vehicle, 'last_updated_at', None),
+                "api_last_updated": api_last_updated,
                 "vehicle_id": self.vehicle_id,
                 "odometer": odometer_km,
                 "battery": {
@@ -292,12 +402,15 @@ class CachedVehicleClient:
     def get_vehicle_data(self):
         cache_key = self._get_cache_key("full_data")
         cached_data = self._load_from_cache(cache_key)
-        
+
         if cached_data:
             print(f"Using cached vehicle data (age: {self._get_cache_age(cache_key)})")
             # Mark data as coming from cache
             cached_data['is_cached'] = True
+            cached_data['hyundai_data_fresh'] = False
             return cached_data
+
+        previous_cache = self._load_cache_entry(cache_key)
         
         if not self.manager:
             print("Error: VehicleManager not initialized")
@@ -356,10 +469,11 @@ class CachedVehicleClient:
             
             # Process the vehicle data
             data = self._process_vehicle_data(vehicle)
-            
+
             if data:
-                # Mark data as fresh (not cached)
-                data['is_cached'] = False
+                is_fresh = self._is_remote_data_fresh(data, previous_cache)
+                data['hyundai_data_fresh'] = is_fresh
+                data['is_cached'] = not is_fresh
                 self._save_to_cache(cache_key, data)
                 return data
             else:
@@ -558,8 +672,9 @@ class CachedVehicleClient:
                 data = json.load(f)
                 # Mark fallback data as cached
                 data['is_cached'] = True
+                data['hyundai_data_fresh'] = False
                 return data
-                
+
         except Exception as e:
             logger.error(f"Error loading fallback cache: {e}")
             return None
