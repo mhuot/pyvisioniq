@@ -29,6 +29,8 @@ import logging
 import os
 from datetime import datetime
 from pathlib import Path
+
+from filelock import FileLock
 import pandas as pd
 import sys
 sys.path.append(str(Path(__file__).parent.parent.parent))
@@ -58,7 +60,8 @@ class CSVStorage:
         self.battery_file = self.data_dir / "battery_status.csv"
         self.location_file = self.data_dir / "locations.csv"
         self.charging_sessions_file = self.data_dir / "charging_sessions.csv"
-        
+        self.external_battery_file = self.data_dir / "external_battery.csv"
+
         # Initialize weather service
         self.weather_service = WeatherService()
         self.use_meteo = os.getenv('WEATHER_SOURCE', 'meteo').lower() == 'meteo'
@@ -106,6 +109,13 @@ class CSVStorage:
                     'session_id', 'start_time', 'end_time', 'duration_minutes',
                     'start_battery', 'end_battery', 'energy_added', 'avg_power',
                     'max_power', 'location_lat', 'location_lon', 'is_complete'
+                ])
+                writer.writeheader()
+
+        if not self.external_battery_file.exists():
+            with open(self.external_battery_file, 'w', newline='', encoding='utf-8') as f:
+                writer = csv.DictWriter(f, fieldnames=[
+                    'timestamp', 'voltage', 'soc', 'temperature'
                 ])
                 writer.writeheader()
     
@@ -593,7 +603,7 @@ class CSVStorage:
         if not df.empty:
             # Ensure timestamp is datetime (handle mixed formats)
             df['timestamp'] = pd.to_datetime(df['timestamp'], format='mixed')
-            
+
             if days is not None:
                 cutoff = pd.Timestamp.now() - pd.Timedelta(days=days)
                 return df[df['timestamp'] >= cutoff].sort_values('timestamp')
@@ -601,3 +611,83 @@ class CSVStorage:
                 # Return all data
                 return df.sort_values('timestamp')
         return df
+
+    def _read_recent_timestamps(self, filepath, tail_lines=500):
+        """Read the timestamp column from the last *tail_lines* of a CSV file.
+
+        Uses a seek-from-end approach so we never load the entire file into
+        memory, even if the CSV grows to millions of rows.
+
+        Returns:
+            set[str]: Timestamp strings found in the tail portion.
+        """
+        timestamps = set()
+        if not filepath.exists():
+            return timestamps
+
+        try:
+            size = filepath.stat().st_size
+            # Read a generous chunk from the end (100 bytes per line is plenty)
+            read_size = min(size, tail_lines * 100)
+            with open(filepath, 'rb') as f:
+                f.seek(max(0, size - read_size))
+                tail_bytes = f.read()
+
+            # Decode, split into lines, skip any partial first line
+            lines = tail_bytes.decode('utf-8', errors='replace').splitlines()
+            if size > read_size:
+                lines = lines[1:]  # first line is likely truncated
+
+            reader = csv.reader(lines)
+            for row in reader:
+                if not row:
+                    continue
+                ts = row[0].strip()
+                # Skip the header row if it ended up in our tail chunk
+                if ts and ts != 'timestamp':
+                    timestamps.add(ts)
+        except Exception as e:
+            logger.warning("Could not read recent timestamps from %s: %s", filepath, e)
+
+        return timestamps
+
+    def write_unique_rows(self, rows):
+        """Append rows to external_battery.csv, skipping duplicates by timestamp.
+
+        Uses a file lock so the data_collector and the Flask API can safely
+        write concurrently without corrupting the CSV.
+
+        Args:
+            rows: list[dict] — each dict must have keys: timestamp, voltage,
+                  soc, and optionally temperature.
+
+        Returns:
+            tuple[int, int]: (added_count, skipped_count).
+        """
+        fieldnames = ['timestamp', 'voltage', 'soc', 'temperature']
+        lock_path = self.external_battery_file.with_suffix('.lock')
+        lock = FileLock(lock_path, timeout=10)
+
+        with lock:
+            existing_ts = self._read_recent_timestamps(self.external_battery_file)
+
+            added = 0
+            skipped = 0
+            with open(self.external_battery_file, 'a', newline='', encoding='utf-8') as f:
+                writer = csv.DictWriter(f, fieldnames=fieldnames)
+                for row in rows:
+                    ts = row.get('timestamp', '')
+                    if ts in existing_ts:
+                        skipped += 1
+                        continue
+                    writer.writerow({k: row.get(k) for k in fieldnames})
+                    existing_ts.add(ts)
+                    added += 1
+
+        return added, skipped
+
+    def get_external_battery_df(self):
+        """Get external 12V battery data as a DataFrame."""
+        if self.external_battery_file.exists():
+            return pd.read_csv(self.external_battery_file, parse_dates=['timestamp'])
+        return pd.DataFrame()

@@ -15,6 +15,7 @@ from src.api.client import CachedVehicleClient, APIError
 from src.storage.csv_store import CSVStorage
 from src.web.cache_routes import cache_bp
 from src.web.debug_routes import debug_bp
+from src.web.external_routes import external_bp
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'dev-secret-key'
@@ -29,10 +30,12 @@ except Exception as e:
     app.config['cache_client'] = None
 
 storage = CSVStorage()
+app.config['storage'] = storage
 
 # Register blueprints
 app.register_blueprint(cache_bp)
 app.register_blueprint(debug_bp)
+app.register_blueprint(external_bp)
 
 def clean_nan_values(data):
     """Replace NaN and None values with None for JSON serialization"""
