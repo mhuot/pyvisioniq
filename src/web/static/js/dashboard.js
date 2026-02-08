@@ -7,6 +7,7 @@ let mapMarkers = [];
 let batteryChart = null;
 let energyChart = null;
 let tempEfficiencyChart = null;
+let weatherChargingChart = null;
 
 document.addEventListener('DOMContentLoaded', function() {
     const refreshBtn = document.getElementById('refresh-btn');
@@ -255,7 +256,8 @@ document.addEventListener('DOMContentLoaded', function() {
     loadEfficiencyStats(24);
     loadChargingSessions(24);
     loadTemperatureEfficiency(24);
-    
+    loadWeatherChargingImpact(24);
+
     // Initialize and load map
     initializeLocationsMap().then(() => {
         loadLocationsMap(24);
@@ -338,7 +340,8 @@ document.addEventListener('DOMContentLoaded', function() {
             loadLocationsMap(hours, startDate, endDate),
             loadEfficiencyStats(hours, startDate, endDate),
             loadChargingSessions(hours, startDate, endDate),
-            loadTemperatureEfficiency(hours, startDate, endDate)
+            loadTemperatureEfficiency(hours, startDate, endDate),
+            loadWeatherChargingImpact(hours, startDate, endDate)
         ]);
         
         showNotification('Data updated', 'success');
@@ -485,6 +488,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     loadLocationsMap(currentTimeRange);
                     loadChargingSessions(currentTimeRange);
                     loadTemperatureEfficiency(currentTimeRange);
+                    loadWeatherChargingImpact(currentTimeRange);
                 }
                 loadCollectionStatus(); // Update API usage display
             } else {
@@ -1403,6 +1407,222 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
     
+    async function loadWeatherChargingImpact(hours = 'all', startDate = null, endDate = null) {
+        try {
+            const params = new URLSearchParams({ hours });
+            if (startDate) params.append('start_date', startDate);
+            if (endDate) params.append('end_date', endDate);
+
+            const response = await fetch(`/api/weather-charging-impact?${params}`);
+            const data = await response.json();
+
+            const statsContainer = document.getElementById('weather-charging-stats');
+
+            if (!response.ok || !data.sessions || data.sessions.length === 0) {
+                if (statsContainer) {
+                    if (hours !== 'all' && hours !== 'custom') {
+                        showEmptyStateWithSuggestion(statsContainer, hours, 'charging weather data');
+                    } else {
+                        statsContainer.innerHTML = '<div class="no-data">Not enough charging session data with temperature readings to analyze weather impact</div>';
+                    }
+                }
+                return;
+            }
+
+            // Build scatter data: each session as a point
+            const scatterChargeRate = data.sessions.map(s => ({
+                x: s.avg_temperature,
+                y: s.avg_power
+            }));
+
+            const scatterSocRate = data.sessions.map(s => ({
+                x: s.avg_temperature,
+                y: s.soc_rate
+            }));
+
+            // Binned bar data
+            const barLabels = data.temperature_bins.map(b => b.temperature_range);
+            const barPower = data.temperature_bins.map(b => b.avg_power);
+            const barSocRate = data.temperature_bins.map(b => b.avg_soc_rate);
+
+            const ctx = document.getElementById('weather-charging-chart').getContext('2d');
+
+            if (weatherChargingChart) {
+                weatherChargingChart.data.labels = barLabels;
+                weatherChargingChart.data.datasets[0].data = scatterChargeRate;
+                weatherChargingChart.data.datasets[1].data = barPower;
+                weatherChargingChart.data.datasets[2].data = scatterSocRate;
+                weatherChargingChart.data.datasets[3].data = barSocRate;
+                weatherChargingChart.update('none');
+            } else {
+                weatherChargingChart = new Chart(ctx, {
+                    type: 'scatter',
+                    data: {
+                        labels: barLabels,
+                        datasets: [
+                            {
+                                label: 'Charge Power (per session)',
+                                data: scatterChargeRate,
+                                backgroundColor: 'rgba(52, 152, 219, 0.5)',
+                                borderColor: 'rgba(52, 152, 219, 1)',
+                                pointRadius: 5,
+                                type: 'scatter',
+                                yAxisID: 'y'
+                            },
+                            {
+                                label: 'Avg Power by Temp Range',
+                                data: barPower,
+                                backgroundColor: 'rgba(52, 152, 219, 0.7)',
+                                borderColor: 'rgba(52, 152, 219, 1)',
+                                borderWidth: 2,
+                                type: 'bar',
+                                yAxisID: 'y',
+                                xAxisID: 'x2'
+                            },
+                            {
+                                label: 'SOC Rate (per session)',
+                                data: scatterSocRate,
+                                backgroundColor: 'rgba(46, 204, 113, 0.5)',
+                                borderColor: 'rgba(46, 204, 113, 1)',
+                                pointRadius: 5,
+                                pointStyle: 'triangle',
+                                type: 'scatter',
+                                yAxisID: 'y1'
+                            },
+                            {
+                                label: 'Avg SOC Rate by Temp Range',
+                                data: barSocRate,
+                                backgroundColor: 'rgba(46, 204, 113, 0.7)',
+                                borderColor: 'rgba(46, 204, 113, 1)',
+                                borderWidth: 2,
+                                type: 'bar',
+                                yAxisID: 'y1',
+                                xAxisID: 'x2'
+                            }
+                        ]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        interaction: {
+                            mode: 'index',
+                            intersect: false
+                        },
+                        plugins: {
+                            title: {
+                                display: true,
+                                text: 'How Temperature Affects Charging Speed',
+                                font: { size: 16 }
+                            },
+                            legend: {
+                                display: true,
+                                position: 'top'
+                            },
+                            tooltip: {
+                                callbacks: {
+                                    label: function(context) {
+                                        const ds = context.dataset;
+                                        if (ds.type === 'scatter') {
+                                            const temp = context.parsed.x.toFixed(1);
+                                            const val = context.parsed.y.toFixed(1);
+                                            if (ds.yAxisID === 'y') {
+                                                return `${temp}\u00b0C: ${val} kW`;
+                                            }
+                                            return `${temp}\u00b0C: ${val} %/hr`;
+                                        }
+                                        const binIdx = context.dataIndex;
+                                        const bin = data.temperature_bins[binIdx];
+                                        if (ds.yAxisID === 'y') {
+                                            return [
+                                                `Avg Power: ${context.parsed.y.toFixed(1)} kW`,
+                                                `Sessions: ${bin.session_count}`
+                                            ];
+                                        }
+                                        return [
+                                            `Avg SOC Rate: ${context.parsed.y.toFixed(1)} %/hr`,
+                                            `Sessions: ${bin.session_count}`
+                                        ];
+                                    }
+                                }
+                            }
+                        },
+                        scales: {
+                            x: {
+                                type: 'linear',
+                                position: 'bottom',
+                                title: {
+                                    display: true,
+                                    text: 'Temperature (\u00b0C)'
+                                },
+                                grid: { display: true }
+                            },
+                            x2: {
+                                type: 'category',
+                                position: 'bottom',
+                                display: false,
+                                grid: { display: false }
+                            },
+                            y: {
+                                type: 'linear',
+                                position: 'left',
+                                title: {
+                                    display: true,
+                                    text: 'Charge Power (kW)'
+                                },
+                                min: 0,
+                                grid: { display: true }
+                            },
+                            y1: {
+                                type: 'linear',
+                                position: 'right',
+                                title: {
+                                    display: true,
+                                    text: 'SOC Gain Rate (%/hr)'
+                                },
+                                min: 0,
+                                grid: { drawOnChartArea: false }
+                            }
+                        }
+                    }
+                });
+            }
+
+            // Build summary stats
+            const summary = data.summary;
+            let statsHtml = '<div class="temp-efficiency-stats">';
+            statsHtml += '<h3>Charging Weather Impact Summary</h3>';
+            statsHtml += '<div class="stats-grid">';
+
+            statsHtml += `
+                <div class="stat-item">
+                    <span class="stat-label">Best Charging Temp:</span>
+                    <span class="stat-value">${summary.best_charge_rate.range}</span>
+                    <span class="stat-detail">${summary.best_charge_rate.soc_rate} %/hr | ${summary.best_charge_rate.power} kW avg</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">Worst Charging Temp:</span>
+                    <span class="stat-value">${summary.worst_charge_rate.range}</span>
+                    <span class="stat-detail">${summary.worst_charge_rate.soc_rate} %/hr | ${summary.worst_charge_rate.power} kW avg</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">Charge Rate Impact:</span>
+                    <span class="stat-value">${summary.charge_rate_impact_pct}% slower</span>
+                    <span class="stat-detail">Worst vs best conditions (${summary.total_sessions} sessions analyzed)</span>
+                </div>
+            `;
+
+            statsHtml += '</div></div>';
+            statsContainer.innerHTML = statsHtml;
+
+        } catch (error) {
+            console.error('Error loading weather charging impact data:', error);
+            const container = document.getElementById('weather-charging-stats');
+            if (container) {
+                container.innerHTML = '<div class="no-data">Error loading weather-charging impact data</div>';
+            }
+        }
+    }
+
     async function loadChargingSessions(hours = 'all', startDate = null, endDate = null) {
         try {
             const params = new URLSearchParams({ hours });

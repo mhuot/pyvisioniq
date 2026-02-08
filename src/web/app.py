@@ -549,6 +549,191 @@ def get_temperature_efficiency():
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
+@app.route('/api/weather-charging-impact')
+def get_weather_charging_impact():
+    """Analyze how weather/temperature affects charging performance.
+
+    Cross-references charging sessions with battery_status readings to
+    compute charge rate, SOC gain rate, and energy throughput at different
+    ambient temperatures.
+    """
+    try:
+        sessions_df = storage.get_charging_sessions_df()
+        battery_df = storage.get_battery_df()
+
+        if sessions_df.empty or battery_df.empty:
+            return jsonify({"error": "Not enough data available"}), 404
+
+        battery_df['timestamp'] = pd.to_datetime(battery_df['timestamp'], format='mixed')
+
+        # Use meteo_temp if available, fall back to temperature column
+        temp_col = 'meteo_temp' if 'meteo_temp' in battery_df.columns else 'temperature'
+
+        # Only look at completed sessions with valid timing
+        completed = sessions_df[
+            (sessions_df['is_complete'] == True) &
+            sessions_df['start_time'].notna() &
+            sessions_df['end_time'].notna() &
+            (sessions_df['duration_minutes'] > 0)
+        ].copy()
+
+        if completed.empty:
+            return jsonify({"error": "No completed charging sessions found"}), 404
+
+        session_data = []
+
+        for _, session in completed.iterrows():
+            start = session['start_time']
+            end = session['end_time']
+
+            # Find battery readings during this session's window
+            mask = (battery_df['timestamp'] >= start) & (battery_df['timestamp'] <= end)
+            readings = battery_df[mask]
+
+            if readings.empty:
+                # Try a small tolerance window (5 min before/after)
+                mask = (
+                    (battery_df['timestamp'] >= start - pd.Timedelta(minutes=5)) &
+                    (battery_df['timestamp'] <= end + pd.Timedelta(minutes=5))
+                )
+                readings = battery_df[mask]
+
+            if readings.empty:
+                continue
+
+            temps = pd.to_numeric(readings[temp_col], errors='coerce').dropna()
+            if temps.empty:
+                continue
+
+            avg_temp = float(temps.mean())
+            min_temp = float(temps.min())
+            max_temp = float(temps.max())
+
+            duration_hours = session['duration_minutes'] / 60.0
+            if duration_hours <= 0:
+                continue
+
+            soc_gained = session['end_battery'] - session['start_battery']
+            if soc_gained <= 0:
+                continue
+
+            soc_rate = soc_gained / duration_hours  # %/hour
+            energy = float(session['energy_added']) if pd.notna(session['energy_added']) else 0
+            energy_rate = energy / duration_hours if energy > 0 else 0  # kWh/hour
+            avg_power = float(session['avg_power']) if pd.notna(session['avg_power']) else energy_rate
+            max_power = float(session['max_power']) if pd.notna(session['max_power']) else 0
+
+            # Collect charging power readings during the session
+            power_readings = pd.to_numeric(readings.get('charging_power', pd.Series(dtype=float)), errors='coerce').dropna()
+            measured_avg_power = float(power_readings.mean()) if not power_readings.empty else avg_power
+
+            session_data.append({
+                'session_id': session['session_id'],
+                'date': start.isoformat() if hasattr(start, 'isoformat') else str(start),
+                'avg_temperature': round(avg_temp, 1),
+                'min_temperature': round(min_temp, 1),
+                'max_temperature': round(max_temp, 1),
+                'duration_minutes': round(session['duration_minutes'], 1),
+                'start_battery': int(session['start_battery']),
+                'end_battery': int(session['end_battery']),
+                'soc_gained': round(soc_gained, 1),
+                'soc_rate': round(soc_rate, 1),
+                'energy_added': round(energy, 2),
+                'energy_rate': round(energy_rate, 2),
+                'avg_power': round(measured_avg_power, 2),
+                'max_power': round(max_power, 2)
+            })
+
+        if not session_data:
+            return jsonify({"error": "No charging sessions with temperature data found"}), 404
+
+        # Create temperature bins (5 degree C ranges)
+        temp_bins = {}
+        for point in session_data:
+            temp = point['avg_temperature']
+            bin_start = int(temp // 5) * 5
+            bin_label = f"{bin_start} to {bin_start + 5}"
+
+            if bin_label not in temp_bins:
+                temp_bins[bin_label] = {
+                    'bin_start': bin_start,
+                    'sessions': [],
+                    'soc_rates': [],
+                    'energy_rates': [],
+                    'avg_powers': [],
+                    'max_powers': [],
+                    'durations': []
+                }
+
+            b = temp_bins[bin_label]
+            b['sessions'].append(point)
+            b['soc_rates'].append(point['soc_rate'])
+            b['energy_rates'].append(point['energy_rate'])
+            b['avg_powers'].append(point['avg_power'])
+            b['max_powers'].append(point['max_power'])
+            b['durations'].append(point['duration_minutes'])
+
+        bin_stats = []
+        for label, b in temp_bins.items():
+            n = len(b['sessions'])
+            bin_stats.append({
+                'temperature_range': f"{label}\u00b0C",
+                'bin_start': b['bin_start'],
+                'session_count': n,
+                'avg_soc_rate': round(sum(b['soc_rates']) / n, 1),
+                'avg_energy_rate': round(sum(b['energy_rates']) / n, 2),
+                'avg_power': round(sum(b['avg_powers']) / n, 2),
+                'avg_max_power': round(sum(b['max_powers']) / n, 2),
+                'avg_duration': round(sum(b['durations']) / n, 1)
+            })
+
+        bin_stats.sort(key=lambda x: x['bin_start'])
+
+        # Summary
+        best_rate = max(bin_stats, key=lambda x: x['avg_soc_rate'])
+        worst_rate = min(bin_stats, key=lambda x: x['avg_soc_rate'])
+        best_power = max(bin_stats, key=lambda x: x['avg_power'])
+        worst_power = min(bin_stats, key=lambda x: x['avg_power'])
+
+        return jsonify({
+            'sessions': session_data,
+            'temperature_bins': bin_stats,
+            'summary': {
+                'total_sessions': len(session_data),
+                'temperature_range': {
+                    'min': round(min(s['avg_temperature'] for s in session_data), 1),
+                    'max': round(max(s['avg_temperature'] for s in session_data), 1)
+                },
+                'best_charge_rate': {
+                    'range': best_rate['temperature_range'],
+                    'soc_rate': best_rate['avg_soc_rate'],
+                    'power': best_rate['avg_power']
+                },
+                'worst_charge_rate': {
+                    'range': worst_rate['temperature_range'],
+                    'soc_rate': worst_rate['avg_soc_rate'],
+                    'power': worst_rate['avg_power']
+                },
+                'best_power': {
+                    'range': best_power['temperature_range'],
+                    'power': best_power['avg_power']
+                },
+                'worst_power': {
+                    'range': worst_power['temperature_range'],
+                    'power': worst_power['avg_power']
+                },
+                'charge_rate_impact_pct': round(
+                    (1 - worst_rate['avg_soc_rate'] / best_rate['avg_soc_rate']) * 100, 1
+                ) if best_rate['avg_soc_rate'] > 0 else 0
+            }
+        })
+
+    except Exception as e:
+        app.logger.error(f"Error in weather-charging-impact analysis: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
 @app.route('/api/efficiency-stats')
 def get_efficiency_stats():
     """Get efficiency statistics for different time periods"""
