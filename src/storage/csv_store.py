@@ -25,10 +25,13 @@ Usage:
     locations_df = storage.get_locations_df()
 """
 import csv
+import io
 import logging
 import os
 from datetime import datetime
 from pathlib import Path
+
+from filelock import FileLock
 import pandas as pd
 import sys
 sys.path.append(str(Path(__file__).parent.parent.parent))
@@ -610,29 +613,76 @@ class CSVStorage:
                 return df.sort_values('timestamp')
         return df
 
-    def store_external_battery(self, voltage, soc, temperature=None):
-        """Store 12V battery data from an external source (e.g. Raspberry Pi BM2 monitor).
+    def _read_recent_timestamps(self, filepath, tail_lines=500):
+        """Read the timestamp column from the last *tail_lines* of a CSV file.
 
-        Args:
-            voltage: 12V battery voltage reading.
-            soc: 12V battery state of charge percentage.
-            temperature: Optional temperature reading from the sensor.
+        Uses a seek-from-end approach so we never load the entire file into
+        memory, even if the CSV grows to millions of rows.
 
         Returns:
-            dict: The row that was written.
+            set[str]: Timestamp strings found in the tail portion.
         """
-        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        row = {
-            'timestamp': timestamp,
-            'voltage': voltage,
-            'soc': soc,
-            'temperature': temperature,
-        }
+        timestamps = set()
+        if not filepath.exists():
+            return timestamps
+
+        try:
+            size = filepath.stat().st_size
+            # Read a generous chunk from the end (100 bytes per line is plenty)
+            read_size = min(size, tail_lines * 100)
+            with open(filepath, 'rb') as f:
+                f.seek(max(0, size - read_size))
+                tail_bytes = f.read()
+
+            # Decode, split into lines, skip any partial first line
+            lines = tail_bytes.decode('utf-8', errors='replace').splitlines()
+            if size > read_size:
+                lines = lines[1:]  # first line is likely truncated
+
+            reader = csv.DictReader(lines)
+            for row in reader:
+                ts = row.get('timestamp', '').strip()
+                if ts:
+                    timestamps.add(ts)
+        except Exception as e:
+            logger.warning("Could not read recent timestamps from %s: %s", filepath, e)
+
+        return timestamps
+
+    def write_unique_rows(self, rows):
+        """Append rows to external_battery.csv, skipping duplicates by timestamp.
+
+        Uses a file lock so the data_collector and the Flask API can safely
+        write concurrently without corrupting the CSV.
+
+        Args:
+            rows: list[dict] — each dict must have keys: timestamp, voltage,
+                  soc, and optionally temperature.
+
+        Returns:
+            tuple[int, int]: (added_count, skipped_count).
+        """
         fieldnames = ['timestamp', 'voltage', 'soc', 'temperature']
-        with open(self.external_battery_file, 'a', newline='', encoding='utf-8') as f:
-            writer = csv.DictWriter(f, fieldnames=fieldnames)
-            writer.writerow(row)
-        return row
+        lock_path = self.external_battery_file.with_suffix('.lock')
+        lock = FileLock(lock_path, timeout=10)
+
+        with lock:
+            existing_ts = self._read_recent_timestamps(self.external_battery_file)
+
+            added = 0
+            skipped = 0
+            with open(self.external_battery_file, 'a', newline='', encoding='utf-8') as f:
+                writer = csv.DictWriter(f, fieldnames=fieldnames)
+                for row in rows:
+                    ts = row.get('timestamp', '')
+                    if ts in existing_ts:
+                        skipped += 1
+                        continue
+                    writer.writerow({k: row.get(k) for k in fieldnames})
+                    existing_ts.add(ts)
+                    added += 1
+
+        return added, skipped
 
     def get_external_battery_df(self):
         """Get external 12V battery data as a DataFrame."""

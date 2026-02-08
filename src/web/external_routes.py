@@ -1,5 +1,6 @@
 import logging
 import os
+from datetime import datetime
 from pathlib import Path
 
 from flask import Blueprint, jsonify, request
@@ -28,38 +29,14 @@ def _check_api_key():
     return True, None
 
 
-@external_bp.route('/api/external/battery', methods=['POST'])
-def post_external_battery():
-    """Accept 12V battery data from an external device (e.g. Raspberry Pi + BM2).
-
-    Expected JSON payload:
-        {
-            "voltage": float,   # required
-            "soc": float,       # required
-            "temp": float       # optional
-        }
-
-    Headers:
-        X-API-KEY: <EXTERNAL_API_KEY>
-    """
-    # --- Auth ---
-    auth_ok, auth_error = _check_api_key()
-    if not auth_ok:
-        logger.warning("[EXTERNAL_API] Unauthorized request from %s: %s",
-                       request.remote_addr, auth_error)
-        return jsonify({"error": auth_error}), 401
-
-    # --- Parse body ---
-    data = request.get_json(silent=True)
-    if not data:
-        return jsonify({"error": "Request body must be valid JSON"}), 400
-
-    voltage = data.get('voltage')
-    soc = data.get('soc')
-    temp = data.get('temp')
-
-    # --- Validate required fields ---
+def _validate_reading(reading):
+    """Validate a single reading dict.  Returns (cleaned_row, errors)."""
     errors = []
+    voltage = reading.get('voltage')
+    soc = reading.get('soc')
+    temp = reading.get('temp')
+    ts = reading.get('timestamp')
+
     if voltage is None:
         errors.append("'voltage' is required")
     elif not isinstance(voltage, (int, float)):
@@ -73,23 +50,105 @@ def post_external_battery():
     if temp is not None and not isinstance(temp, (int, float)):
         errors.append("'temp' must be a number if provided")
 
-    if errors:
-        return jsonify({"error": "Validation failed", "details": errors}), 400
+    if ts is not None and not isinstance(ts, str):
+        errors.append("'timestamp' must be an ISO-format string if provided")
 
-    # --- Persist via CSVStorage ---
+    if errors:
+        return None, errors
+
+    # Resolve timestamp: use supplied value or fall back to server time
+    if ts:
+        # Normalise to the canonical format used in the CSV
+        try:
+            parsed = datetime.fromisoformat(ts)
+            ts_str = parsed.strftime('%Y-%m-%d %H:%M:%S')
+        except ValueError:
+            return None, ["'timestamp' is not a valid ISO-format datetime"]
+    else:
+        ts_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+    row = {
+        'timestamp': ts_str,
+        'voltage': float(voltage),
+        'soc': float(soc),
+        'temperature': float(temp) if temp is not None else None,
+    }
+    return row, []
+
+
+@external_bp.route('/api/external/battery', methods=['POST'])
+def post_external_battery():
+    """Accept 12V battery data from an external device (e.g. Raspberry Pi + BM2).
+
+    Accepts a single reading **or** a batch (JSON array).
+
+    Single reading:
+        {"voltage": 12.6, "soc": 95, "temp": 22.5, "timestamp": "2025-06-01T14:30:00"}
+
+    Batch:
+        [{"voltage": 12.6, "soc": 95, "timestamp": "..."}, ...]
+
+    The ``timestamp`` field is optional; when omitted the server's current
+    time is used.  Duplicate timestamps (compared against the last ~500
+    rows) are silently skipped.
+
+    Headers:
+        X-API-KEY: <EXTERNAL_API_KEY>
+
+    Response (201):
+        {"status": "success", "added": 12, "skipped": 88}
+    """
+    # --- Auth ---
+    auth_ok, auth_error = _check_api_key()
+    if not auth_ok:
+        logger.warning("[EXTERNAL_API] Unauthorized request from %s: %s",
+                       request.remote_addr, auth_error)
+        return jsonify({"error": auth_error}), 401
+
+    # --- Parse body ---
+    payload = request.get_json(silent=True)
+    if payload is None:
+        return jsonify({"error": "Request body must be valid JSON"}), 400
+
+    # Normalise to a list so single-object and batch use the same path
+    if isinstance(payload, dict):
+        readings = [payload]
+    elif isinstance(payload, list):
+        readings = payload
+    else:
+        return jsonify({"error": "Payload must be a JSON object or array"}), 400
+
+    if not readings:
+        return jsonify({"error": "Payload array is empty"}), 400
+
+    # --- Validate every reading ---
+    rows = []
+    all_errors = []
+    for i, reading in enumerate(readings):
+        row, errs = _validate_reading(reading)
+        if errs:
+            all_errors.append({"index": i, "errors": errs})
+        else:
+            rows.append(row)
+
+    if all_errors and not rows:
+        # Everything failed validation
+        return jsonify({"error": "Validation failed", "details": all_errors}), 400
+
+    # --- Persist via CSVStorage.write_unique_rows ---
     from flask import current_app
     storage = current_app.config.get('storage')
     if storage is None:
         logger.error("[EXTERNAL_API] CSVStorage not available in app config")
         return jsonify({"error": "Storage not available"}), 500
 
-    row = storage.store_external_battery(
-        voltage=float(voltage),
-        soc=float(soc),
-        temperature=float(temp) if temp is not None else None,
-    )
+    added, skipped = storage.write_unique_rows(rows)
 
-    logger.info("[EXTERNAL_API] Stored 12V battery data: voltage=%.2f soc=%.1f temp=%s",
-                voltage, soc, temp)
+    logger.info("[EXTERNAL_API] Batch result: added=%d skipped=%d validation_errors=%d (from %s)",
+                added, skipped, len(all_errors), request.remote_addr)
 
-    return jsonify({"status": "created", "data": row}), 201
+    response = {"status": "success", "added": added, "skipped": skipped}
+    if all_errors:
+        response["validation_errors"] = all_errors
+
+    return jsonify(response), 201
