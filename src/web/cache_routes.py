@@ -156,9 +156,12 @@ def force_cache_update():
         # The client checks rate limits internally and raises APIError if exceeded
         data = client.force_cache_update(source="web_force_update")
         if data:
+            data_source = data.get('data_source', 'unknown')
             return jsonify({
                 'success': True,
                 'message': 'Cache updated successfully',
+                'data_source': data_source,
+                'hyundai_data_fresh': data.get('hyundai_data_fresh'),
                 'data': {
                     'battery_level': data.get('battery', {}).get('level'),
                     'range': data.get('battery', {}).get('range'),

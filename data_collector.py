@@ -100,14 +100,27 @@ class DataCollector:
             data = self.client.get_vehicle_data(source="data_collector")
 
             if data:
-                # Store in CSV files
-                self.storage.store_vehicle_data(data)
+                data_source = data.get('data_source', 'unknown')
+
+                if data_source == 'local_cache':
+                    # Cache was already fresh (e.g. a web refresh happened recently).
+                    # No API call was made — skip re-storing duplicate data.
+                    logger.info(
+                        "Cache hit — no API call needed (data_source=%s, calls %d/%d)",
+                        data_source,
+                        self.rate_limiter.calls_today,
+                        self.rate_limiter.daily_limit,
+                    )
+                else:
+                    # Fresh data from API — store it
+                    self.storage.store_vehicle_data(data)
 
                 # Sync local counters from tracker
                 self._sync_from_tracker()
 
                 logger.info(
-                    "Data collected successfully (call %d/%d, %d remaining)",
+                    "Data collected (source=%s, call %d/%d, %d remaining)",
+                    data_source,
                     self.rate_limiter.calls_today,
                     self.rate_limiter.daily_limit,
                     self.rate_limiter.remaining_calls,

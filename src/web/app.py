@@ -110,9 +110,12 @@ def refresh_data():
             else:
                 freshness_msg = ""
             
+            data_source = data.get('data_source', 'unknown')
             return jsonify({
-                "status": "success", 
-                "message": f"Data refreshed successfully{freshness_msg}"
+                "status": "success",
+                "message": f"Data refreshed successfully{freshness_msg}",
+                "data_source": data_source,
+                "hyundai_data_fresh": data.get('hyundai_data_fresh'),
             })
         else:
             return jsonify({
@@ -938,6 +941,7 @@ def get_current_status():
                 response_data['api_last_updated'] = latest_cache_data['api_last_updated']
             if latest_cache_data:
                 response_data['hyundai_data_fresh'] = latest_cache_data.get('hyundai_data_fresh')
+                response_data['data_source'] = latest_cache_data.get('data_source')
 
             # Add weather data if available
             if weather_data:

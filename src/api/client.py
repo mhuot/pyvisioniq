@@ -228,10 +228,12 @@ class CachedVehicleClient:
                         is_fresh = self._is_remote_data_fresh(data, previous_cache)
                         data['hyundai_data_fresh'] = is_fresh
                         data['is_cached'] = not is_fresh
+                        # Force update always hits the API — distinguish fresh vs stale Hyundai data
+                        data['data_source'] = 'api_fresh' if is_fresh else 'api_stale'
                         self._save_to_cache(cache_key, data)
                         print("Cache updated successfully!")
                         return data
-            
+
             print("Failed to update cache")
             return None
             
@@ -425,9 +427,10 @@ class CachedVehicleClient:
 
         if cached_data:
             print(f"Using cached vehicle data (age: {self._get_cache_age(cache_key)})")
-            # Mark data as coming from cache
+            # Mark data as coming from local cache — no API call was made
             cached_data['is_cached'] = True
             cached_data['hyundai_data_fresh'] = False
+            cached_data['data_source'] = 'local_cache'
             return cached_data
 
         previous_cache = self._load_cache_entry(cache_key)
@@ -506,15 +509,16 @@ class CachedVehicleClient:
                 is_fresh = self._is_remote_data_fresh(data, previous_cache)
                 data['hyundai_data_fresh'] = is_fresh
                 data['is_cached'] = not is_fresh
+                data['data_source'] = 'api_fresh' if is_fresh else 'api_stale'
                 self._save_to_cache(cache_key, data)
                 return data
             else:
                 logger.error("Failed to process vehicle data")
                 return self._get_last_successful_cache()
-            
+
         except Exception as e:
             print(f"Error fetching vehicle data: {type(e).__name__}: {e}")
-            
+
             # Check if this is a vehicleStatus KeyError
             if isinstance(e, KeyError) and str(e) == "'vehicleStatus'":
                 logger.info("vehicleStatus not available in API response, using last successful cache")
@@ -709,6 +713,7 @@ class CachedVehicleClient:
                 # Mark fallback data as cached
                 data['is_cached'] = True
                 data['hyundai_data_fresh'] = False
+                data['data_source'] = 'local_cache'
                 return data
 
         except Exception as e:
