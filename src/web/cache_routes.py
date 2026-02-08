@@ -3,6 +3,7 @@ from pathlib import Path
 import json
 from datetime import datetime
 import os
+from src.api.client import APIError
 
 cache_bp = Blueprint('cache', __name__, url_prefix='/cache')
 
@@ -150,13 +151,13 @@ def force_cache_update():
     client = get_cache_client()
     if not client:
         return jsonify({'error': 'Cache client not initialized'}), 500
-    
+
     try:
-        # Use the force_cache_update method we created earlier
-        data = client.force_cache_update()
+        # The client checks rate limits internally and raises APIError if exceeded
+        data = client.force_cache_update(source="web_force_update")
         if data:
             return jsonify({
-                'success': True, 
+                'success': True,
                 'message': 'Cache updated successfully',
                 'data': {
                     'battery_level': data.get('battery', {}).get('level'),
@@ -167,5 +168,11 @@ def force_cache_update():
             })
         else:
             return jsonify({'error': 'Failed to update cache'}), 500
+    except APIError as e:
+        status_code = 429 if e.error_type == "rate_limit" else 500
+        return jsonify({
+            'error': e.message,
+            'error_type': e.error_type,
+        }), status_code
     except Exception as e:
         return jsonify({'error': str(e)}), 500
