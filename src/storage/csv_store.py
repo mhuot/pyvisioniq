@@ -58,7 +58,8 @@ class CSVStorage:
         self.battery_file = self.data_dir / "battery_status.csv"
         self.location_file = self.data_dir / "locations.csv"
         self.charging_sessions_file = self.data_dir / "charging_sessions.csv"
-        
+        self.external_battery_file = self.data_dir / "external_battery.csv"
+
         # Initialize weather service
         self.weather_service = WeatherService()
         self.use_meteo = os.getenv('WEATHER_SOURCE', 'meteo').lower() == 'meteo'
@@ -106,6 +107,13 @@ class CSVStorage:
                     'session_id', 'start_time', 'end_time', 'duration_minutes',
                     'start_battery', 'end_battery', 'energy_added', 'avg_power',
                     'max_power', 'location_lat', 'location_lon', 'is_complete'
+                ])
+                writer.writeheader()
+
+        if not self.external_battery_file.exists():
+            with open(self.external_battery_file, 'w', newline='', encoding='utf-8') as f:
+                writer = csv.DictWriter(f, fieldnames=[
+                    'timestamp', 'voltage', 'soc', 'temperature'
                 ])
                 writer.writeheader()
     
@@ -593,7 +601,7 @@ class CSVStorage:
         if not df.empty:
             # Ensure timestamp is datetime (handle mixed formats)
             df['timestamp'] = pd.to_datetime(df['timestamp'], format='mixed')
-            
+
             if days is not None:
                 cutoff = pd.Timestamp.now() - pd.Timedelta(days=days)
                 return df[df['timestamp'] >= cutoff].sort_values('timestamp')
@@ -601,3 +609,33 @@ class CSVStorage:
                 # Return all data
                 return df.sort_values('timestamp')
         return df
+
+    def store_external_battery(self, voltage, soc, temperature=None):
+        """Store 12V battery data from an external source (e.g. Raspberry Pi BM2 monitor).
+
+        Args:
+            voltage: 12V battery voltage reading.
+            soc: 12V battery state of charge percentage.
+            temperature: Optional temperature reading from the sensor.
+
+        Returns:
+            dict: The row that was written.
+        """
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        row = {
+            'timestamp': timestamp,
+            'voltage': voltage,
+            'soc': soc,
+            'temperature': temperature,
+        }
+        fieldnames = ['timestamp', 'voltage', 'soc', 'temperature']
+        with open(self.external_battery_file, 'a', newline='', encoding='utf-8') as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writerow(row)
+        return row
+
+    def get_external_battery_df(self):
+        """Get external 12V battery data as a DataFrame."""
+        if self.external_battery_file.exists():
+            return pd.read_csv(self.external_battery_file, parse_dates=['timestamp'])
+        return pd.DataFrame()
