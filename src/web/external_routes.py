@@ -1,3 +1,4 @@
+import hmac
 import logging
 import os
 from datetime import datetime
@@ -10,11 +11,15 @@ external_bp = Blueprint('external', __name__)
 logger = logging.getLogger('external_api')
 
 # Add a file handler so external API activity lands in logs/collector.log
-_log_dir = Path('logs')
-_log_dir.mkdir(exist_ok=True)
-_fh = logging.FileHandler(_log_dir / 'collector.log')
-_fh.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
-logger.addHandler(_fh)
+if not logger.handlers:
+    try:
+        _log_dir = Path('logs')
+        _log_dir.mkdir(exist_ok=True)
+        _fh = logging.FileHandler(_log_dir / 'collector.log')
+        _fh.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+        logger.addHandler(_fh)
+    except OSError:
+        pass  # Fall back to root logger if file handler cannot be created
 logger.setLevel(logging.INFO)
 
 
@@ -22,15 +27,18 @@ def _check_api_key():
     """Validate the X-API-KEY header against the configured EXTERNAL_API_KEY."""
     expected_key = os.getenv('EXTERNAL_API_KEY')
     if not expected_key:
-        return False, "EXTERNAL_API_KEY not configured on server"
-    provided_key = request.headers.get('X-API-KEY')
-    if not provided_key or provided_key != expected_key:
-        return False, "Invalid or missing API key"
-    return True, None
+        logger.error("EXTERNAL_API_KEY environment variable is not configured")
+        return False, "Service unavailable", 500
+    provided_key = request.headers.get('X-API-KEY', '')
+    if not hmac.compare_digest(provided_key, expected_key):
+        return False, "Invalid or missing API key", 401
+    return True, None, None
 
 
 def _validate_reading(reading):
     """Validate a single reading dict.  Returns (cleaned_row, errors)."""
+    if not isinstance(reading, dict):
+        return None, ["reading must be a JSON object"]
     errors = []
     voltage = reading.get('voltage')
     soc = reading.get('soc')
@@ -58,9 +66,11 @@ def _validate_reading(reading):
 
     # Resolve timestamp: use supplied value or fall back to server time
     if ts:
+        # Normalise trailing Z (UTC) to +00:00 for fromisoformat compatibility
+        normalised_ts = ts.replace('Z', '+00:00') if ts.endswith('Z') else ts
         # Normalise to the canonical format used in the CSV
         try:
-            parsed = datetime.fromisoformat(ts)
+            parsed = datetime.fromisoformat(normalised_ts)
             ts_str = parsed.strftime('%Y-%m-%d %H:%M:%S')
         except ValueError:
             return None, ["'timestamp' is not a valid ISO-format datetime"]
@@ -99,11 +109,11 @@ def post_external_battery():
         {"status": "success", "added": 12, "skipped": 88}
     """
     # --- Auth ---
-    auth_ok, auth_error = _check_api_key()
+    auth_ok, auth_error, auth_status = _check_api_key()
     if not auth_ok:
-        logger.warning("[EXTERNAL_API] Unauthorized request from %s: %s",
+        logger.warning("[EXTERNAL_API] Rejected request from %s: %s",
                        request.remote_addr, auth_error)
-        return jsonify({"error": auth_error}), 401
+        return jsonify({"error": auth_error}), auth_status
 
     # --- Parse body ---
     payload = request.get_json(silent=True)
@@ -142,7 +152,11 @@ def post_external_battery():
         logger.error("[EXTERNAL_API] CSVStorage not available in app config")
         return jsonify({"error": "Storage not available"}), 500
 
-    added, skipped = storage.write_unique_rows(rows)
+    try:
+        added, skipped = storage.write_unique_rows(rows)
+    except Exception as e:
+        logger.error("[EXTERNAL_API] Storage write failed: %s", e)
+        return jsonify({"error": "Storage temporarily unavailable, please retry"}), 503
 
     logger.info("[EXTERNAL_API] Batch result: added=%d skipped=%d validation_errors=%d (from %s)",
                 added, skipped, len(all_errors), request.remote_addr)

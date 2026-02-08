@@ -25,7 +25,6 @@ Usage:
     locations_df = storage.get_locations_df()
 """
 import csv
-import io
 import logging
 import os
 from datetime import datetime
@@ -639,10 +638,13 @@ class CSVStorage:
             if size > read_size:
                 lines = lines[1:]  # first line is likely truncated
 
-            reader = csv.DictReader(lines)
+            reader = csv.reader(lines)
             for row in reader:
-                ts = row.get('timestamp', '').strip()
-                if ts:
+                if not row:
+                    continue
+                ts = row[0].strip()
+                # Skip the header row if it ended up in our tail chunk
+                if ts and ts != 'timestamp':
                     timestamps.add(ts)
         except Exception as e:
             logger.warning("Could not read recent timestamps from %s: %s", filepath, e)
