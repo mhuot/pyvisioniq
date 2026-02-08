@@ -1187,3 +1187,14 @@ canvas {
     background-color: rgba(243, 156, 18, 0.1);
     border: 1px solid rgba(243, 156, 18, 0.3);
 }
+
+/* Rate limit warning in collection status section */
+.rate-limit-info {
+    color: var(--warning-color);
+    background-color: rgba(243, 156, 18, 0.1);
+    border: 1px solid rgba(243, 156, 18, 0.3);
+    border-radius: 4px;
+    padding: 0.5rem 0.75rem;
+    margin-top: 0.5rem;
+    font-size: 0.9em;
+}

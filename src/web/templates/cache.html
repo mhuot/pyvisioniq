@@ -356,8 +356,16 @@
                 const data = await response.json();
                 
                 if (response.ok) {
-                    showSuccess(`Cache updated! Battery: ${data.data.battery_level}%, Range: ${data.data.range}km, Temp: ${data.data.temperature}°F`);
+                    let sourceInfo = '';
+                    if (data.data_source === 'api_fresh') {
+                        sourceInfo = ' (fresh vehicle data)';
+                    } else if (data.data_source === 'api_stale') {
+                        sourceInfo = ' (Hyundai returned cached vehicle data)';
+                    }
+                    showSuccess(`Cache updated${sourceInfo}! Battery: ${data.data.battery_level}%, Range: ${data.data.range}km, Temp: ${data.data.temperature}°F`);
                     loadFiles();
+                } else if (response.status === 429) {
+                    showError(data.error || 'Daily API rate limit reached. Try again tomorrow.');
                 } else {
                     showError(data.error || 'Failed to update cache');
                 }

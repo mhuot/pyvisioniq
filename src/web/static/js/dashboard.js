@@ -174,74 +174,85 @@ document.addEventListener('DOMContentLoaded', function() {
                 lastUpdated.textContent = date.toLocaleString();
             }
             
-            // Update data freshness indicator based on api_last_updated
+            // Update data freshness indicator using data_source and api_last_updated
             const dataFreshness = document.getElementById('data-freshness');
-            if (dataFreshness && data.api_last_updated) {
-                try {
-                    const apiUpdateTime = new Date(data.api_last_updated);
-                    const now = new Date();
-                    const ageMinutes = Math.floor((now - apiUpdateTime) / (1000 * 60));
-                    
-                    let freshnessText, className, title;
-                    
-                    if (ageMinutes < 5) {
-                        // Very fresh data (less than 5 minutes)
-                        freshnessText = ' (fresh - ' + ageMinutes + 'm ago)';
+            if (dataFreshness) {
+                const dataSource = data.data_source; // 'local_cache', 'api_fresh', 'api_stale', or undefined
+                let freshnessText = '', className = 'data-freshness', title = '';
+
+                if (data.api_last_updated) {
+                    try {
+                        const apiUpdateTime = new Date(data.api_last_updated);
+                        const now = new Date();
+                        const ageMinutes = Math.floor((now - apiUpdateTime) / (1000 * 60));
+
+                        // Build source label for the tooltip
+                        let sourceLabel = '';
+                        if (dataSource === 'local_cache') {
+                            sourceLabel = 'Served from local cache (no API call)';
+                        } else if (dataSource === 'api_fresh') {
+                            sourceLabel = 'Fresh data from vehicle via API';
+                        } else if (dataSource === 'api_stale') {
+                            sourceLabel = 'API called but Hyundai returned cached vehicle data';
+                        }
+
+                        if (ageMinutes < 5) {
+                            freshnessText = ' (fresh - ' + ageMinutes + 'm ago)';
+                            className = 'data-freshness fresh';
+                            title = 'Vehicle data is very recent (' + ageMinutes + ' minutes old)';
+                        } else if (ageMinutes < 60) {
+                            freshnessText = ' (' + ageMinutes + 'm ago)';
+                            className = 'data-freshness recent';
+                            title = 'Vehicle data is ' + ageMinutes + ' minutes old';
+                        } else if (ageMinutes < 1440) {
+                            const ageHours = Math.floor(ageMinutes / 60);
+                            const remainingMinutes = ageMinutes % 60;
+                            freshnessText = ' (' + ageHours + 'h ' + remainingMinutes + 'm ago)';
+                            className = 'data-freshness old';
+                            title = 'Vehicle data is ' + ageHours + 'h ' + remainingMinutes + 'm old';
+                        } else {
+                            const ageDays = Math.floor(ageMinutes / 1440);
+                            freshnessText = ' (' + ageDays + ' days ago)';
+                            className = 'data-freshness very-old';
+                            title = 'Vehicle data is ' + ageDays + ' days old - click Refresh Data';
+                        }
+
+                        if (sourceLabel) {
+                            title += '\nSource: ' + sourceLabel;
+                        }
+                    } catch (error) {
+                        // Parsing failed — fall through to source-only display below
+                    }
+                }
+
+                // If we still have no text, use data_source or is_cached as fallback
+                if (!freshnessText) {
+                    if (dataSource === 'local_cache') {
+                        freshnessText = ' (cached)';
+                        className = 'data-freshness cached';
+                        title = 'Served from local cache — no API call was made. Click Refresh Data for fresh data.';
+                    } else if (dataSource === 'api_fresh') {
+                        freshnessText = ' (fresh from API)';
                         className = 'data-freshness fresh';
-                        title = 'Vehicle data is very recent (' + ageMinutes + ' minutes old)';
-                    } else if (ageMinutes < 60) {
-                        // Recent data (less than 1 hour)
-                        freshnessText = ' (' + ageMinutes + 'm ago)';
-                        className = 'data-freshness recent';
-                        title = 'Vehicle data is ' + ageMinutes + ' minutes old';
-                    } else if (ageMinutes < 1440) {
-                        // Old data (less than 24 hours)
-                        const ageHours = Math.floor(ageMinutes / 60);
-                        const remainingMinutes = ageMinutes % 60;
-                        freshnessText = ' (' + ageHours + 'h ' + remainingMinutes + 'm ago)';
+                        title = 'Fresh data just fetched from the vehicle via the Hyundai API';
+                    } else if (dataSource === 'api_stale') {
+                        freshnessText = ' (API - stale)';
                         className = 'data-freshness old';
-                        title = 'Vehicle data is ' + ageHours + ' hours and ' + remainingMinutes + ' minutes old - click Refresh Data';
-                    } else {
-                        // Very old data (more than 24 hours)
-                        const ageDays = Math.floor(ageMinutes / 1440);
-                        freshnessText = ' (' + ageDays + ' days ago)';
-                        className = 'data-freshness very-old';
-                        title = 'Vehicle data is ' + ageDays + ' days old - click Refresh Data for current information';
-                    }
-                    
-                    dataFreshness.textContent = freshnessText;
-                    dataFreshness.className = className;
-                    dataFreshness.title = title;
-                    
-                } catch (error) {
-                    // Fallback to is_cached if api_last_updated parsing fails
-                    if (data.is_cached === true) {
-                        dataFreshness.textContent = ' (cached data)';
-                        dataFreshness.className = 'data-freshness cached';
-                        dataFreshness.title = 'This data was served from cache - click Refresh Data for fresh API data';
+                        title = 'API was called but Hyundai returned its own cached vehicle data';
+                    } else if (data.is_cached === true) {
+                        freshnessText = ' (cached)';
+                        className = 'data-freshness cached';
+                        title = 'Data served from cache';
                     } else if (data.is_cached === false) {
-                        dataFreshness.textContent = ' (fresh from API)';
-                        dataFreshness.className = 'data-freshness fresh';
-                        dataFreshness.title = 'This data was just fetched from the vehicle API';
-                    } else {
-                        dataFreshness.textContent = '';
-                        dataFreshness.className = 'data-freshness';
+                        freshnessText = ' (fresh from API)';
+                        className = 'data-freshness fresh';
+                        title = 'Data fetched from API';
                     }
                 }
-            } else if (dataFreshness) {
-                // Fallback to is_cached if no api_last_updated
-                if (data.is_cached === true) {
-                    dataFreshness.textContent = ' (cached data)';
-                    dataFreshness.className = 'data-freshness cached';
-                    dataFreshness.title = 'This data was served from cache - click Refresh Data for fresh API data';
-                } else if (data.is_cached === false) {
-                    dataFreshness.textContent = ' (fresh from API)';
-                    dataFreshness.className = 'data-freshness fresh';
-                    dataFreshness.title = 'This data was just fetched from the vehicle API';
-                } else {
-                    dataFreshness.textContent = '';
-                    dataFreshness.className = 'data-freshness';
-                }
+
+                dataFreshness.textContent = freshnessText;
+                dataFreshness.className = className;
+                dataFreshness.title = title;
             }
         } catch (error) {
             console.error('Error loading current status:', error);
@@ -427,16 +438,20 @@ document.addEventListener('DOMContentLoaded', function() {
             
             const callsToday = statusData.calls_today || 0;
             const dailyLimit = statusData.daily_limit || 30;
-            const callsRemaining = dailyLimit - callsToday;
-            
-            // Show warning dialog with accessible formatting
-            const message = `Manual refresh will use 1 of your ${dailyLimit} daily API calls.\n\n` +
+            const callsRemaining = statusData.remaining_calls !== undefined ? statusData.remaining_calls : (dailyLimit - callsToday);
+            const isRateLimited = statusData.is_rate_limited || false;
+
+            // Build warning message
+            let message = `Manual refresh will use 1 of your ${dailyLimit} daily API calls.\n\n` +
                           `Current usage: ${callsToday} of ${dailyLimit} calls\n` +
-                          `Calls remaining: ${callsRemaining}\n\n` +
-                          `Do you want to continue?`;
-            
+                          `Calls remaining: ${callsRemaining}\n`;
+            if (isRateLimited) {
+                message += `\nNote: Rate limiting is active (${statusData.backoff_multiplier.toFixed(1)}x backoff).\n`;
+            }
+            message += `\nDo you want to continue?`;
+
             // For screen readers, announce the warning
-            const announcement = `Warning: Manual refresh will use 1 API call. You have used ${callsToday} of ${dailyLimit} calls today.`;
+            const announcement = `Warning: Manual refresh will use 1 API call. You have used ${callsToday} of ${dailyLimit} calls today. ${callsRemaining} remaining.`;
             const liveRegion = document.createElement('div');
             liveRegion.setAttribute('role', 'alert');
             liveRegion.setAttribute('aria-live', 'assertive');
@@ -473,7 +488,14 @@ document.addEventListener('DOMContentLoaded', function() {
             const data = await response.json();
             
             if (response.ok) {
-                showNotification(data.message || 'Data refreshed successfully', 'success');
+                // Include data source info in the notification
+                let msg = data.message || 'Data refreshed successfully';
+                if (data.data_source === 'api_fresh') {
+                    msg += ' (fresh vehicle data)';
+                } else if (data.data_source === 'api_stale') {
+                    msg += ' (Hyundai returned cached vehicle data)';
+                }
+                showNotification(msg, 'success');
                 // Reload all data including collection status
                 loadCurrentStatus();
                 if (currentTimeRange === 'custom') {
@@ -977,25 +999,28 @@ document.addEventListener('DOMContentLoaded', function() {
         try {
             const response = await fetch('/api/collection-status');
             const data = await response.json();
-            
+
+            const remaining = data.remaining_calls !== undefined ? data.remaining_calls : (data.daily_limit - data.calls_today);
+
             const callsToday = document.getElementById('api-calls-today');
             const nextCollection = document.getElementById('next-collection');
             const headerApiCalls = document.getElementById('header-api-calls');
-            
+            const rateLimitInfo = document.getElementById('rate-limit-info');
+
             if (callsToday) {
-                callsToday.textContent = `${data.calls_today}/${data.daily_limit}`;
+                callsToday.textContent = `${data.calls_today}/${data.daily_limit} (${remaining} remaining)`;
                 callsToday.className = data.calls_today >= data.daily_limit ? 'limit-reached' : '';
             }
-            
+
             // Update header API usage indicator
             if (headerApiCalls) {
                 const callsText = `${data.calls_today}/${data.daily_limit}`;
                 headerApiCalls.textContent = callsText;
-                
+
                 // Update aria-label for screen readers
                 const percentage = Math.round((data.calls_today / data.daily_limit) * 100);
-                let ariaLabel = `${data.calls_today} of ${data.daily_limit} API calls used today (${percentage}%)`;
-                
+                let ariaLabel = `${data.calls_today} of ${data.daily_limit} API calls used today (${percentage}%), ${remaining} remaining`;
+
                 // Apply warning classes and update aria-label
                 headerApiCalls.className = '';
                 if (data.calls_today >= data.daily_limit) {
@@ -1005,19 +1030,29 @@ document.addEventListener('DOMContentLoaded', function() {
                     headerApiCalls.className = 'limit-warning';
                     ariaLabel += '. Approaching daily limit.';
                 }
-                
+
                 headerApiCalls.setAttribute('aria-label', ariaLabel);
             }
-            
+
             if (nextCollection && data.next_collection) {
                 const next = new Date(data.next_collection);
                 const now = new Date();
                 const diff = Math.round((next - now) / 60000);
-                
-                if (diff > 0) {
-                    nextCollection.textContent = `in ${diff} minutes`;
+
+                let nextText = diff > 0 ? `in ${diff} minutes` : 'soon';
+                if (data.is_rate_limited && data.backoff_multiplier > 1) {
+                    nextText += ` (slowed ${data.backoff_multiplier.toFixed(1)}x due to rate limiting)`;
+                }
+                nextCollection.textContent = nextText;
+            }
+
+            // Show rate limit warning if active
+            if (rateLimitInfo) {
+                if (data.is_rate_limited) {
+                    rateLimitInfo.textContent = `Rate limited: collection interval extended to ${Math.round(data.adjusted_interval_minutes)} min (${data.backoff_multiplier.toFixed(1)}x normal). Resets in ${Math.round(data.minutes_until_reset)} min.`;
+                    rateLimitInfo.style.display = 'block';
                 } else {
-                    nextCollection.textContent = 'soon';
+                    rateLimitInfo.style.display = 'none';
                 }
             }
         } catch (error) {
