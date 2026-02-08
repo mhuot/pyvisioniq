@@ -12,6 +12,7 @@ import pandas as pd
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
 from src.api.client import CachedVehicleClient, APIError
+from src.api.rate_limiter import get_rate_limiter
 from src.storage.csv_store import CSVStorage
 from src.web.cache_routes import cache_bp
 from src.web.debug_routes import debug_bp
@@ -87,11 +88,11 @@ def clear_cache():
 def refresh_data():
     if not client:
         return jsonify({"status": "error", "message": "API client not initialized. Please check your .env configuration."}), 500
-    
+
     try:
         # Force a cache update to get fresh data
-        # Note: timeout is handled within the client
-        data = client.force_cache_update()
+        # The client checks rate limits internally and raises APIError if exceeded
+        data = client.force_cache_update(source="web_refresh")
         
         if data:
             storage.store_vehicle_data(data)
@@ -109,9 +110,12 @@ def refresh_data():
             else:
                 freshness_msg = ""
             
+            data_source = data.get('data_source', 'unknown')
             return jsonify({
-                "status": "success", 
-                "message": f"Data refreshed successfully{freshness_msg}"
+                "status": "success",
+                "message": f"Data refreshed successfully{freshness_msg}",
+                "data_source": data_source,
+                "hyundai_data_fresh": data.get('hyundai_data_fresh'),
             })
         else:
             return jsonify({
@@ -852,64 +856,32 @@ def get_charging_sessions():
 
 @app.route('/api/collection-status')
 def get_collection_status():
-    """Get data collection status"""
+    """Get data collection status including rate limit information"""
     try:
-        history_file = Path('data/api_call_history.json')
-        if history_file.exists():
-            with open(history_file, 'r') as f:
-                history = json.load(f)
-                
-            # Calculate next collection time
-            calls_today = history.get('calls_today', 0)
-            daily_limit = int(os.getenv('API_DAILY_LIMIT', 30))
-            
-            if calls_today < daily_limit:
-                # Calculate based on evenly distributed collections
-                last_call_str = history.get('last_call')
-                interval_minutes = (24 * 60) // daily_limit
-                now = datetime.now()
-                
-                if last_call_str:
-                    last_call = datetime.fromisoformat(last_call_str)
-                    next_collection = last_call + timedelta(minutes=interval_minutes)
-                    
-                    # If the calculated time has passed, find the next scheduled slot
-                    if next_collection <= now:
-                        # Calculate today's scheduled times
-                        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-                        
-                        # Find next available slot
-                        for i in range(calls_today, daily_limit):
-                            scheduled_time = today_start + timedelta(minutes=interval_minutes * i)
-                            if scheduled_time > now:
-                                next_collection = scheduled_time
-                                break
-                        else:
-                            # No more slots today, schedule for tomorrow
-                            tomorrow = today_start + timedelta(days=1)
-                            next_collection = tomorrow
-                else:
-                    # No last call, schedule for next available slot
-                    next_collection = now + timedelta(minutes=1)
-            else:
-                # Next collection tomorrow at midnight
-                tomorrow = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
-                next_collection = tomorrow
-            
-            return jsonify({
-                'calls_today': calls_today,
-                'daily_limit': daily_limit,
-                'next_collection': next_collection.isoformat(),
-                'last_call': history.get('last_call')
-            })
-        else:
-            daily_limit = int(os.getenv('API_DAILY_LIMIT', 30))
-            return jsonify({
-                'calls_today': 0,
-                'daily_limit': daily_limit,
-                'next_collection': None,
-                'last_call': None
-            })
+        rate_limiter = get_rate_limiter()
+        status = rate_limiter.get_status()
+
+        return jsonify({
+            'calls_today': status['calls_today'],
+            'daily_limit': status['daily_limit'],
+            'remaining_calls': status['remaining_calls'],
+            'next_collection': status['next_collection'],
+            'last_call': status['last_call'],
+            'collection_interval_minutes': status['collection_interval_minutes'],
+            'is_rate_limited': status['is_rate_limited'],
+            'backoff_multiplier': status['backoff_multiplier'],
+            'adjusted_interval_minutes': status['adjusted_interval_minutes'],
+            'minutes_until_reset': status['minutes_until_reset'],
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/rate-limit-status')
+def get_rate_limit_status():
+    """Get detailed rate limit status for debugging and dashboard display"""
+    try:
+        rate_limiter = get_rate_limiter()
+        return jsonify(rate_limiter.get_status())
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -969,6 +941,7 @@ def get_current_status():
                 response_data['api_last_updated'] = latest_cache_data['api_last_updated']
             if latest_cache_data:
                 response_data['hyundai_data_fresh'] = latest_cache_data.get('hyundai_data_fresh')
+                response_data['data_source'] = latest_cache_data.get('data_source')
 
             # Add weather data if available
             if weather_data:

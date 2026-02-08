@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from hyundai_kia_connect_api import VehicleManager, Vehicle
 from dotenv import load_dotenv
+from .rate_limiter import get_rate_limiter
 
 load_dotenv()
 
@@ -35,7 +36,10 @@ class CachedVehicleClient:
         self.vehicle_id = os.getenv("BLUELINKVID")
         
         self.cache_enabled = os.getenv("API_CACHE_ENABLED", "true").lower() == "true"
-        
+
+        # Shared rate limit tracker
+        self.rate_limiter = get_rate_limiter()
+
         # Cache validity: How long to consider cached data "fresh" before making a new API call
         # Calculate based on API daily limit (e.g., 30 calls/day = ~48 minutes between calls)
         daily_limit = int(os.getenv("API_DAILY_LIMIT", "30"))
@@ -173,7 +177,7 @@ class CachedVehicleClient:
             return False
         return True
     
-    def force_cache_update(self):
+    def force_cache_update(self, source="unknown"):
         """Force an API call and cache the result, bypassing normal cache checks"""
         cache_key = self._get_cache_key("full_data")
         previous_cache = self._load_cache_entry(cache_key)
@@ -181,17 +185,33 @@ class CachedVehicleClient:
         if not self.manager:
             print("Error: VehicleManager not initialized")
             return None
-            
+
+        # Check rate limit before calling API
+        if not self.rate_limiter.can_make_call():
+            remaining = self.rate_limiter.remaining_calls
+            logger.warning(
+                "Force cache update blocked: daily API limit reached (%d/%d)",
+                self.rate_limiter.calls_today, self.rate_limiter.daily_limit,
+            )
+            raise APIError(
+                f"Daily API limit reached ({self.rate_limiter.calls_today}/{self.rate_limiter.daily_limit} calls used). "
+                f"Resets at midnight. {remaining} calls remaining.",
+                "rate_limit",
+            )
+
         print(f"Forcing cache update from API...")
         print(f"Region: {self.region}, Brand: {self.brand}, Vehicle ID: {self.vehicle_id}")
-        
+
         if not self.check_and_refresh_token():
             return None
-        
+
         try:
             # Update and get vehicle data
+            self.rate_limiter.record_call(source=source)
             success = self._update_vehicle_with_retry()
             if success:
+                # Reset backoff on success
+                self.rate_limiter.reset_backoff()
                 vehicle = None
                 try:
                     vehicle = self.manager.get_vehicle(self.vehicle_id)
@@ -208,10 +228,12 @@ class CachedVehicleClient:
                         is_fresh = self._is_remote_data_fresh(data, previous_cache)
                         data['hyundai_data_fresh'] = is_fresh
                         data['is_cached'] = not is_fresh
+                        # Force update always hits the API — distinguish fresh vs stale Hyundai data
+                        data['data_source'] = 'api_fresh' if is_fresh else 'api_stale'
                         self._save_to_cache(cache_key, data)
                         print("Cache updated successfully!")
                         return data
-            
+
             print("Failed to update cache")
             return None
             
@@ -399,43 +421,56 @@ class CachedVehicleClient:
             traceback.print_exc()
             return None
     
-    def get_vehicle_data(self):
+    def get_vehicle_data(self, source="unknown"):
         cache_key = self._get_cache_key("full_data")
         cached_data = self._load_from_cache(cache_key)
 
         if cached_data:
             print(f"Using cached vehicle data (age: {self._get_cache_age(cache_key)})")
-            # Mark data as coming from cache
+            # Mark data as coming from local cache — no API call was made
             cached_data['is_cached'] = True
             cached_data['hyundai_data_fresh'] = False
+            cached_data['data_source'] = 'local_cache'
             return cached_data
 
         previous_cache = self._load_cache_entry(cache_key)
-        
+
         if not self.manager:
             print("Error: VehicleManager not initialized")
             return None
-            
+
+        # Check rate limit before calling API
+        if not self.rate_limiter.can_make_call():
+            logger.warning(
+                "API call blocked: daily limit reached (%d/%d). Returning cached data.",
+                self.rate_limiter.calls_today, self.rate_limiter.daily_limit,
+            )
+            return self._get_last_successful_cache()
+
         print(f"Fetching fresh vehicle data from API...")
         print(f"Region: {self.region}, Brand: {self.brand}, Vehicle ID: {self.vehicle_id}")
-        
+
         if not self.check_and_refresh_token():
             return None
-        
+
         try:
             print("Updating vehicle data...")
-            
+
             # Check if vehicle_id is set
             if not self.vehicle_id:
                 logger.error("Vehicle ID is not set! Check BLUELINKVID environment variable")
                 return None
-            
-            # Attempt to update with retry logic for rate limits
+
+            # Record the call and attempt to update with retry logic for rate limits
+            self.rate_limiter.record_call(source=source)
             success = self._update_vehicle_with_retry()
             if not success:
                 logger.warning("Failed to update vehicle data after retries")
                 return self._get_last_successful_cache()
-            
+
+            # Reset backoff on success
+            self.rate_limiter.reset_backoff()
+
             # Get the vehicle after successful update
             logger.info(f"Getting vehicle with ID: {self.vehicle_id}")
             vehicle = None
@@ -474,15 +509,16 @@ class CachedVehicleClient:
                 is_fresh = self._is_remote_data_fresh(data, previous_cache)
                 data['hyundai_data_fresh'] = is_fresh
                 data['is_cached'] = not is_fresh
+                data['data_source'] = 'api_fresh' if is_fresh else 'api_stale'
                 self._save_to_cache(cache_key, data)
                 return data
             else:
                 logger.error("Failed to process vehicle data")
                 return self._get_last_successful_cache()
-            
+
         except Exception as e:
             print(f"Error fetching vehicle data: {type(e).__name__}: {e}")
-            
+
             # Check if this is a vehicleStatus KeyError
             if isinstance(e, KeyError) and str(e) == "'vehicleStatus'":
                 logger.info("vehicleStatus not available in API response, using last successful cache")
@@ -632,6 +668,10 @@ class CachedVehicleClient:
                 
                 # Only retry for rate limit errors
                 if last_error.error_type == "rate_limit":
+                    self.rate_limiter.record_rate_limit_hit(
+                        source="vehicle_update_retry",
+                        error_message=str(e),
+                    )
                     logger.warning(f"Rate limit hit (attempt {attempt + 1}/{max_retries}): {e}")
                     if attempt == max_retries - 1:
                         logger.error("Max retries reached for rate limit")
@@ -673,6 +713,7 @@ class CachedVehicleClient:
                 # Mark fallback data as cached
                 data['is_cached'] = True
                 data['hyundai_data_fresh'] = False
+                data['data_source'] = 'local_cache'
                 return data
 
         except Exception as e:
