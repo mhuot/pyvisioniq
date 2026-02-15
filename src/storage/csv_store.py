@@ -32,13 +32,16 @@ from pathlib import Path
 import pandas as pd
 import sys
 sys.path.append(str(Path(__file__).parent.parent.parent))
+from src.storage.base import StorageBackend
 from src.utils.weather import WeatherService
 from src.utils.debug import DebugLogger, DataValidator
 
 # Set up logging
 logger = logging.getLogger(__name__)
 debug_logger = DebugLogger(__name__)
-class CSVStorage:
+
+
+class CSVStorage(StorageBackend):
     """CSVStorage class for storing and retrieving vehicle data in CSV files.
     This class manages three types of data: trips, battery status, and locations,
     each stored in separate CSV files. It supports appending new data, initializing

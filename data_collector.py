@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 from datetime import datetime, timedelta
 from pathlib import Path
 from src.api.client import CachedVehicleClient
-from src.storage.csv_store import CSVStorage
+from src.storage.factory import create_storage
 
 sys.path.append(str(Path(__file__).parent))
 
@@ -58,7 +58,7 @@ class DataCollector:
     def __init__(self):
         """Initialize DataCollector with API client and storage manager"""
         self.client = CachedVehicleClient()
-        self.storage = CSVStorage()
+        self.storage = create_storage()
         self.daily_limit = int(os.getenv('API_DAILY_LIMIT', "30"))  # Default to 30 calls per day
         if self.daily_limit <= 0:
             logger.error("Invalid daily limit: %d", self.daily_limit)

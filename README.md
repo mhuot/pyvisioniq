@@ -7,7 +7,8 @@ A comprehensive Python web application for monitoring and visualizing Hyundai/Ki
 ### Core Functionality
 - **Smart API Management**: Automatic rate limiting (30 calls/day) with dynamic cache validity
 - **Real-time Vehicle Monitoring**: Battery level, range, temperature, and location tracking
-- **Historical Data Storage**: CSV-based storage with automatic deduplication
+- **Historical Data Storage**: CSV-based storage with automatic deduplication, optional Oracle ADB backend
+- **Oracle ADB Integration**: Dual-write mode for Microsoft Fabric Data Gateway / Power BI
 - **Docker Support**: Full containerization with docker-compose
 
 ### Web Dashboard
@@ -101,6 +102,47 @@ python data_collector.py &  # Start background data collector (runs every 48 min
 python -m src.web.app       # Start Flask web server on port 5000
 ```
 
+## Oracle Autonomous Database (Optional)
+
+PyVisionIQ supports Oracle Autonomous Database as a storage backend, enabling integration with Microsoft Fabric Data Gateway for Power BI dashboards. The default CSV backend continues to work without any Oracle configuration.
+
+### Storage Modes
+
+| Mode | `STORAGE_BACKEND` | Description |
+|------|-------------------|-------------|
+| CSV only | `csv` (default) | Original behaviour — flat files in `data/` |
+| Oracle only | `oracle` | All reads/writes go to Oracle ADB |
+| Dual-write | `dual` | Writes to **both** CSV and Oracle; reads from CSV by default |
+
+### Oracle Setup
+
+1. Provision an Always Free Autonomous Transaction Processing (ATP) database in OCI console
+2. Download the wallet zip and extract to `oracle_wallet/` in the project root
+3. Add Oracle environment variables to `.env`:
+```bash
+STORAGE_BACKEND=dual
+ORACLE_USER=pyvisioniq
+ORACLE_PASSWORD=your_oracle_password
+ORACLE_DSN=pyvisioniq_low        # TNS name from wallet
+ORACLE_WALLET_LOCATION=./oracle_wallet
+ORACLE_WALLET_PASSWORD=your_wallet_password
+```
+4. Migrate existing CSV data to Oracle:
+```bash
+source venv/bin/activate
+python tools/migrate_csv_to_oracle.py --dry-run   # Preview first
+python tools/migrate_csv_to_oracle.py              # Execute migration
+```
+
+Tables are created automatically on first connection. Uses `python-oracledb` in thin mode (no Oracle Instant Client required).
+
+### Fabric Data Gateway Integration
+
+Once Oracle is populated, connect Microsoft Fabric via the On-Premises Data Gateway:
+1. Install the gateway on a machine with Oracle Client
+2. Add Oracle data source using the same wallet/TNS config
+3. The 4 tables (`trips`, `battery_status`, `locations`, `charging_sessions`) are directly queryable from Fabric/Power BI
+
 ## Configuration
 
 ### Environment Variables
@@ -114,6 +156,12 @@ python -m src.web.app       # Start Flask web server on port 5000
 - `DEBUG_MODE`: Enable verbose logging and debug routes (true/false)
 - `TZ`: Timezone for data collection (default: America/Chicago)
 - `PORT`: Web server port (default: 5000)
+- `STORAGE_BACKEND`: Storage backend — `csv` (default), `oracle`, or `dual`
+- `ORACLE_USER`: Oracle ADB username (required for oracle/dual)
+- `ORACLE_PASSWORD`: Oracle ADB password (required for oracle/dual)
+- `ORACLE_DSN`: Oracle TNS name from wallet (required for oracle/dual)
+- `ORACLE_WALLET_LOCATION`: Path to extracted wallet directory
+- `ORACLE_WALLET_PASSWORD`: Optional wallet password
 
 ## Usage
 
@@ -147,6 +195,7 @@ Located in `tools/` directory:
 - `fix_charging_sessions.py`: Fix charging session data issues
 - `add_temperature_columns.py`: Add temperature data to CSVs
 - `add_charging_power_column.py`: Add charging power data
+- `migrate_csv_to_oracle.py`: Migrate CSV data to Oracle ADB (supports `--dry-run`)
 
 ## Data Storage
 
@@ -169,12 +218,19 @@ Located in `tools/` directory:
 pyvisionic/
 ├── src/
 │   ├── api/          # API client and caching
-│   ├── storage/      # CSV data storage
+│   ├── storage/      # Storage backends (CSV, Oracle, dual-write)
+│   │   ├── base.py           # Abstract StorageBackend interface
+│   │   ├── csv_store.py      # CSV file storage (default)
+│   │   ├── oracle_store.py   # Oracle ADB storage
+│   │   ├── oracle_schema.py  # Oracle DDL definitions
+│   │   ├── dual_store.py     # Dual-write (CSV + Oracle)
+│   │   └── factory.py        # Storage factory (reads STORAGE_BACKEND)
 │   └── web/          # Flask web application
 ├── tools/            # Data management scripts
 ├── docs/             # Architecture documentation
 ├── data/             # CSV data files
 ├── cache/            # Cached API responses
+├── oracle_wallet/    # Oracle ADB wallet (not in git)
 └── logs/             # Application logs
 ```
 

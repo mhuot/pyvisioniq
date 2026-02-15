@@ -37,6 +37,8 @@ python tools/migrate_trips_location.py      # Add location data to trips
 python tools/add_temperature_columns.py     # Add temperature data to CSVs
 python tools/fix_cache_odometer.py          # Fix odometer readings in cache
 python tools/add_is_cached_column.py        # Add is_cached column to battery_status.csv
+python tools/migrate_csv_to_oracle.py      # Migrate CSV data to Oracle ADB
+python tools/migrate_csv_to_oracle.py --dry-run  # Preview migration without writing
 ```
 
 ### Testing
@@ -61,7 +63,7 @@ python analyze_errors.py    # Processes debug/*.json error files
    - Runs continuously in background
    - Fetches vehicle data based on API_DAILY_LIMIT setting (default 30/day = every 48 min)
    - Manages API rate limiting with call history tracking
-   - Stores data via CSVStorage
+   - Stores data via storage backend (CSVStorage, OracleStorage, or DualWriteStorage)
 
 2. **CachedVehicleClient** (`src/api/client.py`):
    - Handles all Hyundai/Kia Connect API communication  
@@ -71,9 +73,13 @@ python analyze_errors.py    # Processes debug/*.json error files
    - Manages authentication and error handling with custom APIError class
    - Uses SSL patch for certificate issues when DISABLE_SSL_VERIFY=true
 
-3. **CSVStorage** (`src/storage/csv_store.py`):
-   - Manages 4 CSV files: trips, battery_status, locations, charging_sessions
-   - Handles automatic deduplication based on timestamps
+3. **Storage Layer** (`src/storage/`):
+   - **StorageBackend** (`base.py`): Abstract base class defining the storage interface
+   - **CSVStorage** (`csv_store.py`): CSV file backend (default) — manages 4 CSV files
+   - **OracleStorage** (`oracle_store.py`): Oracle Autonomous DB backend with connection pooling
+   - **DualWriteStorage** (`dual_store.py`): Writes to both CSV and Oracle simultaneously
+   - **Factory** (`factory.py`): `create_storage()` returns the backend per `STORAGE_BACKEND` env var
+   - Handles automatic deduplication (CSV via pandas, Oracle via MERGE/UNIQUE constraints)
    - Tracks charging sessions with state management (incomplete/complete)
    - Integrates weather data from Open-Meteo API or vehicle sensor based on WEATHER_SOURCE
 
@@ -86,11 +92,11 @@ python analyze_errors.py    # Processes debug/*.json error files
 
 ### Data Flow
 ```
-Hyundai/Kia API → CachedVehicleClient → Cache Files → CSVStorage → Flask API → Web Dashboard
-                       ↓                     ↓
-                  Rate Limiting          Deduplication
-                  SSL Patching          Weather Integration
-                  Error Classification  Session Tracking
+Hyundai/Kia API → CachedVehicleClient → Cache Files → Storage Factory → Flask API → Web Dashboard
+                       ↓                     ↓              ↓
+                  Rate Limiting          Deduplication   CSVStorage (default)
+                  SSL Patching          Weather         OracleStorage
+                  Error Classification  Session Track   DualWriteStorage (CSV+Oracle)
 ```
 
 ### Key Patterns
@@ -98,7 +104,9 @@ Hyundai/Kia API → CachedVehicleClient → Cache Files → CSVStorage → Flask
 - **Error Handling**: APIError class with error types and user-friendly messages
 - **Data Validation**: Debug utilities with DataValidator for type checking (handles numpy types)
 - **Session Management**: Charging sessions tracked with start/end times, energy added, location
-- **Docker Deployment**: Code is COPY'd into image, not mounted. Only data/logs/cache are volumes
+- **Storage Factory**: `create_storage()` reads `STORAGE_BACKEND` env var (csv/oracle/dual)
+- **Dual-Write**: CSV as primary (reads), Oracle as secondary (for Fabric Gateway); Oracle errors don't block
+- **Docker Deployment**: Code is COPY'd into image, not mounted. Only data/logs/cache/oracle_wallet are volumes
 - **Blueprint Architecture**: Modular routes using Flask blueprints (cache_bp, debug_bp)
 
 ### API Endpoints
@@ -130,6 +138,13 @@ Critical settings that must be configured:
 - `TZ`: Timezone for data collection (default: America/Chicago)
 - `PORT`: Web server port (default: 5000)
 - `WEATHER_SOURCE`: "meteo" for Open-Meteo API or "vehicle" for car sensor
+- `STORAGE_BACKEND`: Storage backend to use — `csv` (default), `oracle`, or `dual` (CSV + Oracle)
+- `DUAL_READ_FROM`: When using dual mode, which backend to read from — `csv` (default) or `oracle`
+- `ORACLE_USER`: Oracle ADB username
+- `ORACLE_PASSWORD`: Oracle ADB password
+- `ORACLE_DSN`: Oracle TNS name from wallet (e.g. `pyvisioniq_low`)
+- `ORACLE_WALLET_LOCATION`: Path to extracted wallet directory
+- `ORACLE_WALLET_PASSWORD`: Optional wallet password
 
 ## Known Issues
 - Temperature data may not update correctly from API
