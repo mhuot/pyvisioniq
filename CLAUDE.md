@@ -11,10 +11,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ### Running the Application
 ```bash
-# Start both data collector and web server
+# Start both data collector and web server (development)
 source venv/bin/activate
-python data_collector.py &  # Runs in background, collects data every 48 minutes based on API_DAILY_LIMIT
-python -m src.web.app       # Starts Flask web server on port 5000 (or PORT env var)
+python data_collector.py &  # Runs in background, collects data based on API_DAILY_LIMIT (default: every 48 min for 30 calls/day)
+python -m src.web.app       # Starts Flask dev server on port 5000 (or PORT env var)
+
+# Production with gunicorn
+gunicorn --bind 0.0.0.0:5000 --workers 4 --threads 2 --timeout 120 src.web.app:app
+
+# Test single data collection
+python data_collector.py --once
 ```
 
 ### Docker Operations
@@ -22,22 +28,42 @@ python -m src.web.app       # Starts Flask web server on port 5000 (or PORT env 
 docker compose up -d        # Start all services
 docker compose down         # Stop all services
 docker compose logs -f      # View logs
+docker compose logs -f --tail=100  # View last 100 lines
 
-# IMPORTANT: Code changes require rebuild since Dockerfile COPYs code
+# IMPORTANT: Code changes require rebuild since Dockerfile COPYs code (not mounted)
 docker compose down && docker compose build && docker compose up -d
+
+# Access container shell for debugging
+docker exec -it pyvisionic sh
+```
+
+### Code Quality
+```bash
+# Format with black (required before commits)
+black src/ tools/ data_collector.py
+
+# Lint with pylint (minimum score 8.0 required)
+pylint src/ tools/ data_collector.py
+
+# Run security checks
+bandit -r src/ tools/ data_collector.py
 ```
 
 ### Data Management Tools
 ```bash
 # All tools require venv activation first
-python tools/reprocess_cache_complete.py    # Rebuild CSV files from cache
-python tools/deduplicate_trips_v2.py        # Remove duplicate trips
-python tools/fix_charging_sessions.py       # Fix charging session data issues
-python tools/migrate_trips_location.py      # Add location data to trips
-python tools/add_temperature_columns.py     # Add temperature data to CSVs
-python tools/fix_cache_odometer.py          # Fix odometer readings in cache
-python tools/add_is_cached_column.py        # Add is_cached column to battery_status.csv
-python tools/migrate_csv_to_oracle.py      # Migrate CSV data to Oracle ADB
+python tools/reprocess_cache_complete.py       # Rebuild CSV files from cache
+python tools/deduplicate_trips_v2.py           # Remove duplicate trips
+python tools/fix_charging_sessions.py          # Fix charging session data issues
+python tools/fix_charging_sessions_columns.py  # Fix charging session column structure
+python tools/rebuild_charging_sessions.py      # Rebuild charging sessions from scratch
+python tools/migrate_trips_location.py         # Add location data to trips
+python tools/add_temperature_columns.py        # Add temperature data to CSVs
+python tools/add_charging_power_column.py      # Add charging power column
+python tools/fix_cache_odometer.py             # Fix odometer readings in cache
+python tools/add_is_cached_column.py           # Add is_cached column to battery_status.csv
+python tools/recompute_is_cached.py            # Recompute is_cached flags
+python tools/migrate_csv_to_oracle.py          # Migrate CSV data to Oracle ADB
 python tools/migrate_csv_to_oracle.py --dry-run  # Preview migration without writing
 ```
 
@@ -111,18 +137,25 @@ Hyundai/Kia API → CachedVehicleClient → Cache Files → Storage Factory → 
 
 ### API Endpoints
 Flask app provides endpoints at `http://localhost:{PORT}/api/`:
-- `/trips` - Trip history with energy consumption breakdown
-- `/battery_status` - Battery level, charging status, temperature  
-- `/locations` - GPS coordinates history
-- `/charging_sessions` - Charging session data
-- `/last_update` - Last data collection timestamp
-- `/weather/<lat>/<lon>` - Weather data for coordinates
-- `/summary/trips` - Trip statistics and summaries
-- `/summary/battery` - Battery usage statistics
-- `/trips/<trip_id>` - Individual trip details
+- `/trips` - Trip history with pagination, filtering (page, per_page, start_date, end_date, hours)
+- `/trip/<trip_id>` - Individual trip details with energy breakdown
+- `/battery-history` - Battery level history with temperature (hours, start_date, end_date params)
+- `/current-status` - Current battery, charging, range, odometer, temperature
+- `/locations` - GPS coordinates for all trips (supports hours/date filtering)
+- `/charging-sessions` - Charging session history (supports hours/date filtering)
+- `/efficiency-stats` - Efficiency statistics by time period (day/week/month/year)
+- `/temperature-efficiency` - Trip efficiency correlated with temperature
+- `/charging-temperature-impact` - Charging power/speed by temperature
+- `/collection-status` - Data collection status (calls_today, next_collection)
 - `/force-update` - Force cache refresh (respects rate limits)
 - `/clear-cache` - Clear non-history cache files
 - `/refresh` - Refresh data with timeout handling
+- `/debug` - Debug info (config, cache status)
+
+Web UI routes:
+- `/` - Main dashboard
+- `/cache` - Cache management UI (view/download/delete cached files)
+- `/debug/*` - Debug routes (only when DEBUG_MODE=true)
 
 ## Environment Variables (.env)
 Critical settings that must be configured:
@@ -146,8 +179,65 @@ Critical settings that must be configured:
 - `ORACLE_WALLET_LOCATION`: Path to extracted wallet directory
 - `ORACLE_WALLET_PASSWORD`: Optional wallet password
 
-## Known Issues
-- Temperature data may not update correctly from API
-- Data validation rejects numpy.int64 types in charging session tracking  
-- Virtual environment created on macOS may need recreation on Linux
-- SSL certificate issues may require DISABLE_SSL_VERIFY=true
+## Project Structure
+```
+pyvisionic/
+├── src/
+│   ├── api/
+│   │   ├── client.py          # CachedVehicleClient - API communication, caching, rate limiting
+│   │   └── ssl_patch.py       # SSL certificate workarounds
+│   ├── storage/
+│   │   └── csv_store.py       # CSVStorage - manages 4 CSV files, deduplication, session tracking
+│   ├── utils/
+│   │   ├── weather.py         # WeatherService - Open-Meteo API integration
+│   │   └── debug.py           # DebugLogger, DataValidator - debugging utilities
+│   └── web/
+│       ├── app.py             # Flask app - main routes, API endpoints
+│       ├── cache_routes.py    # Blueprint for /cache routes
+│       ├── debug_routes.py    # Blueprint for /debug routes (DEBUG_MODE only)
+│       ├── templates/         # HTML templates
+│       └── static/            # CSS, JS, images
+├── tools/                      # Data migration/repair scripts
+├── data/                       # CSV files (trips, battery_status, locations, charging_sessions)
+├── cache/                      # Cached API responses (timestamped history files)
+├── logs/                       # Application logs
+└── data_collector.py           # Background data collector (runs every ~48 min)
+```
+
+## Key Implementation Details
+
+### Data Flow for API Calls
+1. `data_collector.py` calls `client.get_vehicle_data()` at scheduled intervals
+2. `CachedVehicleClient` checks cache validity (based on API_DAILY_LIMIT)
+3. If cache invalid: calls Hyundai API, compares timestamps to detect freshness, saves to cache
+4. Returns data with `is_cached` and `hyundai_data_fresh` flags
+5. `CSVStorage.store_vehicle_data()` processes and saves to 4 CSV files with deduplication
+
+### Charging Session State Machine
+- **Start**: is_charging=True + no active session → create new session with is_complete=False
+- **Update**: is_charging=True + active session → update end_battery, end_time, energy_added
+- **Gap Detection**: time gap > charging_gap_threshold → complete old session, start new one
+- **Complete**: is_charging=False + active session → set is_complete=True
+- Energy calculation: `(battery_delta / 100) * BATTERY_CAPACITY_KWH`
+- Average power: `energy_added / (duration_minutes / 60)`
+
+### Cache Freshness Detection
+Two-tier cache system prevents unnecessary API calls:
+- **Validity Period** (45.6 min for 30 calls/day): When to make new API call
+- **Retention Period** (48 hours): How long to keep historical cache files
+- **Freshness Detection**: Compares `api_last_updated` timestamps and raw data hash
+- **Stale Detection**: If timestamp unchanged and payload unchanged → mark as not fresh
+
+### Temperature Data Sources
+Two sources configured via WEATHER_SOURCE:
+- `meteo`: Open-Meteo API (weather service) - more reliable
+- `vehicle`: Vehicle sensor from airTemp field - may be stale
+Both sources stored in separate columns (meteo_temp, vehicle_temp) for comparison
+
+## Known Issues & Workarounds
+- **Temperature stale**: Vehicle sensor may not update; use WEATHER_SOURCE=meteo
+- **numpy types**: DataValidator handles numpy.int64 validation to prevent JSON errors
+- **vehicleStatus KeyError**: Hyundai API maintenance windows → gracefully use last cache
+- **SSL certificate issues**: Set DISABLE_SSL_VERIFY=true (uses ssl_patch.py)
+- **Rate limiting**: Automatic backoff extends next collection interval by 1.5x (max 4x)
+- **Cross-platform venv**: Recreate venv when moving between macOS and Linux
