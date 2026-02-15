@@ -355,6 +355,32 @@ class OracleStorage(StorageBackend):
                 logger.error("Error storing API response: %s", exc)
                 connection.rollback()
 
+        self._purge_old_api_responses()
+
+    def _purge_old_api_responses(self):
+        """Delete api_responses older than the configured retention period."""
+        retention_days = int(os.getenv("RAW_RESPONSE_RETENTION_DAYS", "3650"))
+        delete_sql = """
+            DELETE FROM api_responses
+            WHERE timestamp < (SYSTIMESTAMP - NUMTODSINTERVAL(:days, 'DAY'))
+        """
+
+        with self._get_connection() as connection:
+            cursor = connection.cursor()
+            try:
+                cursor.execute(delete_sql, {"days": retention_days})
+                deleted = cursor.rowcount
+                connection.commit()
+                if deleted > 0:
+                    logger.info(
+                        "Purged %d api_responses older than %d days",
+                        deleted,
+                        retention_days,
+                    )
+            except oracledb.DatabaseError as exc:
+                logger.error("Error purging old api_responses: %s", exc)
+                connection.rollback()
+
     # ------------------------------------------------------------------
     # Read methods
     # ------------------------------------------------------------------
