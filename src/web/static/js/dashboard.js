@@ -7,6 +7,7 @@ let mapMarkers = [];
 let batteryChart = null;
 let energyChart = null;
 let tempEfficiencyChart = null;
+let chargingTempChart = null;
 
 document.addEventListener('DOMContentLoaded', function() {
     const refreshBtn = document.getElementById('refresh-btn');
@@ -255,6 +256,7 @@ document.addEventListener('DOMContentLoaded', function() {
     loadEfficiencyStats(24);
     loadChargingSessions(24);
     loadTemperatureEfficiency(24);
+    loadChargingTemperatureImpact(24);
     
     // Initialize and load map
     initializeLocationsMap().then(() => {
@@ -338,7 +340,8 @@ document.addEventListener('DOMContentLoaded', function() {
             loadLocationsMap(hours, startDate, endDate),
             loadEfficiencyStats(hours, startDate, endDate),
             loadChargingSessions(hours, startDate, endDate),
-            loadTemperatureEfficiency(hours, startDate, endDate)
+            loadTemperatureEfficiency(hours, startDate, endDate),
+            loadChargingTemperatureImpact(hours, startDate, endDate)
         ]);
         
         showNotification('Data updated', 'success');
@@ -1400,6 +1403,188 @@ document.addEventListener('DOMContentLoaded', function() {
             console.error('Error loading temperature efficiency data:', error);
             document.getElementById('temperature-stats').innerHTML = 
                 '<div class="no-data">Error loading temperature efficiency data</div>';
+        }
+    }
+
+    async function loadChargingTemperatureImpact(hours = 'all', startDate = null, endDate = null) {
+        try {
+            const params = new URLSearchParams({ hours });
+            if (startDate) params.append('start_date', startDate);
+            if (endDate) params.append('end_date', endDate);
+
+            const response = await fetch(`/api/charging-temperature-impact?${params}`);
+            const data = await response.json();
+
+            const container = document.getElementById('charging-temperature-stats');
+            if (!container) {
+                return;
+            }
+
+            if (!response.ok || !data.raw_data || data.raw_data.length === 0) {
+                if (hours !== 'all' && hours !== 'custom') {
+                    showEmptyStateWithSuggestion(container, hours, 'charging data');
+                } else {
+                    container.innerHTML = '<div class="no-data">Not enough charging data to analyze temperature impact</div>';
+                }
+                if (chargingTempChart) {
+                    chargingTempChart.destroy();
+                    chargingTempChart = null;
+                }
+                return;
+            }
+
+            const ctx = document.getElementById('charging-temperature-chart').getContext('2d');
+
+            const scatterData = data.raw_data.map(point => ({
+                x: point.temperature,
+                y: point.avg_power
+            }));
+
+            const barLabels = data.temperature_bins.map(bin => bin.temperature_range);
+            const barData = data.temperature_bins.map(bin => bin.avg_power);
+
+            if (chargingTempChart) {
+                chargingTempChart.data.datasets[0].data = scatterData;
+                chargingTempChart.data.datasets[1].data = barData;
+                chargingTempChart.options.plugins.title.text = 'Charging Power vs Temperature';
+                chargingTempChart.data.labels = barLabels;
+                chargingTempChart.update('none');
+            } else {
+                chargingTempChart = new Chart(ctx, {
+                    type: 'scatter',
+                    data: {
+                        labels: barLabels,
+                        datasets: [{
+                            label: 'Session Avg Power',
+                            data: scatterData,
+                            backgroundColor: 'rgba(46, 204, 113, 0.5)',
+                            borderColor: 'rgba(39, 174, 96, 1)',
+                            pointRadius: 5,
+                            type: 'scatter'
+                        }, {
+                            label: 'Average by Temperature Range',
+                            data: barData,
+                            backgroundColor: 'rgba(155, 89, 182, 0.6)',
+                            borderColor: 'rgba(142, 68, 173, 1)',
+                            borderWidth: 2,
+                            type: 'bar',
+                            yAxisID: 'y',
+                            xAxisID: 'x2'
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        interaction: {
+                            mode: 'index',
+                            intersect: false
+                        },
+                        plugins: {
+                            title: {
+                                display: true,
+                                text: 'Charging Power vs Temperature',
+                                font: { size: 16 }
+                            },
+                            legend: {
+                                display: true,
+                                position: 'top'
+                            },
+                            tooltip: {
+                                callbacks: {
+                                    label: function(context) {
+                                        if (context.dataset.type === 'scatter') {
+                                            return `${context.parsed.x.toFixed(1)}°C: ${context.parsed.y.toFixed(2)} kW`;
+                                        } else {
+                                            const bin = data.temperature_bins[context.dataIndex];
+                                            return [
+                                                `Average Power: ${context.parsed.y.toFixed(2)} kW`,
+                                                `Avg Duration: ${bin.avg_duration_minutes.toFixed(1)} min`,
+                                                `Sessions: ${bin.session_count}`,
+                                                `Energy Added: ${bin.total_energy.toFixed(2)} kWh`
+                                            ];
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        scales: {
+                            x: {
+                                type: 'linear',
+                                position: 'bottom',
+                                title: {
+                                    display: true,
+                                    text: 'Temperature (°C)'
+                                }
+                            },
+                            x2: {
+                                type: 'category',
+                                position: 'bottom',
+                                display: false
+                            },
+                            y: {
+                                type: 'linear',
+                                title: {
+                                    display: true,
+                                    text: 'Average Charging Power (kW)'
+                                },
+                                min: 0
+                            }
+                        }
+                    }
+                });
+            }
+
+            const summary = data.summary;
+            const best = summary.best_temperature_band;
+            const worst = summary.worst_temperature_band;
+            const statsHtml = `
+                <div class="stats-grid">
+                    <div class="stat-item">
+                        <span class="stat-label">Sessions Analyzed</span>
+                        <span class="stat-value">${summary.total_sessions}</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">Temperature Range</span>
+                        <span class="stat-value">${summary.temperature_range.min}°C → ${summary.temperature_range.max}°C</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">Average Power Range</span>
+                        <span class="stat-value">${summary.avg_power_range.min} - ${summary.avg_power_range.max} kW</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">Mean Power</span>
+                        <span class="stat-value">${summary.average_power} kW</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">Average Session Length</span>
+                        <span class="stat-value">${summary.average_duration_minutes} min</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">Total Energy Added</span>
+                        <span class="stat-value">${summary.total_energy_kwh} kWh</span>
+                    </div>
+                    ${best ? `
+                    <div class="stat-item">
+                        <span class="stat-label">Best Temperature Band</span>
+                        <span class="stat-value">${best.range} (${best.avg_power.toFixed(2)} kW)</span>
+                        <span class="stat-detail">${best.session_count} sessions · ${best.avg_duration_minutes.toFixed(1)} min avg</span>
+                    </div>` : ''}
+                    ${worst ? `
+                    <div class="stat-item">
+                        <span class="stat-label">Challenging Band</span>
+                        <span class="stat-value">${worst.range} (${worst.avg_power.toFixed(2)} kW)</span>
+                        <span class="stat-detail">${worst.session_count} sessions · ${worst.avg_duration_minutes.toFixed(1)} min avg</span>
+                    </div>` : ''}
+                </div>
+            `;
+            container.innerHTML = statsHtml;
+
+        } catch (error) {
+            console.error('Error loading charging temperature impact:', error);
+            const container = document.getElementById('charging-temperature-stats');
+            if (container) {
+                container.innerHTML = '<div class="no-data">Error loading charging temperature data</div>';
+            }
         }
     }
     

@@ -512,6 +512,10 @@ h2 {
     margin-top: 2rem;
 }
 
+.charging-temperature-stats {
+    margin-top: 2rem;
+}
+
 .temp-efficiency-stats {
     background-color: var(--bg-color);
     padding: 1.5rem;

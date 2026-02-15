@@ -6,6 +6,7 @@ import os
 from datetime import datetime, timedelta
 import sys
 from pathlib import Path
+from typing import Dict
 import numpy as np
 import pandas as pd
 
@@ -646,6 +647,203 @@ def get_temperature_efficiency():
         import traceback
 
         traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/charging-temperature-impact")
+def get_charging_temperature_impact():
+    """Return charging session performance grouped by ambient temperature."""
+    try:
+        sessions_df = storage.get_charging_sessions_df()
+        battery_df = storage.get_battery_df()
+
+        if sessions_df.empty or battery_df.empty:
+            return jsonify({"error": "No charging or temperature data available"}), 404
+
+        sessions_df["start_time"] = pd.to_datetime(
+            sessions_df["start_time"], errors="coerce"
+        )
+        sessions_df["end_time"] = pd.to_datetime(
+            sessions_df["end_time"], errors="coerce"
+        )
+        battery_df["timestamp"] = pd.to_datetime(
+            battery_df["timestamp"], format="ISO8601", errors="coerce"
+        )
+
+        sessions_df = sessions_df.dropna(subset=["start_time", "end_time"])
+        battery_df = battery_df.dropna(subset=["timestamp", "temperature"])
+
+        if sessions_df.empty or battery_df.empty:
+            return jsonify({"error": "Insufficient data after sanitizing values"}), 404
+
+        if sessions_df.empty:
+            return jsonify({"error": "No charging sessions available"}), 404
+
+        battery_df = battery_df.sort_values("timestamp").reset_index(drop=True)
+
+        def lookup_temperature(session_time):
+            deltas = (battery_df["timestamp"] - session_time).abs()
+            if deltas.empty:
+                return None
+            idx = deltas.idxmin()
+            if pd.isna(idx):
+                return None
+            if deltas.iloc[idx] > pd.Timedelta(minutes=90):
+                return None
+            return battery_df.iloc[idx]["temperature"]
+
+        raw_points = []
+        temp_bins: Dict[str, Dict[str, float]] = {}
+        capacity = getattr(storage, "battery_capacity_kwh", 77.4)
+
+        for _, session in sessions_df.iterrows():
+            temperature = lookup_temperature(session["start_time"])
+            if temperature is None or pd.isna(temperature):
+                continue
+
+            duration_minutes = session.get("duration_minutes")
+            if pd.isna(duration_minutes) or duration_minutes <= 0:
+                duration_minutes = (
+                    session["end_time"] - session["start_time"]
+                ).total_seconds() / 60
+            if duration_minutes < 5:
+                continue
+
+            energy_added = session.get("energy_added")
+            start_battery = session.get("start_battery", 0)
+            end_battery = session.get("end_battery", 0)
+            battery_delta = max(float(end_battery) - float(start_battery), 0.0)
+
+            if pd.isna(energy_added) or energy_added <= 0:
+                energy_added = (battery_delta / 100.0) * capacity
+            if energy_added <= 0:
+                continue
+
+            avg_power = (
+                energy_added / (duration_minutes / 60.0) if duration_minutes > 0 else 0
+            )
+            if avg_power <= 0:
+                continue
+
+            raw_points.append(
+                {
+                    "temperature": round(float(temperature), 2),
+                    "avg_power": round(float(avg_power), 2),
+                    "energy_added": round(float(energy_added), 2),
+                    "duration_minutes": round(float(duration_minutes), 1),
+                    "start_time": session["start_time"].isoformat(),
+                    "end_time": (
+                        session["end_time"].isoformat()
+                        if pd.notna(session["end_time"])
+                        else None
+                    ),
+                }
+            )
+
+            bin_start = int(float(temperature) // 5) * 5
+            label = f"{bin_start} to {bin_start + 5}°C"
+            bucket = temp_bins.setdefault(
+                label,
+                {
+                    "temperatures": [],
+                    "avg_powers": [],
+                    "durations": [],
+                    "energy": 0.0,
+                    "count": 0,
+                },
+            )
+            bucket["temperatures"].append(float(temperature))
+            bucket["avg_powers"].append(float(avg_power))
+            bucket["durations"].append(float(duration_minutes))
+            bucket["energy"] += float(energy_added)
+            bucket["count"] += 1
+
+        if not raw_points:
+            return (
+                jsonify(
+                    {
+                        "error": "Could not match charging sessions with temperature readings"
+                    }
+                ),
+                404,
+            )
+
+        bin_stats = []
+        for label, bucket in temp_bins.items():
+            avg_temp = sum(bucket["temperatures"]) / len(bucket["temperatures"])
+            avg_power = sum(bucket["avg_powers"]) / len(bucket["avg_powers"])
+            bin_stats.append(
+                {
+                    "temperature_range": label,
+                    "avg_temperature": round(avg_temp, 1),
+                    "avg_power": round(avg_power, 2),
+                    "avg_duration_minutes": (
+                        round(sum(bucket["durations"]) / len(bucket["durations"]), 1)
+                        if bucket["durations"]
+                        else 0
+                    ),
+                    "session_count": bucket["count"],
+                    "total_energy": round(bucket["energy"], 2),
+                }
+            )
+
+        bin_stats.sort(key=lambda x: x["avg_temperature"])
+
+        temperatures = [point["temperature"] for point in raw_points]
+        avg_powers = [point["avg_power"] for point in raw_points]
+        durations = [point["duration_minutes"] for point in raw_points]
+        energies = [point["energy_added"] for point in raw_points]
+
+        best_bin = max(bin_stats, key=lambda b: b["avg_power"]) if bin_stats else None
+        worst_bin = min(bin_stats, key=lambda b: b["avg_power"]) if bin_stats else None
+
+        return jsonify(
+            {
+                "raw_data": raw_points,
+                "temperature_bins": bin_stats,
+                "summary": {
+                    "total_sessions": len(raw_points),
+                    "temperature_range": {
+                        "min": round(min(temperatures), 1),
+                        "max": round(max(temperatures), 1),
+                    },
+                    "avg_power_range": {
+                        "min": round(min(avg_powers), 2),
+                        "max": round(max(avg_powers), 2),
+                    },
+                    "average_power": round(sum(avg_powers) / len(avg_powers), 2),
+                    "average_duration_minutes": round(
+                        sum(durations) / len(durations), 1
+                    ),
+                    "total_energy_kwh": round(sum(energies), 2),
+                    "best_temperature_band": (
+                        {
+                            "range": best_bin["temperature_range"],
+                            "avg_power": best_bin["avg_power"],
+                            "avg_duration_minutes": best_bin["avg_duration_minutes"],
+                            "session_count": best_bin["session_count"],
+                        }
+                        if best_bin
+                        else None
+                    ),
+                    "worst_temperature_band": (
+                        {
+                            "range": worst_bin["temperature_range"],
+                            "avg_power": worst_bin["avg_power"],
+                            "avg_duration_minutes": worst_bin["avg_duration_minutes"],
+                            "session_count": worst_bin["session_count"],
+                        }
+                        if worst_bin
+                        else None
+                    ),
+                },
+            }
+        )
+
+    except Exception as e:
+        app.logger.error(
+            f"Error in charging temperature impact analysis: {e}", exc_info=True
+        )
         return jsonify({"error": str(e)}), 500
 
 
