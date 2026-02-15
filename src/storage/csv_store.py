@@ -466,7 +466,11 @@ class CSVStorage(StorageBackend):
                 update_mask = needs_avg
                 df["avg_power"] = None
             if update_mask.any():
-                df.loc[update_mask, "avg_power"] = avg_power.round(2)
+                # Round only the values being updated, handling NA values properly
+                rounded_power = avg_power[update_mask].apply(
+                    lambda x: round(x, 2) if pd.notna(x) else x
+                )
+                df.loc[update_mask, "avg_power"] = rounded_power
                 changed = True
 
         if changed:
