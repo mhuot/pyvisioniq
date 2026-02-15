@@ -48,17 +48,25 @@ def init_auth(app):
     # Configure identity library for Entra ID
     import identity.flask
 
+    client_id = os.getenv("AZURE_CLIENT_ID", "")
     tenant_id = os.getenv("AZURE_TENANT_ID", "")
-    authority = f"https://login.microsoftonline.com/{tenant_id}" if tenant_id else ""
 
-    app.config["IDENTITY_AUTH"] = {
-        "client_id": os.getenv("AZURE_CLIENT_ID", ""),
-        "client_credential": os.getenv("AZURE_CLIENT_SECRET", ""),
-        "authority": authority,
-        "redirect_uri": os.getenv("AZURE_REDIRECT_URI", ""),
-    }
+    if not client_id or not tenant_id:
+        logger.warning(
+            "AUTH_ENABLED=true but AZURE_CLIENT_ID or AZURE_TENANT_ID not set; "
+            "auth will not function"
+        )
+        return
 
-    identity.flask.Auth(app)
+    authority = f"https://login.microsoftonline.com/{tenant_id}"
+
+    identity.flask.Auth(
+        app,
+        client_id=client_id,
+        client_credential=os.getenv("AZURE_CLIENT_SECRET", ""),
+        authority=authority,
+        redirect_uri=os.getenv("AZURE_REDIRECT_URI", ""),
+    )
     logger.info("Entra ID authentication enabled (tenant: %s)", tenant_id)
 
 
