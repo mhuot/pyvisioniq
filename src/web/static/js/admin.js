@@ -114,6 +114,160 @@
         tbody.innerHTML = html;
     }
 
+    let consumptionChart = null;
+
+    async function loadStorageConsumption() {
+        try {
+            var response = await fetch('/admin/api/storage-consumption');
+            if (!response.ok) {
+                if (response.status === 404) return;
+                throw new Error('HTTP ' + response.status);
+            }
+
+            var data = await response.json();
+            if (data.error) return;
+
+            // Summary cards
+            var totalRowsEl = document.getElementById('consumption-total-rows');
+            var sizeEl = document.getElementById('consumption-size');
+            var pctEl = document.getElementById('consumption-pct');
+            var retentionEl = document.getElementById('consumption-retention');
+
+            if (totalRowsEl) totalRowsEl.textContent = (data.total_rows || 0).toLocaleString();
+            if (sizeEl) sizeEl.textContent = formatBytes(data.total_segment_bytes || 0);
+
+            var pct = 0;
+            if (data.free_tier_limit_bytes > 0 && data.total_segment_bytes > 0) {
+                pct = (data.total_segment_bytes / data.free_tier_limit_bytes) * 100;
+            }
+            if (pctEl) {
+                pctEl.textContent = pct < 0.01 ? '< 0.01%' : pct.toFixed(2) + '%';
+            }
+
+            if (retentionEl) {
+                var days = data.retention_days || 0;
+                if (days >= 365) {
+                    retentionEl.textContent = (days / 365).toFixed(1).replace(/\.0$/, '') + ' years';
+                } else {
+                    retentionEl.textContent = days + ' days';
+                }
+            }
+
+            // Chart
+            var monthly = data.monthly || [];
+            if (monthly.length === 0) return;
+
+            var labels = monthly.map(function (m) { return m.month; });
+            var rowCounts = monthly.map(function (m) { return m.row_count || 0; });
+            var sizes = monthly.map(function (m) { return (m.total_bytes || 0) / (1024 * 1024); });
+
+            var ctx = document.getElementById('consumption-chart');
+            if (!ctx) return;
+
+            if (consumptionChart) {
+                consumptionChart.destroy();
+            }
+
+            consumptionChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [
+                        {
+                            label: 'Responses',
+                            data: rowCounts,
+                            backgroundColor: 'rgba(54, 162, 235, 0.7)',
+                            borderColor: 'rgba(54, 162, 235, 1)',
+                            borderWidth: 1,
+                            yAxisID: 'y',
+                            order: 2
+                        },
+                        {
+                            label: 'Size (MB)',
+                            data: sizes,
+                            type: 'line',
+                            borderColor: 'rgba(255, 99, 132, 1)',
+                            backgroundColor: 'rgba(255, 99, 132, 0.1)',
+                            borderWidth: 2,
+                            pointRadius: 3,
+                            fill: true,
+                            yAxisID: 'y1',
+                            order: 1
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: true,
+                    interaction: {
+                        mode: 'index',
+                        intersect: false
+                    },
+                    plugins: {
+                        legend: {
+                            labels: {
+                                font: { size: 13, weight: '600' },
+                                color: '#333333'
+                            }
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: function (context) {
+                                    if (context.dataset.yAxisID === 'y1') {
+                                        return context.dataset.label + ': ' + context.parsed.y.toFixed(2) + ' MB';
+                                    }
+                                    return context.dataset.label + ': ' + context.parsed.y.toLocaleString();
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            ticks: {
+                                font: { size: 12, weight: '600' },
+                                color: '#333333'
+                            },
+                            grid: { display: false }
+                        },
+                        y: {
+                            type: 'linear',
+                            position: 'left',
+                            title: {
+                                display: true,
+                                text: 'Responses',
+                                font: { size: 13, weight: '600' },
+                                color: '#333333'
+                            },
+                            ticks: {
+                                font: { size: 12, weight: '600' },
+                                color: '#333333'
+                            },
+                            beginAtZero: true
+                        },
+                        y1: {
+                            type: 'linear',
+                            position: 'right',
+                            title: {
+                                display: true,
+                                text: 'Size (MB)',
+                                font: { size: 13, weight: '600' },
+                                color: '#333333'
+                            },
+                            ticks: {
+                                font: { size: 12, weight: '600' },
+                                color: '#333333'
+                            },
+                            beginAtZero: true,
+                            grid: { drawOnChartArea: false }
+                        }
+                    }
+                }
+            });
+        } catch (error) {
+            console.error('Error loading storage consumption:', error);
+        }
+    }
+
     let currentRawPage = 1;
 
     async function loadRawResponses(page) {
@@ -291,6 +445,7 @@
     document.addEventListener('DOMContentLoaded', function () {
         loadStats();
         loadRawResponses(1);
+        loadStorageConsumption();
         startCountdown();
 
         var closeBtn = document.getElementById('close-dialog');

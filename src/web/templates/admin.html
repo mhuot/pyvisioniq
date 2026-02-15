@@ -6,6 +6,7 @@
     <title>Admin - PyVisionic</title>
     <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon.png') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 </head>
 <body>
     <header>
@@ -116,6 +117,31 @@
                 </div>
                 <pre class="admin-json-view" id="raw-response-json"></pre>
             </dialog>
+        </section>
+
+        <section class="admin-section" aria-labelledby="consumption-heading">
+            <h2 id="consumption-heading">Storage Consumption</h2>
+            <div class="admin-health-grid" id="consumption-summary" role="list">
+                <div class="admin-health-card" role="listitem">
+                    <h3>Total Responses</h3>
+                    <p class="admin-health-value" id="consumption-total-rows">--</p>
+                </div>
+                <div class="admin-health-card" role="listitem">
+                    <h3>Table Size</h3>
+                    <p class="admin-health-value" id="consumption-size">--</p>
+                </div>
+                <div class="admin-health-card" role="listitem">
+                    <h3>Free Tier Used</h3>
+                    <p class="admin-health-value" id="consumption-pct">--</p>
+                </div>
+                <div class="admin-health-card" role="listitem">
+                    <h3>Retention</h3>
+                    <p class="admin-health-value" id="consumption-retention">--</p>
+                </div>
+            </div>
+            <div class="admin-chart-container">
+                <canvas id="consumption-chart" aria-label="Monthly storage consumption chart" role="img"></canvas>
+            </div>
         </section>
 
         <section class="admin-section" aria-labelledby="sync-heading">

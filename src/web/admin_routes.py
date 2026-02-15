@@ -97,3 +97,19 @@ def raw_response_detail(response_id):
             "Error fetching raw response %d: %s", response_id, exc, exc_info=True
         )
         return jsonify({"error": str(exc)}), 500
+
+
+@admin_bp.route("/api/storage-consumption")
+@admin_required
+def storage_consumption():
+    """Return api_responses storage consumption breakdown."""
+    oracle = _get_oracle_storage()
+    if oracle is None:
+        return jsonify({"error": "Oracle storage not available"}), 404
+
+    try:
+        result = oracle.get_api_response_storage_stats()
+        return jsonify(result)
+    except Exception as exc:
+        logger.error("Error fetching storage consumption: %s", exc, exc_info=True)
+        return jsonify({"error": str(exc)}), 500

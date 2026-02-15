@@ -1480,6 +1480,14 @@ canvas {
     outline-offset: 2px;
 }
 
+.admin-chart-container {
+    margin-top: 1.5rem;
+    padding: 1rem;
+    background-color: var(--bg-color);
+    border-radius: var(--border-radius);
+    max-height: 350px;
+}
+
 .admin-json-view {
     margin: 0;
     padding: 1.5rem;

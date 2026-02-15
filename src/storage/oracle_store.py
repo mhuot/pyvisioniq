@@ -787,6 +787,50 @@ class OracleStorage(StorageBackend):
 
             return result
 
+    def get_api_response_storage_stats(self):
+        """Return monthly storage consumption for api_responses."""
+        query = """
+            SELECT TO_CHAR(timestamp, 'YYYY-MM') AS month,
+                   COUNT(*) AS row_count,
+                   SUM(DBMS_LOB.GETLENGTH(response_json)) AS total_bytes
+            FROM api_responses
+            GROUP BY TO_CHAR(timestamp, 'YYYY-MM')
+            ORDER BY month
+        """
+        retention_days = int(os.getenv("RAW_RESPONSE_RETENTION_DAYS", "3650"))
+
+        with self._get_connection() as connection:
+            cursor = connection.cursor()
+
+            # Total table size from Oracle segment metadata
+            total_segment_bytes = 0
+            try:
+                cursor.execute(
+                    "SELECT NVL(SUM(bytes), 0) FROM user_segments "
+                    "WHERE segment_name = 'API_RESPONSES'"
+                )
+                row = cursor.fetchone()
+                total_segment_bytes = row[0] if row else 0
+            except oracledb.DatabaseError:
+                pass
+
+            # Monthly breakdown
+            cursor.execute(query)
+            columns = [desc[0].lower() for desc in cursor.description]
+            months = [dict(zip(columns, row)) for row in cursor.fetchall()]
+
+            # Total row count
+            cursor.execute("SELECT COUNT(*) FROM api_responses")
+            total_rows = cursor.fetchone()[0]
+
+        return {
+            "retention_days": retention_days,
+            "total_rows": total_rows,
+            "total_segment_bytes": total_segment_bytes,
+            "free_tier_limit_bytes": 20 * 1024 * 1024 * 1024,
+            "monthly": months,
+        }
+
     # ------------------------------------------------------------------
     # Storage stats
     # ------------------------------------------------------------------
