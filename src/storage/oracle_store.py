@@ -4,6 +4,7 @@ Oracle Autonomous Database storage backend for vehicle data.
 Uses python-oracledb in thin mode (no Oracle Instant Client required).
 """
 
+import json
 import logging
 import os
 from datetime import datetime
@@ -110,6 +111,7 @@ class OracleStorage(StorageBackend):
         self._store_trips(data.get("trips", []), timestamp)
         self._store_battery(data, timestamp)
         self._store_location(data.get("location", {}), timestamp)
+        self._store_api_response(data, timestamp)
 
     def _store_trips(self, trips, timestamp):
         """Store trip data using MERGE for deduplication."""
@@ -310,6 +312,47 @@ class OracleStorage(StorageBackend):
                 connection.rollback()
             except oracledb.DatabaseError as exc:
                 logger.error("Error storing location: %s", exc)
+                connection.rollback()
+
+    def _store_api_response(self, data, timestamp):
+        """Store the raw API response JSON in Oracle."""
+        insert_sql = """
+            INSERT INTO api_responses (
+                timestamp, api_last_updated, vehicle_id,
+                is_cached, hyundai_data_fresh, response_json
+            ) VALUES (
+                :timestamp, :api_last_updated, :vehicle_id,
+                :is_cached, :hyundai_data_fresh, :response_json
+            )
+        """
+
+        # Serialize the entire data dict; use default=str for non-JSON types
+        try:
+            response_json = json.dumps(data, default=str)
+        except (TypeError, ValueError) as exc:
+            logger.error("Failed to serialize API response: %s", exc)
+            return
+
+        params = {
+            "timestamp": self._parse_timestamp(timestamp),
+            "api_last_updated": self._parse_timestamp(data.get("api_last_updated")),
+            "vehicle_id": data.get("vehicle_id"),
+            "is_cached": str(data.get("is_cached", False)),
+            "hyundai_data_fresh": str(data.get("hyundai_data_fresh", False)),
+            "response_json": response_json,
+        }
+
+        with self._get_connection() as connection:
+            cursor = connection.cursor()
+            try:
+                cursor.execute(insert_sql, params)
+                connection.commit()
+                logger.debug("Stored API response for %s", timestamp)
+            except oracledb.IntegrityError:
+                logger.debug("Duplicate api_response entry for %s", timestamp)
+                connection.rollback()
+            except oracledb.DatabaseError as exc:
+                logger.error("Error storing API response: %s", exc)
                 connection.rollback()
 
     # ------------------------------------------------------------------
@@ -645,6 +688,137 @@ class OracleStorage(StorageBackend):
             except oracledb.DatabaseError as exc:
                 logger.error("Error completing charging session: %s", exc)
                 connection.rollback()
+
+    def get_api_responses(self, page=1, per_page=20):
+        """Return paginated api_responses metadata (without the full JSON)."""
+        offset = (page - 1) * per_page
+        count_sql = "SELECT COUNT(*) FROM api_responses"
+        query = """
+            SELECT id, timestamp, api_last_updated, vehicle_id,
+                   is_cached, hyundai_data_fresh
+            FROM api_responses
+            ORDER BY timestamp DESC
+            OFFSET :offset ROWS FETCH NEXT :limit ROWS ONLY
+        """
+
+        with self._get_connection() as connection:
+            cursor = connection.cursor()
+            cursor.execute(count_sql)
+            total = cursor.fetchone()[0]
+
+            cursor.execute(query, {"offset": offset, "limit": per_page})
+            columns = [desc[0].lower() for desc in cursor.description]
+            rows = [dict(zip(columns, row)) for row in cursor.fetchall()]
+
+            # Convert datetime objects to ISO strings for JSON serialization
+            for row in rows:
+                for key, val in row.items():
+                    if isinstance(val, datetime):
+                        row[key] = val.isoformat()
+
+        return {
+            "items": rows,
+            "total": total,
+            "page": page,
+            "per_page": per_page,
+            "pages": (total + per_page - 1) // per_page if per_page else 1,
+        }
+
+    def get_api_response_by_id(self, response_id):
+        """Return a single api_response row including the full JSON."""
+        query = """
+            SELECT id, timestamp, api_last_updated, vehicle_id,
+                   is_cached, hyundai_data_fresh, response_json
+            FROM api_responses
+            WHERE id = :id
+        """
+
+        with self._get_connection() as connection:
+            cursor = connection.cursor()
+            cursor.execute(query, {"id": response_id})
+            row = cursor.fetchone()
+            if not row:
+                return None
+
+            columns = [desc[0].lower() for desc in cursor.description]
+            result = dict(zip(columns, row))
+
+            # Convert datetime objects to ISO strings
+            for key, val in result.items():
+                if isinstance(val, datetime):
+                    result[key] = val.isoformat()
+
+            # Parse the stored JSON back to a dict
+            if result.get("response_json"):
+                try:
+                    clob_val = result["response_json"]
+                    # oracledb may return a LOB object; read it if needed
+                    if hasattr(clob_val, "read"):
+                        clob_val = clob_val.read()
+                    result["response_json"] = json.loads(clob_val)
+                except (json.JSONDecodeError, TypeError):
+                    pass
+
+            return result
+
+    # ------------------------------------------------------------------
+    # Storage stats
+    # ------------------------------------------------------------------
+
+    def get_storage_stats(self):
+        """Return Oracle storage diagnostics: row counts, pool metrics."""
+        stats = {
+            "backend": "oracle",
+            "available": True,
+            "dsn": self.oracle_dsn,
+            "tables": {},
+            "pool": {},
+        }
+
+        # Pool metrics
+        try:
+            stats["pool"] = {
+                "busy": self.pool.busy,
+                "open": self.pool.opened,
+                "min": self.pool.min,
+                "max": self.pool.max,
+            }
+        except Exception as exc:
+            logger.warning("Error reading pool stats: %s", exc)
+            stats["pool"] = {"error": str(exc)}
+
+        # Table row counts and latest timestamps
+        table_ts_columns = {
+            "trips": "TIMESTAMP",
+            "battery_status": "TIMESTAMP",
+            "locations": "TIMESTAMP",
+            "charging_sessions": "START_TIME",
+            "api_responses": "TIMESTAMP",
+        }
+
+        try:
+            with self._get_connection() as connection:
+                cursor = connection.cursor()
+                for table_name, ts_col in table_ts_columns.items():
+                    table_info = {"rows": 0}
+                    try:
+                        cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
+                        row = cursor.fetchone()
+                        table_info["rows"] = row[0] if row else 0
+
+                        cursor.execute(f"SELECT MAX({ts_col}) FROM {table_name}")
+                        row = cursor.fetchone()
+                        if row and row[0]:
+                            table_info["latest_timestamp"] = str(row[0])
+                    except oracledb.DatabaseError as exc:
+                        table_info["error"] = str(exc)
+                    stats["tables"][table_name] = table_info
+        except Exception as exc:
+            logger.error("Error getting Oracle storage stats: %s", exc)
+            stats["available"] = False
+            stats["error"] = str(exc)
+
+        return stats
 
     # ------------------------------------------------------------------
     # Helpers

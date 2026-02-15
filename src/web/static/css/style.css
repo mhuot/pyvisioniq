@@ -1152,6 +1152,347 @@ canvas {
     height: auto \!important;
 }
 
+/* Auth controls in header */
+.header-nav {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.auth-controls {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.auth-user {
+    color: #ffffff;
+    font-weight: 500;
+    font-size: 0.875rem;
+}
+
+.auth-btn {
+    padding: 0.75rem 1.25rem;
+    background-color: rgba(255, 255, 255, 0.2);
+    color: #ffffff;
+    text-decoration: none;
+    border-radius: var(--border-radius);
+    font-size: 0.875rem;
+    font-weight: 600;
+    transition: background-color 0.2s ease;
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+}
+
+.auth-btn:hover {
+    background-color: rgba(255, 255, 255, 0.3);
+}
+
+.auth-btn:focus {
+    outline: 3px solid var(--secondary-color);
+    outline-offset: 2px;
+}
+
+.auth-btn-logout {
+    background-color: rgba(231, 76, 60, 0.3);
+}
+
+.auth-btn-logout:hover {
+    background-color: rgba(231, 76, 60, 0.5);
+}
+
+.admin-link {
+    background-color: #6f42c1;
+}
+
+.admin-link:hover {
+    background-color: #5a32a3;
+}
+
+/* Auth required message shown in place of protected content */
+.auth-required-message {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 200px;
+    color: var(--text-color);
+    font-weight: 500;
+    font-size: 1rem;
+    background-color: var(--bg-color);
+    border: 2px dashed #c0c0c0;
+    border-radius: var(--border-radius);
+    text-align: center;
+}
+
+/* Admin dashboard styles */
+.admin-section {
+    background-color: var(--card-bg);
+    padding: 2rem;
+    margin-bottom: 2rem;
+    border-radius: var(--border-radius);
+    box-shadow: var(--shadow);
+}
+
+.admin-health-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 1.5rem;
+}
+
+.admin-health-card {
+    background-color: var(--bg-color);
+    padding: 1.5rem;
+    border-radius: var(--border-radius);
+    text-align: center;
+}
+
+.admin-health-card h3 {
+    font-size: 0.875rem;
+    color: var(--text-light);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 0.5rem;
+    font-weight: 500;
+}
+
+.admin-health-value {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--primary-color);
+}
+
+.admin-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9rem;
+}
+
+.admin-table th,
+.admin-table td {
+    padding: 0.75rem 1rem;
+    text-align: left;
+    border-bottom: 1px solid #ddd;
+}
+
+.admin-table th {
+    background-color: var(--bg-color);
+    font-weight: 600;
+    color: var(--primary-color);
+}
+
+.admin-table tbody tr:hover {
+    background-color: var(--bg-color);
+}
+
+.admin-row-warning {
+    background-color: #fff3cd;
+}
+
+.admin-loading {
+    text-align: center;
+    color: var(--text-light);
+    font-style: italic;
+    padding: 1.5rem;
+}
+
+/* Status indicators - use text + background, not color alone (WCAG AAA) */
+.admin-status-ok {
+    color: #155724;
+    background-color: #d4edda;
+    padding: 0.25rem 0.75rem;
+    border-radius: 4px;
+    font-weight: 600;
+    border: 1px solid #155724;
+}
+
+.admin-status-error {
+    color: #721c24;
+    background-color: #f8d7da;
+    padding: 0.25rem 0.75rem;
+    border-radius: 4px;
+    font-weight: 600;
+    border: 1px solid #721c24;
+}
+
+.admin-sync-ok {
+    color: #155724;
+    background-color: #d4edda;
+    padding: 0.25rem 0.75rem;
+    border-radius: 4px;
+    font-weight: 600;
+    font-size: 0.85rem;
+    border: 1px solid #155724;
+}
+
+.admin-sync-diff {
+    color: #856404;
+    background-color: #fff3cd;
+    padding: 0.25rem 0.75rem;
+    border-radius: 4px;
+    font-weight: 600;
+    font-size: 0.85rem;
+    border: 1px solid #856404;
+}
+
+/* Oracle pool metrics */
+.admin-pool-stats {
+    margin-bottom: 1.5rem;
+}
+
+.admin-pool-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 1rem;
+}
+
+.admin-pool-item {
+    background-color: var(--bg-color);
+    padding: 1rem;
+    border-radius: var(--border-radius);
+    text-align: center;
+}
+
+.admin-pool-label {
+    display: block;
+    font-size: 0.8rem;
+    color: var(--text-light);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 0.25rem;
+}
+
+.admin-pool-value {
+    display: block;
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: var(--primary-color);
+}
+
+.admin-pool-error {
+    color: #721c24;
+    background-color: #f8d7da;
+    padding: 0.75rem;
+    border-radius: var(--border-radius);
+    border: 1px solid #721c24;
+}
+
+/* Raw API responses - pagination and dialog */
+.admin-pagination {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 1rem;
+    margin-top: 1rem;
+    padding: 0.5rem;
+}
+
+.admin-btn-view {
+    background-color: var(--primary-color);
+    color: #ffffff;
+    border: none;
+    padding: 0.35rem 0.75rem;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    font-weight: 600;
+}
+
+.admin-btn-view:hover {
+    opacity: 0.85;
+}
+
+.admin-btn-view:focus-visible {
+    outline: 3px solid var(--primary-color);
+    outline-offset: 2px;
+}
+
+.admin-btn-page {
+    background-color: var(--primary-color);
+    color: #ffffff;
+    border: none;
+    padding: 0.4rem 1rem;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    font-weight: 600;
+}
+
+.admin-btn-page:hover {
+    opacity: 0.85;
+}
+
+.admin-btn-page:focus-visible {
+    outline: 3px solid var(--primary-color);
+    outline-offset: 2px;
+}
+
+.admin-page-info {
+    font-size: 0.9rem;
+    color: var(--text-light);
+}
+
+.admin-dialog {
+    max-width: 80vw;
+    max-height: 80vh;
+    width: 900px;
+    border: 1px solid #ccc;
+    border-radius: var(--border-radius);
+    padding: 0;
+    background-color: var(--card-bg);
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.3);
+}
+
+.admin-dialog::backdrop {
+    background-color: rgba(0, 0, 0, 0.5);
+}
+
+.admin-dialog-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem 1.5rem;
+    border-bottom: 1px solid #ddd;
+}
+
+.admin-dialog-header h3 {
+    margin: 0;
+    font-size: 1.1rem;
+    color: var(--primary-color);
+}
+
+.admin-dialog-close {
+    background: none;
+    border: none;
+    font-size: 1.5rem;
+    cursor: pointer;
+    color: var(--text-light);
+    padding: 0.25rem 0.5rem;
+    line-height: 1;
+}
+
+.admin-dialog-close:hover {
+    color: var(--text-color);
+}
+
+.admin-dialog-close:focus-visible {
+    outline: 3px solid var(--primary-color);
+    outline-offset: 2px;
+}
+
+.admin-json-view {
+    margin: 0;
+    padding: 1.5rem;
+    overflow: auto;
+    max-height: calc(80vh - 60px);
+    font-size: 0.8rem;
+    line-height: 1.5;
+    background-color: var(--bg-color);
+    color: var(--text-color);
+    white-space: pre-wrap;
+    word-wrap: break-word;
+}
+
 /* Data freshness indicator styling */
 .data-freshness {
     font-size: 0.9em;

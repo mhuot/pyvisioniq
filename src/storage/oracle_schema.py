@@ -72,11 +72,25 @@ CREATE TABLE charging_sessions (
 )
 """
 
+API_RESPONSES_TABLE = """
+CREATE TABLE api_responses (
+    id                 NUMBER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    timestamp          TIMESTAMP,
+    api_last_updated   TIMESTAMP,
+    vehicle_id         VARCHAR2(100),
+    is_cached          VARCHAR2(10),
+    hyundai_data_fresh VARCHAR2(10),
+    response_json      CLOB,
+    CONSTRAINT api_responses_uk UNIQUE (timestamp, vehicle_id)
+)
+"""
+
 ALL_TABLES = {
     "trips": TRIPS_TABLE,
     "battery_status": BATTERY_STATUS_TABLE,
     "locations": LOCATIONS_TABLE,
     "charging_sessions": CHARGING_SESSIONS_TABLE,
+    "api_responses": API_RESPONSES_TABLE,
 }
 
 # Column mapping from CSV column names to Oracle column names
