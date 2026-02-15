@@ -115,6 +115,7 @@ class CSVStorage(StorageBackend):
                         "timestamp",
                         "battery_level",
                         "is_charging",
+                        "is_plugged_in",
                         "charging_power",
                         "remaining_time",
                         "range",
@@ -122,6 +123,7 @@ class CSVStorage(StorageBackend):
                         "odometer",
                         "meteo_temp",
                         "vehicle_temp",
+                        "is_cached",
                     ],
                 )
                 writer.writeheader()
@@ -286,6 +288,7 @@ class CSVStorage(StorageBackend):
                         "timestamp",
                         "battery_level",
                         "is_charging",
+                        "is_plugged_in",
                         "charging_power",
                         "remaining_time",
                         "range",
@@ -302,6 +305,7 @@ class CSVStorage(StorageBackend):
                         "timestamp": timestamp,
                         "battery_level": battery.get("level"),
                         "is_charging": battery.get("is_charging"),
+                        "is_plugged_in": battery.get("is_plugged_in"),
                         "charging_power": battery.get("charging_power"),
                         "remaining_time": battery.get("remaining_time"),
                         "range": battery.get("range"),
@@ -487,13 +491,76 @@ class CSVStorage(StorageBackend):
 
         return df
 
+    def _get_last_battery_level(self):
+        """Get the most recent battery level from battery_status.csv."""
+        if not self.battery_file.exists():
+            return None
+        try:
+            df = pd.read_csv(self.battery_file)
+            if df.empty or "battery_level" not in df.columns:
+                return None
+            last_row = df.iloc[-2] if len(df) > 1 else None
+            if last_row is not None:
+                level = pd.to_numeric(last_row["battery_level"], errors="coerce")
+                return level if pd.notna(level) else None
+        except Exception:
+            return None
+
+    def _append_charging_session(
+        self, timestamp, battery_level, charging_power, location, is_complete=False
+    ):
+        """Create and append a new charging session row."""
+        session_id = f"charge_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        new_session = {
+            "session_id": session_id,
+            "start_time": timestamp,
+            "end_time": timestamp if is_complete else None,
+            "duration_minutes": 0,
+            "start_battery": battery_level,
+            "end_battery": battery_level,
+            "energy_added": 0,
+            "avg_power": charging_power or 0,
+            "max_power": charging_power or 0,
+            "location_lat": location.get("latitude") if location else None,
+            "location_lon": location.get("longitude") if location else None,
+            "is_complete": is_complete,
+        }
+        fieldnames = [
+            "session_id",
+            "start_time",
+            "end_time",
+            "duration_minutes",
+            "start_battery",
+            "end_battery",
+            "energy_added",
+            "avg_power",
+            "max_power",
+            "location_lat",
+            "location_lon",
+            "is_complete",
+        ]
+        with open(self.charging_sessions_file, "a", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writerow(new_session)
+        return session_id
+
     def _track_charging_session(self, timestamp, battery, location):
-        """Track charging sessions - detect start/stop and update session data"""
+        """Track charging sessions - detect start/stop and update session data.
+
+        Detection uses three signals (in priority order):
+        1. ``is_charging`` flag from the API (vehicle actively charging)
+        2. ``is_plugged_in`` flag (charger connected, may be on timer/paused)
+        3. Battery level increase between consecutive polls (inferred charging)
+
+        Signal 3 catches sessions that complete entirely between two polling
+        intervals — common for Level-2 home charging with a 48-minute poll gap.
+        """
         debug_logger.push_context("_track_charging_session")
 
         try:
             # Extract and validate data
             is_charging = battery.get("is_charging", False)
+            is_plugged_in = battery.get("is_plugged_in", None)
             battery_level_raw = battery.get("level")
             charging_power_raw = battery.get("charging_power", 0)
 
@@ -501,7 +568,12 @@ class CSVStorage(StorageBackend):
             debug_logger.log_data(
                 "debug",
                 "Raw charging data",
-                {"timestamp": timestamp, "battery": battery, "location": location},
+                {
+                    "timestamp": timestamp,
+                    "battery": battery,
+                    "location": location,
+                    "is_plugged_in": is_plugged_in,
+                },
             )
 
             # Validate battery level
@@ -536,6 +608,56 @@ class CSVStorage(StorageBackend):
                 logger.warning(f"Charging power validation failed, using 0: {e}")
                 charging_power = 0
 
+            # Determine effective charging state using all available signals
+            # is_charging: vehicle reports active charging
+            # is_plugged_in: charger cable connected (may be on timer / paused)
+            effectively_charging = bool(is_charging)
+
+            if not effectively_charging and is_plugged_in:
+                # Plugged in but API says not actively charging.
+                # Treat as charging if battery level has increased — the car
+                # may be on a charge timer that started between polls.
+                prev_level = self._get_last_battery_level()
+                if prev_level is not None and battery_level > prev_level:
+                    logger.info(
+                        "Battery increased %s%% → %s%% while plugged in; "
+                        "treating as charging",
+                        prev_level,
+                        battery_level,
+                    )
+                    effectively_charging = True
+
+            # Infer charging from battery increase even without plug status.
+            # This catches sessions that complete between two polls — the car
+            # was charging but finished before we polled, so both is_charging
+            # and is_plugged_in may be False by the time we read.
+            if not effectively_charging:
+                prev_level = self._get_last_battery_level()
+                if prev_level is not None and battery_level >= prev_level + 2:
+                    # Require >= 2% increase to avoid sensor noise
+                    logger.info(
+                        "Battery increased %s%% → %s%% (no charge flag); "
+                        "recording inferred charging session",
+                        prev_level,
+                        battery_level,
+                    )
+                    # Create a complete session for the inferred charge
+                    session_id = self._append_charging_session(
+                        timestamp,
+                        prev_level,
+                        charging_power,
+                        location,
+                        is_complete=True,
+                    )
+                    # Update end_battery to current level
+                    self._update_charging_session(
+                        session_id, timestamp, battery_level, charging_power
+                    )
+                    self._complete_charging_session(
+                        session_id, timestamp, battery_level
+                    )
+                    return
+
             # Read existing sessions to find active one
             sessions_df = self.get_charging_sessions_df()
             active_session = None
@@ -546,46 +668,12 @@ class CSVStorage(StorageBackend):
                 if not incomplete.empty:
                     active_session = incomplete.iloc[-1].to_dict()
 
-            if is_charging:
+            if effectively_charging:
                 if active_session is None:
                     # Start new charging session
-                    session_id = f"charge_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-                    new_session = {
-                        "session_id": session_id,
-                        "start_time": timestamp,
-                        "end_time": None,
-                        "duration_minutes": 0,
-                        "start_battery": battery_level,
-                        "end_battery": battery_level,
-                        "energy_added": 0,
-                        "avg_power": charging_power or 0,
-                        "max_power": charging_power or 0,
-                        "location_lat": location.get("latitude") if location else None,
-                        "location_lon": location.get("longitude") if location else None,
-                        "is_complete": False,
-                    }
-
-                    with open(
-                        self.charging_sessions_file, "a", newline="", encoding="utf-8"
-                    ) as f:
-                        writer = csv.DictWriter(
-                            f,
-                            fieldnames=[
-                                "session_id",
-                                "start_time",
-                                "end_time",
-                                "duration_minutes",
-                                "start_battery",
-                                "end_battery",
-                                "energy_added",
-                                "avg_power",
-                                "max_power",
-                                "location_lat",
-                                "location_lon",
-                                "is_complete",
-                            ],
-                        )
-                        writer.writerow(new_session)
+                    self._append_charging_session(
+                        timestamp, battery_level, charging_power, location
+                    )
                 else:
                     # Check if this is truly the same session or a new one
                     threshold = getattr(self, "charging_gap_threshold_minutes", 45.0)
@@ -603,54 +691,10 @@ class CSVStorage(StorageBackend):
                                 active_session["end_time"],
                                 active_session.get("end_battery", battery_level),
                             )
-
                             # Start new charging session
-                            session_id = (
-                                f"charge_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                            self._append_charging_session(
+                                timestamp, battery_level, charging_power, location
                             )
-                            new_session = {
-                                "session_id": session_id,
-                                "start_time": timestamp,
-                                "end_time": None,
-                                "duration_minutes": 0,
-                                "start_battery": battery_level,
-                                "end_battery": battery_level,
-                                "energy_added": 0,
-                                "avg_power": charging_power or 0,
-                                "max_power": charging_power or 0,
-                                "location_lat": (
-                                    location.get("latitude") if location else None
-                                ),
-                                "location_lon": (
-                                    location.get("longitude") if location else None
-                                ),
-                                "is_complete": False,
-                            }
-
-                            with open(
-                                self.charging_sessions_file,
-                                "a",
-                                newline="",
-                                encoding="utf-8",
-                            ) as f:
-                                writer = csv.DictWriter(
-                                    f,
-                                    fieldnames=[
-                                        "session_id",
-                                        "start_time",
-                                        "end_time",
-                                        "duration_minutes",
-                                        "start_battery",
-                                        "end_battery",
-                                        "energy_added",
-                                        "avg_power",
-                                        "max_power",
-                                        "location_lat",
-                                        "location_lon",
-                                        "is_complete",
-                                    ],
-                                )
-                                writer.writerow(new_session)
                         else:
                             # Update existing session
                             self._update_charging_session(

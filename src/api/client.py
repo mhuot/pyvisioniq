@@ -416,6 +416,7 @@ class CachedVehicleClient:
                 "battery": {
                     "level": getattr(vehicle, "ev_battery_percentage", None),
                     "is_charging": getattr(vehicle, "ev_battery_is_charging", False),
+                    "is_plugged_in": getattr(vehicle, "ev_battery_is_plugged_in", None),
                     "charging_power": charging_power,
                     "remaining_time": None,  # Not in the new API
                     "range": ev_range,

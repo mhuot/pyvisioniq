@@ -1114,19 +1114,16 @@ def get_charging_sessions():
             f"Filtering charging sessions: hours={hours}, start_date={start_date}, end_date={end_date}"
         )
 
-        # Keep a copy so we can fall back to recent history if filters remove everything
-        original_sessions = sessions_df.copy()
+        total_before_filter = len(sessions_df)
 
         # For sessions with missing start_time, try to extract from session_id
         sessions_df = sessions_df[sessions_df["start_time"].notna()]
 
         if sessions_df.empty:
             app.logger.warning(
-                "All charging sessions missing start_time; falling back to original dataframe"
+                "All %s charging sessions missing start_time", total_before_filter
             )
-            sessions_df = original_sessions[original_sessions["start_time"].notna()]
-            if sessions_df.empty:
-                return jsonify([])
+            return jsonify([])
 
         # Apply date filtering
         if start_date and end_date:
@@ -1175,20 +1172,10 @@ def get_charging_sessions():
             app.logger.info(
                 f"Active sessions: {len(sessions_df[~sessions_df['is_complete']])}"
             )
-        elif not original_sessions.empty:
-            # fall back to most recent sessions across full history so UI still has content
-            fallback_candidates = original_sessions[
-                original_sessions["start_time"].notna()
-            ]
-            if fallback_candidates.empty:
-                return jsonify([])
-            fallback_count = min(len(fallback_candidates), 10)
-            sessions_df = fallback_candidates.sort_values(
-                "start_time", ascending=False
-            ).head(fallback_count)
+        else:
             app.logger.info(
-                "No sessions matched filter; returning %s most recent sessions instead",
-                fallback_count,
+                "No sessions matched filter (total sessions: %s)",
+                total_before_filter,
             )
 
         # Sort by start time descending (most recent first)

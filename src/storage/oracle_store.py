@@ -243,13 +243,13 @@ class OracleStorage(StorageBackend):
 
         insert_sql = """
             INSERT INTO battery_status (
-                timestamp, battery_level, is_charging, charging_power,
-                remaining_time, battery_range, temperature, odometer,
-                meteo_temp, vehicle_temp, is_cached
+                timestamp, battery_level, is_charging, is_plugged_in,
+                charging_power, remaining_time, battery_range, temperature,
+                odometer, meteo_temp, vehicle_temp, is_cached
             ) VALUES (
-                :timestamp, :battery_level, :is_charging, :charging_power,
-                :remaining_time, :battery_range, :temperature, :odometer,
-                :meteo_temp, :vehicle_temp, :is_cached
+                :timestamp, :battery_level, :is_charging, :is_plugged_in,
+                :charging_power, :remaining_time, :battery_range, :temperature,
+                :odometer, :meteo_temp, :vehicle_temp, :is_cached
             )
         """
 
@@ -257,6 +257,7 @@ class OracleStorage(StorageBackend):
             "timestamp": self._parse_timestamp(timestamp),
             "battery_level": self._to_float(battery.get("level")),
             "is_charging": str(battery.get("is_charging", False)),
+            "is_plugged_in": str(battery.get("is_plugged_in", "")),
             "charging_power": self._to_float(battery.get("charging_power")),
             "remaining_time": self._to_float(battery.get("remaining_time")),
             "battery_range": self._to_float(battery.get("range")),
@@ -483,11 +484,36 @@ class OracleStorage(StorageBackend):
     # Charging session tracking
     # ------------------------------------------------------------------
 
+    def _get_previous_battery_level(self):
+        """Get the previous battery level from the database."""
+        query = """
+            SELECT battery_level FROM battery_status
+            ORDER BY timestamp DESC
+            OFFSET 1 ROW FETCH FIRST 1 ROW ONLY
+        """
+        try:
+            with self._get_connection() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute(query)
+                    row = cursor.fetchone()
+                    if row and row[0] is not None:
+                        return float(row[0])
+        except Exception:
+            pass
+        return None
+
     def _track_charging_session(self, timestamp, battery, location):
-        """Track charging sessions with same state machine as CSVStorage."""
+        """Track charging sessions with same state machine as CSVStorage.
+
+        Detection uses three signals (in priority order):
+        1. ``is_charging`` flag from the API (vehicle actively charging)
+        2. ``is_plugged_in`` flag (charger connected, may be on timer/paused)
+        3. Battery level increase between consecutive polls (inferred charging)
+        """
         debug_logger.push_context("_track_charging_session_oracle")
         try:
             is_charging = battery.get("is_charging", False)
+            is_plugged_in = battery.get("is_plugged_in", None)
             battery_level_raw = battery.get("level")
             charging_power_raw = battery.get("charging_power", 0)
 
@@ -515,10 +541,50 @@ class OracleStorage(StorageBackend):
             except ValueError:
                 charging_power = 0
 
+            # Determine effective charging state using all available signals
+            effectively_charging = bool(is_charging)
+
+            if not effectively_charging and is_plugged_in:
+                prev_level = self._get_previous_battery_level()
+                if prev_level is not None and battery_level > prev_level:
+                    logger.info(
+                        "Battery increased %s%% → %s%% while plugged in; "
+                        "treating as charging",
+                        prev_level,
+                        battery_level,
+                    )
+                    effectively_charging = True
+
+            # Infer charging from battery increase even without plug status
+            if not effectively_charging:
+                prev_level = self._get_previous_battery_level()
+                if prev_level is not None and battery_level >= prev_level + 2:
+                    logger.info(
+                        "Battery increased %s%% → %s%% (no charge flag); "
+                        "recording inferred charging session",
+                        prev_level,
+                        battery_level,
+                    )
+                    self._start_charging_session(
+                        timestamp, prev_level, charging_power, location
+                    )
+                    active = self._get_active_charging_session()
+                    if active:
+                        self._update_charging_session(
+                            active["session_id"],
+                            timestamp,
+                            battery_level,
+                            charging_power,
+                        )
+                        self._complete_charging_session(
+                            active["session_id"], timestamp, battery_level
+                        )
+                    return
+
             # Find active session
             active_session = self._get_active_charging_session()
 
-            if is_charging:
+            if effectively_charging:
                 if active_session is None:
                     self._start_charging_session(
                         timestamp, battery_level, charging_power, location
