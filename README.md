@@ -151,6 +151,48 @@ Once Oracle is populated, connect Microsoft Fabric via the On-Premises Data Gate
 2. Add Oracle data source using the same wallet/TNS config
 3. The 5 tables (`trips`, `battery_status`, `locations`, `charging_sessions`, `api_responses`) are directly queryable from Fabric/Power BI
 
+## Authentication with Microsoft Entra ID (Optional)
+
+PyVisionic supports Microsoft Entra ID (formerly Azure AD) for single sign-on. When `AUTH_ENABLED=false` (default), all routes are public. When enabled, users must sign in via Microsoft and only designated admins can access `/admin`.
+
+### Entra ID Setup
+
+1. Go to [Microsoft Entra admin center](https://entra.microsoft.com) > **App registrations** > **New registration**
+2. Configure the registration:
+   - **Name**: `PyVisionic` (or any name you prefer)
+   - **Supported account types**: "Accounts in this organizational directory only" (single tenant)
+   - **Redirect URI**: Select **Web** and enter `https://your-domain.com/auth/callback`
+3. After creation, note the **Application (client) ID** and **Directory (tenant) ID** from the Overview page
+4. Go to **Certificates & secrets** > **New client secret**, create one, and copy the **Value** immediately (it won't be shown again)
+5. Go to **API permissions** and verify `Microsoft Graph > User.Read` (delegated) is present (added by default)
+6. Add environment variables to `.env`:
+```bash
+AUTH_ENABLED=true
+AZURE_CLIENT_ID=your-application-client-id
+AZURE_CLIENT_SECRET=your-client-secret-value
+AZURE_TENANT_ID=your-directory-tenant-id
+AZURE_REDIRECT_URI=https://your-domain.com/auth/callback
+FLASK_SECRET_KEY=a-long-random-string
+ADMIN_USERS=admin@yourdomain.com,other-admin@yourdomain.com
+```
+
+### How It Works
+
+| Route | Auth Disabled | Auth Enabled |
+|-------|--------------|--------------|
+| `/` (dashboard) | Public | Public |
+| `/api/*` (data endpoints) | Public | Requires sign-in |
+| `/admin` | Public | Requires admin role |
+| `/login` | Redirects to `/` | Shows sign-in page |
+
+- **`ADMIN_USERS`**: Comma-separated list of email addresses with admin access
+- **Session storage**: Server-side filesystem sessions in `sessions/` directory
+- **Logout**: Clears local session and signs out of Microsoft
+
+### Local Development
+
+For local development without HTTPS, set the redirect URI to `http://localhost:5000/auth/callback` in both the Entra app registration and `.env`. You may also need to allow HTTP redirects in your tenant settings.
+
 ## Configuration
 
 ### Environment Variables
@@ -171,6 +213,13 @@ Once Oracle is populated, connect Microsoft Fabric via the On-Premises Data Gate
 - `ORACLE_WALLET_LOCATION`: Path to extracted wallet directory
 - `ORACLE_WALLET_PASSWORD`: Optional wallet password
 - `RAW_RESPONSE_RETENTION_DAYS`: How long to keep raw API responses in Oracle (default: 3650 / 10 years)
+- `AUTH_ENABLED`: Enable Microsoft Entra ID authentication (default: false)
+- `AZURE_CLIENT_ID`: Entra ID application (client) ID
+- `AZURE_CLIENT_SECRET`: Entra ID client secret value
+- `AZURE_TENANT_ID`: Entra ID directory (tenant) ID
+- `AZURE_REDIRECT_URI`: OAuth callback URL (e.g., `https://your-domain.com/auth/callback`)
+- `FLASK_SECRET_KEY`: Secret key for Flask session signing (required when auth enabled)
+- `ADMIN_USERS`: Comma-separated email addresses with admin access
 
 ## Usage
 
@@ -199,6 +248,9 @@ Once Oracle is populated, connect Microsoft Fabric via the On-Premises Data Gate
 - `/admin/api/raw-responses`: Paginated raw API response metadata
 - `/admin/api/raw-response/<id>`: Full JSON for a single raw API response
 - `/admin/api/storage-consumption`: Monthly storage consumption breakdown
+- `/api/auth/status`: Current authentication state
+- `/login`: Sign-in page (when `AUTH_ENABLED=true`)
+- `/logout`: Sign out and clear session
 
 ### Data Management Tools
 Located in `tools/` directory:
@@ -242,12 +294,13 @@ pyvisionic/
 │   │   ├── oracle_schema.py  # Oracle DDL definitions
 │   │   ├── dual_store.py     # Dual-write (CSV + Oracle)
 │   │   └── factory.py        # Storage factory (reads STORAGE_BACKEND)
-│   └── web/          # Flask web application + admin dashboard
+│   └── web/          # Flask web application, admin dashboard, auth
 ├── tools/            # Data management scripts
 ├── docs/             # Architecture documentation
 ├── data/             # CSV data files
 ├── cache/            # Cached API responses
 ├── oracle_wallet/    # Oracle ADB wallet (not in git)
+├── sessions/         # Server-side session files (not in git)
 └── logs/             # Application logs
 ```
 
@@ -296,4 +349,5 @@ Built with:
 - Flask for web framework
 - Chart.js for interactive charts
 - Leaflet.js for mapping
+- [identity](https://github.com/rayluo/identity) for Microsoft Entra ID OIDC
 - Docker for containerization

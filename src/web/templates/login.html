@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sign In - PyVisionic</title>
+    <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon.png') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <style>
+        .login-container {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 80vh;
+            padding: 2rem;
+        }
+
+        .login-card {
+            background-color: var(--card-bg);
+            padding: 3rem;
+            border-radius: var(--border-radius);
+            box-shadow: var(--shadow);
+            text-align: center;
+            max-width: 420px;
+            width: 100%;
+        }
+
+        .login-card h2 {
+            color: var(--primary-color);
+            margin-bottom: 0.5rem;
+            font-size: 1.75rem;
+        }
+
+        .login-card p {
+            color: var(--text-color);
+            margin-bottom: 2rem;
+            font-size: 1rem;
+            line-height: 1.5;
+        }
+
+        .login-btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.75rem;
+            padding: 1rem 2rem;
+            min-height: 48px;
+            min-width: 280px;
+            background-color: var(--primary-color);
+            color: #ffffff;
+            border: none;
+            border-radius: var(--border-radius);
+            font-size: 1.125rem;
+            font-weight: 600;
+            cursor: pointer;
+            text-decoration: none;
+            transition: background-color 0.2s ease, transform 0.1s ease;
+        }
+
+        .login-btn:hover {
+            background-color: #1a252f;
+            transform: translateY(-1px);
+        }
+
+        .login-btn:focus {
+            outline: 3px solid var(--secondary-color);
+            outline-offset: 3px;
+        }
+
+        .login-btn:active {
+            transform: translateY(0);
+        }
+
+        .login-btn svg {
+            width: 24px;
+            height: 24px;
+            fill: currentColor;
+        }
+
+        .login-footer {
+            margin-top: 2rem;
+            font-size: 0.875rem;
+            color: var(--text-color);
+        }
+
+        .login-footer a {
+            color: var(--secondary-color);
+            text-decoration: underline;
+            text-underline-offset: 2px;
+        }
+
+        .login-footer a:focus {
+            outline: 3px solid var(--secondary-color);
+            outline-offset: 2px;
+        }
+
+        .login-error {
+            background-color: #fef2f2;
+            border: 2px solid #991b1b;
+            color: #991b1b;
+            padding: 1rem;
+            border-radius: var(--border-radius);
+            margin-bottom: 1.5rem;
+            font-weight: 500;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>PyVisionic</h1>
+    </header>
+
+    <main class="login-container" role="main">
+        <div class="login-card" role="region" aria-labelledby="login-heading">
+            <h2 id="login-heading">Sign In</h2>
+            <p>Sign in to access trip locations, trip history, and admin features.</p>
+
+            <div id="login-error" class="login-error" style="display: none;" role="alert">
+                Authentication failed. Please try again.
+            </div>
+
+            <a href="{{ url_for('auth.login_entra') }}" class="login-btn" role="button">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 23 23" aria-hidden="true">
+                    <path d="M0 0h11v11H0z" fill="#f25022"/>
+                    <path d="M12 0h11v11H12z" fill="#7fba00"/>
+                    <path d="M0 12h11v11H0z" fill="#00a4ef"/>
+                    <path d="M12 12h11v11H12z" fill="#ffb900"/>
+                </svg>
+                Sign in with Microsoft
+            </a>
+
+            <div class="login-footer">
+                <p><a href="/">Return to dashboard</a></p>
+            </div>
+        </div>
+    </main>
+
+    <footer>
+        <p>&copy; 2024 PyVisionic. Vehicle data visualization for Hyundai/Kia Connect.</p>
+    </footer>
+
+    <script>
+        // Show error if redirected with error param
+        const params = new URLSearchParams(window.location.search);
+        if (params.get('error')) {
+            document.getElementById('login-error').style.display = 'block';
+        }
+    </script>
+</body>
+</html>
