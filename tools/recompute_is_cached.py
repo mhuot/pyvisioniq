@@ -235,7 +235,6 @@ def apply_freshness_to_csv(csv_path: Path, freshness_map: Dict[str, List[bool]])
     return updated_rows
 
 
-
 def main():
     args = parse_args()
     entries = load_cache_entries(args.cache_dir)
