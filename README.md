@@ -9,7 +9,8 @@ A comprehensive Python web application for monitoring and visualizing Hyundai/Ki
 - **Real-time Vehicle Monitoring**: Battery level, range, temperature, and location tracking
 - **Historical Data Storage**: CSV-based storage with automatic deduplication, optional Oracle ADB backend
 - **Oracle ADB Integration**: Dual-write mode for Microsoft Fabric Data Gateway / Power BI
-- **Docker Support**: Full containerization with docker-compose
+- **Raw API Response Archival**: Full API payloads stored in Oracle for long-term analysis with configurable retention
+- **Docker Support**: Full containerization with docker compose
 
 ### Web Dashboard
 - **Interactive Charts**: 
@@ -28,6 +29,13 @@ A comprehensive Python web application for monitoring and visualizing Hyundai/Ki
   - Interactive maps showing all trip endpoints
   - Individual trip route visualization
   - Current vehicle location display
+
+### Admin Dashboard
+- **Storage Health**: Backend status, connection pool metrics, table row counts
+- **Storage Consumption**: Monthly chart showing response count and data size with free tier usage percentage
+- **Raw API Response Browser**: Paginated list of archived API responses with full JSON viewer
+- **Sync Comparison**: CSV vs Oracle row count comparison for dual-write mode
+- **Configuration Visibility**: Retention settings, backend type, and read source displayed in dashboard
 
 ### Cache Management
 - **Web-based Cache UI**: View, download, and delete cached API responses
@@ -141,7 +149,7 @@ Tables are created automatically on first connection. Uses `python-oracledb` in 
 Once Oracle is populated, connect Microsoft Fabric via the On-Premises Data Gateway:
 1. Install the gateway on a machine with Oracle Client
 2. Add Oracle data source using the same wallet/TNS config
-3. The 4 tables (`trips`, `battery_status`, `locations`, `charging_sessions`) are directly queryable from Fabric/Power BI
+3. The 5 tables (`trips`, `battery_status`, `locations`, `charging_sessions`, `api_responses`) are directly queryable from Fabric/Power BI
 
 ## Configuration
 
@@ -162,6 +170,7 @@ Once Oracle is populated, connect Microsoft Fabric via the On-Premises Data Gate
 - `ORACLE_DSN`: Oracle TNS name from wallet (required for oracle/dual)
 - `ORACLE_WALLET_LOCATION`: Path to extracted wallet directory
 - `ORACLE_WALLET_PASSWORD`: Optional wallet password
+- `RAW_RESPONSE_RETENTION_DAYS`: How long to keep raw API responses in Oracle (default: 3650 / 10 years)
 
 ## Usage
 
@@ -171,6 +180,7 @@ Once Oracle is populated, connect Microsoft Fabric via the On-Premises Data Gate
 - **Units**: Toggle between metric and imperial units
 - **Trip Details**: Click any trip row to see detailed energy breakdown
 - **Cache Management**: Access via `/cache` endpoint
+- **Admin Dashboard**: Storage diagnostics and raw API response browser at `/admin`
 
 ### API Endpoints
 - `/api/trips`: Trip history with energy consumption breakdown
@@ -185,6 +195,10 @@ Once Oracle is populated, connect Microsoft Fabric via the On-Premises Data Gate
 - `/api/force-update`: Force cache refresh
 - `/cache/api/files`: List cached files
 - `/cache/api/download/<filename>`: Download cached file
+- `/admin/api/storage-stats`: Storage diagnostics (row counts, pool metrics)
+- `/admin/api/raw-responses`: Paginated raw API response metadata
+- `/admin/api/raw-response/<id>`: Full JSON for a single raw API response
+- `/admin/api/storage-consumption`: Monthly storage consumption breakdown
 
 ### Data Management Tools
 Located in `tools/` directory:
@@ -208,6 +222,9 @@ Located in `tools/` directory:
   - `locations.csv`: GPS location history
   - `charging_sessions.csv`: Charging session tracking
   - `api_call_history.json`: API call tracking for rate limiting
+- **Oracle Tables** (when using oracle/dual backend):
+  - `trips`, `battery_status`, `locations`, `charging_sessions`: Structured data
+  - `api_responses`: Raw API JSON payloads (CLOB) with auto-purge after retention period
 - **Logs**: `logs/` directory
   - `collector.log`: Data collection logs
 
@@ -225,7 +242,7 @@ pyvisionic/
 │   │   ├── oracle_schema.py  # Oracle DDL definitions
 │   │   ├── dual_store.py     # Dual-write (CSV + Oracle)
 │   │   └── factory.py        # Storage factory (reads STORAGE_BACKEND)
-│   └── web/          # Flask web application
+│   └── web/          # Flask web application + admin dashboard
 ├── tools/            # Data management scripts
 ├── docs/             # Architecture documentation
 ├── data/             # CSV data files
