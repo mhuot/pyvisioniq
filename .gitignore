@@ -22,6 +22,14 @@ cache/
 logs/
 *.log
 nohup.out
+sessions/
+
+# Credentials & wallets
+oracle_wallet/
+Wallet_*.zip
+*.p12
+*.jks
+cwallet.sso
 
 # OS
 .DS_Store
