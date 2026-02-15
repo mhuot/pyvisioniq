@@ -1,6 +1,6 @@
 """
 auth.py
-Authentication middleware using Microsoft Entra ID (OIDC).
+Authentication middleware using Microsoft Entra ID (OIDC) via identity library.
 When AUTH_ENABLED=false (default), all decorators are no-ops.
 """
 
@@ -8,9 +8,12 @@ import logging
 import os
 from functools import wraps
 
-from flask import redirect, url_for, session, jsonify, request
+from flask import jsonify, redirect, request, session, url_for
 
 logger = logging.getLogger(__name__)
+
+# Module-level Auth instance, set by init_auth() when auth is enabled
+_identity_auth = None
 
 
 def _auth_enabled():
@@ -24,6 +27,8 @@ def init_auth(app):
     Call this once during app setup. When AUTH_ENABLED is false the function
     is essentially a no-op (only sets a secret key fallback).
     """
+    global _identity_auth  # pylint: disable=global-statement
+
     app.secret_key = os.getenv(
         "FLASK_SECRET_KEY", app.config.get("SECRET_KEY", "dev-secret-key")
     )
@@ -60,7 +65,7 @@ def init_auth(app):
 
     authority = f"https://login.microsoftonline.com/{tenant_id}"
 
-    identity.flask.Auth(
+    _identity_auth = identity.flask.Auth(
         app,
         client_id=client_id,
         client_credential=os.getenv("AZURE_CLIENT_SECRET", ""),
@@ -70,11 +75,33 @@ def init_auth(app):
     logger.info("Entra ID authentication enabled (tenant: %s)", tenant_id)
 
 
+def get_identity_auth():
+    """Return the identity Auth instance (or None if not configured)."""
+    return _identity_auth
+
+
 def get_current_user():
-    """Return the current user dict from session, or None."""
+    """Return the current user dict from session, or None.
+
+    The identity library stores user claims under session['_logged_in_user'].
+    We normalize to a dict with 'name', 'email', 'preferred_username'.
+    """
     if not _auth_enabled():
         return None
-    return session.get("user")
+
+    if _identity_auth is None:
+        return None
+
+    user = _identity_auth._auth.get_user()  # pylint: disable=protected-access
+    if not user:
+        return None
+
+    return {
+        "name": user.get("name", ""),
+        "email": user.get("preferred_username", ""),
+        "preferred_username": user.get("preferred_username", ""),
+        "oid": user.get("oid", ""),
+    }
 
 
 def is_admin(user):

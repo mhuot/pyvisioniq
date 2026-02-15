@@ -16,7 +16,10 @@
     <header>
         <h1>PyVisionic Dashboard</h1>
         <div class="header-controls">
-            <a href="/cache/" class="cache-link" aria-label="View cache manager">Cache Manager</a>
+            <nav class="header-nav" aria-label="Main navigation">
+                <a href="/cache/" class="cache-link" aria-label="View cache manager">Cache Manager</a>
+                <a href="/admin/" class="cache-link admin-link" id="admin-link" style="display: none;" aria-label="Admin panel">Admin</a>
+            </nav>
             <button id="units-toggle" class="units-button" aria-label="Toggle between metric and imperial units">
                 <span class="units-text">km</span>
             </button>
@@ -28,6 +31,11 @@
                     <span class="api-usage-icon" aria-hidden="true">📊</span>
                     <span id="header-api-calls" aria-label="API calls used today">--/--</span>
                 </span>
+            </div>
+            <div class="auth-controls" id="auth-controls">
+                <a href="/login" class="auth-btn" id="login-btn-header" style="display: none;" aria-label="Sign in">Sign In</a>
+                <span class="auth-user" id="auth-user-name" style="display: none;"></span>
+                <a href="/auth/logout" class="auth-btn auth-btn-logout" id="logout-btn-header" style="display: none;" aria-label="Sign out">Sign Out</a>
             </div>
         </div>
     </header>

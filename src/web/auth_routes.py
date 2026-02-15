@@ -1,22 +1,20 @@
 """
 auth_routes.py
-Blueprint providing /login, /logout, /auth/callback, and /api/auth/status.
+Blueprint providing /login and /api/auth/status.
+The identity library auto-registers /auth/callback and /auth/logout.
 When AUTH_ENABLED=false the endpoints still exist but behave as no-ops.
 """
 
 import logging
-import os
 
-from flask import (
-    Blueprint,
-    redirect,
-    render_template,
-    request,
-    session,
-    jsonify,
+from flask import Blueprint, redirect, render_template, request, jsonify
+
+from src.web.auth import (
+    _auth_enabled,
+    get_current_user,
+    get_identity_auth,
+    is_admin,
 )
-
-from src.web.auth import _auth_enabled, get_current_user, is_admin
 
 logger = logging.getLogger(__name__)
 
@@ -42,54 +40,12 @@ def login_entra():
     if not _auth_enabled():
         return redirect("/")
 
-    import identity.flask
+    auth = get_identity_auth()
+    if auth is None:
+        return redirect("/login?error=not_configured")
 
-    return identity.flask.login()
-
-
-@auth_bp.route("/auth/callback")
-def auth_callback():
-    """Handle Entra ID OIDC callback."""
-    if not _auth_enabled():
-        return redirect("/")
-
-    import identity.flask
-
-    result = identity.flask.complete_login()
-    if result is None:
-        return redirect("/login?error=auth_failed")
-
-    # Store user info in session
-    session["user"] = {
-        "name": result.get("name", ""),
-        "email": result.get("preferred_username", ""),
-        "preferred_username": result.get("preferred_username", ""),
-        "oid": result.get("oid", ""),
-    }
-    logger.info("User logged in: %s", session["user"].get("email"))
-
-    next_url = session.pop("login_next", "/")
-    return redirect(next_url)
-
-
-@auth_bp.route("/logout")
-def logout():
-    """Clear session and redirect home."""
-    user_email = (get_current_user() or {}).get("email", "unknown")
-    session.clear()
-    logger.info("User logged out: %s", user_email)
-
-    if _auth_enabled():
-        tenant_id = os.getenv("AZURE_TENANT_ID", "")
-        if tenant_id:
-            logout_url = (
-                f"https://login.microsoftonline.com/{tenant_id}"
-                f"/oauth2/v2.0/logout?post_logout_redirect_uri="
-                f"{request.host_url}"
-            )
-            return redirect(logout_url)
-
-    return redirect("/")
+    next_url = request.args.get("next", "/")
+    return auth.login(next_link=next_url)
 
 
 @auth_bp.route("/api/auth/status")
