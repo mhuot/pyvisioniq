@@ -1,4 +1,4 @@
-.PHONY: install install-dev format lint security test coverage ci clean
+.PHONY: install install-dev format format-check lint security test coverage ci clean
 
 PYTHON := python3
 VENV := venv
