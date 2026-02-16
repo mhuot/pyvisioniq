@@ -4,11 +4,12 @@ Add is_cached column to existing battery_status.csv file.
 All existing data will be marked as is_cached=False since we don't know the original source.
 """
 
-import pandas as pd
-from pathlib import Path
-import sys
 import shutil
+import sys
 from datetime import datetime
+from pathlib import Path
+
+import pandas as pd
 
 
 def add_is_cached_column():

@@ -6,9 +6,10 @@ Fix charging sessions data issues:
 3. Recalculate average power based on corrected energy values
 """
 
-import pandas as pd
-from pathlib import Path
 import sys
+from pathlib import Path
+
+import pandas as pd
 
 # Add the project root to the Python path
 project_root = Path(__file__).parent.parent
@@ -39,9 +40,7 @@ def fix_charging_sessions():
     df["end_time"] = pd.to_datetime(df["end_time"], errors="coerce")
 
     # Recalculate duration
-    df["duration_minutes"] = (
-        (df["end_time"] - df["start_time"]).dt.total_seconds() / 60
-    ).round(1)
+    df["duration_minutes"] = ((df["end_time"] - df["start_time"]).dt.total_seconds() / 60).round(1)
 
     # Recalculate energy_added correctly
     battery_capacity = 77.4  # kWh for Ioniq 5

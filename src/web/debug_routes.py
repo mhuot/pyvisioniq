@@ -3,12 +3,13 @@ Debug routes for PyVisionic
 Provides endpoints for debugging and monitoring
 """
 
-import os
 import json
+import os
 from datetime import datetime, timedelta
 from pathlib import Path
-from flask import Blueprint, jsonify, request, render_template_string
+
 import pandas as pd
+from flask import Blueprint, jsonify, render_template_string, request
 
 debug_bp = Blueprint("debug", __name__)
 
@@ -36,9 +37,7 @@ def get_recent_errors():
                     }
                 )
         except Exception as e:
-            errors.append(
-                {"filename": error_file.name, "error": f"Failed to read: {e}"}
-            )
+            errors.append({"filename": error_file.name, "error": f"Failed to read: {e}"})
 
     return jsonify(errors)
 
@@ -132,9 +131,7 @@ def validate_data():
         for idx, row in battery_df.iterrows():
             # Check battery level
             try:
-                DataValidator.validate_battery_level(
-                    row["battery_level"], f"battery_df[{idx}]"
-                )
+                DataValidator.validate_battery_level(row["battery_level"], f"battery_df[{idx}]")
             except ValueError as e:
                 issues.append(
                     {
@@ -153,9 +150,7 @@ def validate_data():
             # Check battery levels
             for field in ["start_battery", "end_battery"]:
                 try:
-                    DataValidator.validate_battery_level(
-                        row[field], f"sessions[{idx}].{field}"
-                    )
+                    DataValidator.validate_battery_level(row[field], f"sessions[{idx}].{field}")
                 except ValueError as e:
                     issues.append(
                         {

@@ -1,0 +1,35 @@
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+
+[tool.pylint.main]
+load-plugins = []
+fail-under = 8.0
+
+[tool.pylint.format]
+max-line-length = 100
+
+[tool.pylint."messages control"]
+disable = [
+    "missing-module-docstring",
+    "missing-class-docstring",
+    "missing-function-docstring",
+    "too-few-public-methods",
+    "too-many-instance-attributes",
+    "too-many-arguments",
+    "broad-exception-caught",
+    "import-error",
+    "duplicate-code",
+    "too-many-lines",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"
+
+[tool.bandit]
+exclude_dirs = ["tests", "venv"]
+skips = ["B101"]

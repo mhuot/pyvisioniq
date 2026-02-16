@@ -4,14 +4,16 @@ Data collector for PyVisionic
 Collects vehicle data 30 times per day (every 48 minutes)
 """
 
+import json
+import logging
 import os
 import sys
 import time
-import json
-import logging
-from dotenv import load_dotenv
 from datetime import datetime, timedelta
 from pathlib import Path
+
+from dotenv import load_dotenv
+
 from src.api.client import CachedVehicleClient
 from src.storage.factory import create_storage
 
@@ -22,7 +24,7 @@ load_dotenv()
 
 # Import debug utilities
 sys.path.append(str(Path(__file__).parent))
-from src.utils.debug import setup_debug_logging, DebugLogger
+from src.utils.debug import DebugLogger, setup_debug_logging
 
 # Set up logging based on debug mode
 DEBUG_MODE = os.getenv("DEBUG_MODE", "false").lower() == "true"
@@ -62,9 +64,7 @@ class DataCollector:
         """Initialize DataCollector with API client and storage manager"""
         self.client = CachedVehicleClient()
         self.storage = create_storage()
-        self.daily_limit = int(
-            os.getenv("API_DAILY_LIMIT", "30")
-        )  # Default to 30 calls per day
+        self.daily_limit = int(os.getenv("API_DAILY_LIMIT", "30"))  # Default to 30 calls per day
         if self.daily_limit <= 0:
             logger.error("Invalid daily limit: %d", self.daily_limit)
             raise ValueError("Daily limit must be a positive integer")
@@ -74,6 +74,7 @@ class DataCollector:
         self.calls_today = 0
         self.last_reset = datetime.now().date()
         self.last_call_time = None
+        self._rate_limit_backoff = 1.0
 
         # Load call history
         self.call_history_file = Path("data/api_call_history.json")
@@ -85,9 +86,7 @@ class DataCollector:
             try:
                 with open(self.call_history_file, "r", encoding="utf-8") as f:
                     history = json.load(f)
-                    last_reset_str = history.get(
-                        "last_reset", str(datetime.now().date())
-                    )
+                    last_reset_str = history.get("last_reset", str(datetime.now().date()))
                     self.last_reset = datetime.fromisoformat(last_reset_str).date()
                     self.calls_today = history.get("calls_today", 0)
 
@@ -132,9 +131,7 @@ class DataCollector:
     def _extend_next_collection_interval(self):
         """Extend the next collection interval due to rate limiting"""
         if hasattr(self, "_rate_limit_backoff"):
-            self._rate_limit_backoff = min(
-                self._rate_limit_backoff * 1.5, 4.0
-            )  # Cap at 4x
+            self._rate_limit_backoff = min(self._rate_limit_backoff * 1.5, 4.0)  # Cap at 4x
         else:
             self._rate_limit_backoff = 1.5  # Start with 50% longer interval
 
@@ -153,9 +150,7 @@ class DataCollector:
     def collect_data(self):
         """Collect vehicle data from API"""
         if not self.can_make_api_call():
-            logger.warning(
-                "Daily API limit reached (%d/%d)", self.calls_today, self.daily_limit
-            )
+            logger.warning("Daily API limit reached (%d/%d)", self.calls_today, self.daily_limit)
             return False
 
         try:
@@ -208,9 +203,7 @@ class DataCollector:
                     "limit exceeded",
                 ]
             ):
-                logger.warning(
-                    "Rate limit exceeded, will extend next collection interval"
-                )
+                logger.warning("Rate limit exceeded, will extend next collection interval")
                 # Extend the next collection by 50% to avoid further rate limits
                 self._extend_next_collection_interval()
                 return False
@@ -244,9 +237,7 @@ class DataCollector:
         # Calculate collection times for today (evenly distributed)
         collection_times = []
         for i in range(self.daily_limit):
-            collection_time = today_start + timedelta(
-                minutes=self.collection_interval_minutes * i
-            )
+            collection_time = today_start + timedelta(minutes=self.collection_interval_minutes * i)
             if collection_time > now:
                 collection_times.append(collection_time)
 

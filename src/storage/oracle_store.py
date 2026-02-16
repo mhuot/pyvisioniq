@@ -45,9 +45,7 @@ class OracleStorage(StorageBackend):
         daily_limit = float(os.getenv("API_DAILY_LIMIT", "30"))
         poll_interval_minutes = (24 * 60) / daily_limit if daily_limit > 0 else 48.0
         gap_multiplier = float(os.getenv("CHARGING_SESSION_GAP_MULTIPLIER", "1.5"))
-        self.charging_gap_threshold_minutes = max(
-            poll_interval_minutes * gap_multiplier, 5.0
-        )
+        self.charging_gap_threshold_minutes = max(poll_interval_minutes * gap_multiplier, 5.0)
         self.battery_capacity_kwh = float(os.getenv("BATTERY_CAPACITY_KWH", "77.4"))
 
         self._init_pool()
@@ -182,21 +180,11 @@ class OracleStorage(StorageBackend):
                         "idle_time": self._to_float(trip.get("idle_time")),
                         "trips_count": self._to_int(trip.get("trips_count")),
                         "total_consumed": self._to_float(trip.get("total_consumed")),
-                        "regenerated_energy": self._to_float(
-                            trip.get("regenerated_energy")
-                        ),
-                        "accessories_consumed": self._to_float(
-                            trip.get("accessories_consumed")
-                        ),
-                        "climate_consumed": self._to_float(
-                            trip.get("climate_consumed")
-                        ),
-                        "drivetrain_consumed": self._to_float(
-                            trip.get("drivetrain_consumed")
-                        ),
-                        "battery_care_consumed": self._to_float(
-                            trip.get("battery_care_consumed")
-                        ),
+                        "regenerated_energy": self._to_float(trip.get("regenerated_energy")),
+                        "accessories_consumed": self._to_float(trip.get("accessories_consumed")),
+                        "climate_consumed": self._to_float(trip.get("climate_consumed")),
+                        "drivetrain_consumed": self._to_float(trip.get("drivetrain_consumed")),
+                        "battery_care_consumed": self._to_float(trip.get("battery_care_consumed")),
                         "odometer_start": self._to_float(trip.get("odometer_start")),
                         "end_latitude": self._to_float(trip.get("end_latitude")),
                         "end_longitude": self._to_float(trip.get("end_longitude")),
@@ -235,9 +223,7 @@ class OracleStorage(StorageBackend):
             if weather_data:
                 temp_f_meteo = weather_data.get("temperature")
                 if temp_f_meteo:
-                    meteo_temp = self.weather_service.get_temperature_in_celsius(
-                        temp_f_meteo
-                    )
+                    meteo_temp = self.weather_service.get_temperature_in_celsius(temp_f_meteo)
 
         temperature = meteo_temp if self.use_meteo else vehicle_temp
 
@@ -438,9 +424,7 @@ class OracleStorage(StorageBackend):
         # Normalize is_complete to boolean
         if "is_complete" in dataframe.columns:
             dataframe["is_complete"] = dataframe["is_complete"].apply(
-                lambda val: (
-                    str(val).strip().lower() == "true" if pd.notna(val) else False
-                )
+                lambda val: (str(val).strip().lower() == "true" if pd.notna(val) else False)
             )
 
         # Normalize numeric columns
@@ -468,14 +452,10 @@ class OracleStorage(StorageBackend):
         """Get battery history for the last N days."""
         dataframe = self.get_battery_df()
         if not dataframe.empty:
-            dataframe["timestamp"] = pd.to_datetime(
-                dataframe["timestamp"], format="mixed"
-            )
+            dataframe["timestamp"] = pd.to_datetime(dataframe["timestamp"], format="mixed")
             if days is not None:
                 cutoff = pd.Timestamp.now() - pd.Timedelta(days=days)
-                return dataframe[dataframe["timestamp"] >= cutoff].sort_values(
-                    "timestamp"
-                )
+                return dataframe[dataframe["timestamp"] >= cutoff].sort_values("timestamp")
             return dataframe.sort_values("timestamp")
         return dataframe
 
@@ -520,19 +500,13 @@ class OracleStorage(StorageBackend):
 
             if is_charging:
                 if active_session is None:
-                    self._start_charging_session(
-                        timestamp, battery_level, charging_power, location
-                    )
+                    self._start_charging_session(timestamp, battery_level, charging_power, location)
                 else:
                     # Check for session gap
-                    if active_session.get("end_time") and pd.notna(
-                        active_session["end_time"]
-                    ):
+                    if active_session.get("end_time") and pd.notna(active_session["end_time"]):
                         last_update = pd.to_datetime(active_session["end_time"])
                         current_time = pd.to_datetime(timestamp)
-                        time_diff_minutes = (
-                            current_time - last_update
-                        ).total_seconds() / 60
+                        time_diff_minutes = (current_time - last_update).total_seconds() / 60
 
                         if time_diff_minutes > self.charging_gap_threshold_minutes:
                             self._complete_charging_session(
@@ -591,9 +565,7 @@ class OracleStorage(StorageBackend):
                 return dict(zip(columns, row))
         return None
 
-    def _start_charging_session(
-        self, timestamp, battery_level, charging_power, location
-    ):
+    def _start_charging_session(self, timestamp, battery_level, charging_power, location):
         """Insert a new charging session."""
         session_id = f"charge_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         insert_sql = """
@@ -614,12 +586,8 @@ class OracleStorage(StorageBackend):
             "end_battery": battery_level,
             "avg_power": charging_power or 0,
             "max_power": charging_power or 0,
-            "location_lat": (
-                self._to_float(location.get("latitude")) if location else None
-            ),
-            "location_lon": (
-                self._to_float(location.get("longitude")) if location else None
-            ),
+            "location_lat": (self._to_float(location.get("latitude")) if location else None),
+            "location_lon": (self._to_float(location.get("longitude")) if location else None),
         }
 
         with self._get_connection() as connection:
@@ -632,9 +600,7 @@ class OracleStorage(StorageBackend):
                 logger.error("Error starting charging session: %s", exc)
                 connection.rollback()
 
-    def _update_charging_session(
-        self, session_id, timestamp, battery_level, charging_power
-    ):
+    def _update_charging_session(self, session_id, timestamp, battery_level, charging_power):
         """Update an ongoing charging session."""
         # First get the current session data
         with self._get_connection() as connection:
@@ -663,9 +629,7 @@ class OracleStorage(StorageBackend):
             energy_added = 0.0
             battery_diff = battery_level - start_battery
             if battery_diff > 0:
-                energy_added = round(
-                    (battery_diff / 100) * self.battery_capacity_kwh, 2
-                )
+                energy_added = round((battery_diff / 100) * self.battery_capacity_kwh, 2)
 
             avg_power = 0.0
             if duration_minutes > 0 and energy_added > 0:
@@ -705,8 +669,7 @@ class OracleStorage(StorageBackend):
             cursor = connection.cursor()
             try:
                 cursor.execute(
-                    "UPDATE charging_sessions SET is_complete = 'True' "
-                    "WHERE session_id = :1",
+                    "UPDATE charging_sessions SET is_complete = 'True' " "WHERE session_id = :1",
                     [session_id],
                 )
                 connection.commit()
@@ -904,9 +867,7 @@ class OracleStorage(StorageBackend):
                 if parse_dates:
                     for col in parse_dates:
                         if col in dataframe.columns:
-                            dataframe[col] = pd.to_datetime(
-                                dataframe[col], errors="coerce"
-                            )
+                            dataframe[col] = pd.to_datetime(dataframe[col], errors="coerce")
                 return dataframe
         except Exception as exc:
             logger.error("Error reading from Oracle: %s", exc)

@@ -7,14 +7,9 @@ When AUTH_ENABLED=false the endpoints still exist but behave as no-ops.
 
 import logging
 
-from flask import Blueprint, redirect, render_template, request, jsonify
+from flask import Blueprint, jsonify, redirect, render_template, request
 
-from src.web.auth import (
-    _auth_enabled,
-    get_current_user,
-    get_identity_auth,
-    is_admin,
-)
+from src.web.auth import _auth_enabled, get_current_user, get_identity_auth, is_admin
 
 logger = logging.getLogger(__name__)
 

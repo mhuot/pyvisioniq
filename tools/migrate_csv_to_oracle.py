@@ -456,22 +456,14 @@ def main():
 
     total_inserted = 0
     total_inserted += migrate_trips(connection, data_dir, args.batch_size, args.dry_run)
-    total_inserted += migrate_battery_status(
-        connection, data_dir, args.batch_size, args.dry_run
-    )
-    total_inserted += migrate_locations(
-        connection, data_dir, args.batch_size, args.dry_run
-    )
-    total_inserted += migrate_charging_sessions(
-        connection, data_dir, args.batch_size, args.dry_run
-    )
+    total_inserted += migrate_battery_status(connection, data_dir, args.batch_size, args.dry_run)
+    total_inserted += migrate_locations(connection, data_dir, args.batch_size, args.dry_run)
+    total_inserted += migrate_charging_sessions(connection, data_dir, args.batch_size, args.dry_run)
 
     logger.info("")
     logger.info("=" * 60)
     if args.dry_run:
-        logger.info(
-            "DRY RUN complete. %d total rows would be migrated.", total_inserted
-        )
+        logger.info("DRY RUN complete. %d total rows would be migrated.", total_inserted)
     else:
         logger.info("Migration complete. %d total new rows inserted.", total_inserted)
     logger.info("=" * 60)

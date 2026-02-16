@@ -3,9 +3,10 @@
 Migrate trips.csv to add location and temperature columns
 """
 
-import pandas as pd
-from pathlib import Path
 import shutil
+from pathlib import Path
+
+import pandas as pd
 
 
 def migrate_trips_location():

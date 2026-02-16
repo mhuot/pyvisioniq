@@ -9,8 +9,9 @@ import traceback
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional, Union
-import pandas as pd
+
 import numpy as np
+import pandas as pd
 
 
 class DebugLogger:
@@ -49,9 +50,7 @@ class DebugLogger:
         if data is not None and self.logger.isEnabledFor(logging.DEBUG):
             self._save_debug_data(message, data, **kwargs)
 
-    def log_error_with_data(
-        self, message: str, error: Exception, data: Dict[str, Any] = None
-    ):
+    def log_error_with_data(self, message: str, error: Exception, data: Dict[str, Any] = None):
         """Log error with full context and data dump"""
         error_id = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
         context = self.get_context()
@@ -136,16 +135,12 @@ class DataValidator:
 
             # Validate range
             if not 0 <= battery_int <= 100:
-                raise ValueError(
-                    f"Battery level {battery_int} outside valid range 0-100"
-                )
+                raise ValueError(f"Battery level {battery_int} outside valid range 0-100")
 
             return battery_int
 
         except Exception as e:
-            raise ValueError(
-                f"Invalid battery level in {context}: {value} ({type(value)}): {e}"
-            )
+            raise ValueError(f"Invalid battery level in {context}: {value} ({type(value)}): {e}")
 
     @staticmethod
     def validate_numeric(
@@ -180,9 +175,7 @@ class DataValidator:
             return num_val
 
         except Exception as e:
-            raise ValueError(
-                f"Invalid numeric value in {context}: {value} ({type(value)}): {e}"
-            )
+            raise ValueError(f"Invalid numeric value in {context}: {value} ({type(value)}): {e}")
 
     @staticmethod
     def validate_timestamp(value: Any, context: str = "") -> Optional[pd.Timestamp]:
@@ -203,7 +196,9 @@ def setup_debug_logging(debug_mode: bool = False):
     if debug_mode:
         log_level = logging.DEBUG
         # Add more detailed format for debug mode
-        log_format = "%(asctime)s - %(name)s - [%(filename)s:%(lineno)d] - %(levelname)s - %(message)s"
+        log_format = (
+            "%(asctime)s - %(name)s - [%(filename)s:%(lineno)d] - %(levelname)s - %(message)s"
+        )
     else:
         log_level = logging.INFO
 

@@ -1,13 +1,15 @@
-import os
-import json
 import hashlib
+import json
 import logging
-import time
+import os
 import random
+import time
+import traceback
 from datetime import datetime, timedelta
 from pathlib import Path
-from hyundai_kia_connect_api import VehicleManager, Vehicle
+
 from dotenv import load_dotenv
+from hyundai_kia_connect_api import VehicleManager
 
 load_dotenv()
 
@@ -42,21 +44,19 @@ class CachedVehicleClient:
         # Cache validity: How long to consider cached data "fresh" before making a new API call
         # Calculate based on API daily limit (e.g., 30 calls/day = ~48 minutes between calls)
         daily_limit = int(os.getenv("API_DAILY_LIMIT", "30"))
-        cache_validity_minutes = (
-            24 * 60 / daily_limit
-        ) * 0.95  # 95% of interval for safety margin
+        cache_validity_minutes = (24 * 60 / daily_limit) * 0.95  # 95% of interval for safety margin
         self.cache_validity = timedelta(minutes=cache_validity_minutes)
         logger.info(
-            f"Cache validity set to {cache_validity_minutes:.1f} minutes based on {daily_limit} daily API calls"
+            "Cache validity set to %.1f minutes based on %s daily API calls",
+            cache_validity_minutes,
+            daily_limit,
         )
 
         # Cache retention: How long to keep historical cache files for debugging/analysis
         # This is separate from cache validity - we keep files longer for historical reference
-        cache_retention_hours = float(
-            os.getenv("CACHE_DURATION_HOURS", "48")
-        )  # Default 48 hours
+        cache_retention_hours = float(os.getenv("CACHE_DURATION_HOURS", "48"))  # Default 48 hours
         self.cache_retention = timedelta(hours=cache_retention_hours)
-        logger.info(f"Cache retention set to {cache_retention_hours} hours")
+        logger.info("Cache retention set to %s hours", cache_retention_hours)
 
         self._setup_api()
 
@@ -120,7 +120,7 @@ class CachedVehicleClient:
     def _load_from_cache(self, cache_key):
         cache_path = self._get_cache_path(cache_key)
         if self.cache_enabled and self._is_cache_valid(cache_path):
-            with open(cache_path, "r") as f:
+            with open(cache_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
             # Cached reads are, by definition, not fresh from Hyundai
             data["is_cached"] = True
@@ -130,13 +130,13 @@ class CachedVehicleClient:
 
     def _save_to_cache(self, cache_key, data):
         cache_path = self._get_cache_path(cache_key)
-        with open(cache_path, "w") as f:
+        with open(cache_path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, default=str)
 
         # Also save timestamped copy for historical records
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         history_path = self.cache_dir / f"history_{timestamp}_{cache_key}.json"
-        with open(history_path, "w") as f:
+        with open(history_path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, default=str)
 
         # Clean up old historical files
@@ -153,10 +153,10 @@ class CachedVehicleClient:
                     removed_count += 1
             if removed_count > 0:
                 logger.info(
-                    f"Removed {removed_count} cache files older than {self.cache_retention}"
+                    "Removed %s cache files older than %s", removed_count, self.cache_retention
                 )
         except Exception as e:
-            logger.error(f"Error cleaning up cache files: {e}")
+            logger.error("Error cleaning up cache files: %s", e)
 
     def check_and_refresh_token(self):
         if not self.manager:
@@ -179,10 +179,9 @@ class CachedVehicleClient:
             }
 
             error_path = (
-                self.cache_dir
-                / f"error_token_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+                self.cache_dir / f"error_token_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
             )
-            with open(error_path, "w") as f:
+            with open(error_path, "w", encoding="utf-8") as f:
                 json.dump(error_data, f, indent=2)
 
             return False
@@ -197,10 +196,8 @@ class CachedVehicleClient:
             print("Error: VehicleManager not initialized")
             return None
 
-        print(f"Forcing cache update from API...")
-        print(
-            f"Region: {self.region}, Brand: {self.brand}, Vehicle ID: {self.vehicle_id}"
-        )
+        print("Forcing cache update from API...")
+        print(f"Region: {self.region}, Brand: {self.brand}, Vehicle ID: {self.vehicle_id}")
 
         if not self.check_and_refresh_token():
             return None
@@ -212,7 +209,7 @@ class CachedVehicleClient:
                 vehicle = None
                 try:
                     vehicle = self.manager.get_vehicle(self.vehicle_id)
-                except:
+                except Exception:
                     # Try first vehicle
                     vehicles = self.manager.vehicles
                     if vehicles:
@@ -241,10 +238,10 @@ class CachedVehicleClient:
         cache_path = self._get_cache_path(cache_key)
         if cache_path.exists():
             try:
-                with open(cache_path, "r") as f:
+                with open(cache_path, "r", encoding="utf-8") as f:
                     return json.load(f)
             except Exception as e:
-                logger.warning(f"Failed to load cache entry {cache_path}: {e}")
+                logger.warning("Failed to load cache entry %s: %s", cache_path, e)
         return None
 
     def _parse_remote_timestamp(self, value):
@@ -274,13 +271,9 @@ class CachedVehicleClient:
             data.get("api_last_updated"),
         ]
 
-        raw_data = (
-            data.get("raw_data") if isinstance(data.get("raw_data"), dict) else {}
-        )
+        raw_data = data.get("raw_data") if isinstance(data.get("raw_data"), dict) else {}
         vehicle_status = (
-            raw_data.get("vehicleStatus")
-            if isinstance(raw_data.get("vehicleStatus"), dict)
-            else {}
+            raw_data.get("vehicleStatus") if isinstance(raw_data.get("vehicleStatus"), dict) else {}
         )
 
         # Hyundai sometimes stores timestamps as YYYYMMDDHHMMSS strings
@@ -306,7 +299,7 @@ class CachedVehicleClient:
             serialized = json.dumps(raw, sort_keys=True, default=str)
             return hashlib.md5(serialized.encode("utf-8")).hexdigest()
         except Exception as e:
-            logger.debug(f"Unable to build raw data signature: {e}")
+            logger.debug("Unable to build raw data signature: %s", e)
             return None
 
     def _is_remote_data_fresh(self, new_data, previous_data):
@@ -315,9 +308,7 @@ class CachedVehicleClient:
             return False
 
         new_ts = self._extract_remote_timestamp(new_data)
-        prev_ts = (
-            self._extract_remote_timestamp(previous_data) if previous_data else None
-        )
+        prev_ts = self._extract_remote_timestamp(previous_data) if previous_data else None
 
         if new_ts and prev_ts:
             if new_ts > prev_ts:
@@ -337,9 +328,7 @@ class CachedVehicleClient:
         if not fresh:
             # Fall back to hashing the raw payload to detect content changes
             new_sig = self._raw_data_signature(new_data)
-            prev_sig = (
-                self._raw_data_signature(previous_data) if previous_data else None
-            )
+            prev_sig = self._raw_data_signature(previous_data) if previous_data else None
             if new_sig and prev_sig and new_sig != prev_sig:
                 fresh = True
         return fresh
@@ -360,11 +349,7 @@ class CachedVehicleClient:
             ev_status = vehicle_data.get("vehicleStatus", {}).get("evStatus", {})
             drv_distance = ev_status.get("drvDistance", [])
             if drv_distance and len(drv_distance) > 0:
-                range_data = (
-                    drv_distance[0]
-                    .get("rangeByFuel", {})
-                    .get("totalAvailableRange", {})
-                )
+                range_data = drv_distance[0].get("rangeByFuel", {}).get("totalAvailableRange", {})
                 ev_range = range_data.get("value")
                 # Unit 3 appears to be miles, convert to km
                 if ev_range and range_data.get("unit") == 3:
@@ -395,7 +380,7 @@ class CachedVehicleClient:
             if odometer_value is not None and self.region == 3:
                 odometer_km = round(odometer_value * 1.60934)
                 logger.info(
-                    f"Converting odometer from {odometer_value} miles to {odometer_km} km"
+                    "Converting odometer from %s miles to %s km", odometer_value, odometer_km
                 )
             else:
                 odometer_km = odometer_value
@@ -423,9 +408,7 @@ class CachedVehicleClient:
                 "location": {
                     "latitude": getattr(vehicle, "location_latitude", None),
                     "longitude": getattr(vehicle, "location_longitude", None),
-                    "last_updated": str(
-                        getattr(vehicle, "location_last_updated_at", None)
-                    ),
+                    "last_updated": str(getattr(vehicle, "location_last_updated_at", None)),
                 },
                 "trips": self._extract_trips(vehicle),
                 "raw_data": {
@@ -433,13 +416,10 @@ class CachedVehicleClient:
                     **getattr(vehicle, "data", {}),
                 },
             }
-
             return data
 
         except Exception as e:
-            logger.error(f"Error processing vehicle data: {e}")
-            import traceback
-
+            logger.error("Error processing vehicle data: %s", e)
             traceback.print_exc()
             return None
 
@@ -460,10 +440,8 @@ class CachedVehicleClient:
             print("Error: VehicleManager not initialized")
             return None
 
-        print(f"Fetching fresh vehicle data from API...")
-        print(
-            f"Region: {self.region}, Brand: {self.brand}, Vehicle ID: {self.vehicle_id}"
-        )
+        print("Fetching fresh vehicle data from API...")
+        print(f"Region: {self.region}, Brand: {self.brand}, Vehicle ID: {self.vehicle_id}")
 
         if not self.check_and_refresh_token():
             return None
@@ -473,9 +451,7 @@ class CachedVehicleClient:
 
             # Check if vehicle_id is set
             if not self.vehicle_id:
-                logger.error(
-                    "Vehicle ID is not set! Check BLUELINKVID environment variable"
-                )
+                logger.error("Vehicle ID is not set! Check BLUELINKVID environment variable")
                 return None
 
             # Attempt to update with retry logic for rate limits
@@ -485,14 +461,14 @@ class CachedVehicleClient:
                 return self._get_last_successful_cache()
 
             # Get the vehicle after successful update
-            logger.info(f"Getting vehicle with ID: {self.vehicle_id}")
+            logger.info("Getting vehicle with ID: %s", self.vehicle_id)
             vehicle = None
 
             # Try to get vehicle by ID first
             try:
                 vehicle = self.manager.get_vehicle(self.vehicle_id)
             except Exception as e:
-                logger.warning(f"Could not get vehicle by ID {self.vehicle_id}: {e}")
+                logger.warning("Could not get vehicle by ID %s: %s", self.vehicle_id, e)
 
             # If that fails, try to get the first available vehicle
             if not vehicle:
@@ -501,7 +477,8 @@ class CachedVehicleClient:
                     if vehicles:
                         vehicle = vehicles[0]
                         logger.info(
-                            f"Using first available vehicle: {vehicle.id if hasattr(vehicle, 'id') else 'unknown'}"
+                            "Using first available vehicle: %s",
+                            vehicle.id if hasattr(vehicle, "id") else "unknown",
                         )
                         # Update the vehicle_id for future use
                         if hasattr(vehicle, "id"):
@@ -509,7 +486,7 @@ class CachedVehicleClient:
                     else:
                         logger.error("No vehicles found in account")
                 except Exception as e:
-                    logger.error(f"Could not get vehicles list: {e}")
+                    logger.error("Could not get vehicles list: %s", e)
 
             if not vehicle:
                 logger.error("No vehicle data available")
@@ -551,11 +528,8 @@ class CachedVehicleClient:
                 "vehicle_id": self.vehicle_id,
             }
 
-            error_path = (
-                self.cache_dir
-                / f"error_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-            )
-            with open(error_path, "w") as f:
+            error_path = self.cache_dir / f"error_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+            with open(error_path, "w", encoding="utf-8") as f:
                 json.dump(error_data, f, indent=2)
 
             return None
@@ -691,19 +665,18 @@ class CachedVehicleClient:
                     jitter = random.uniform(0.5, 1.5)  # Add randomness
                     delay = base_delay * jitter
                     logger.info(
-                        f"Rate limit retry {attempt + 1}/{max_retries}, waiting {delay:.1f}s"
+                        "Rate limit retry %d/%d, waiting %.1fs",
+                        attempt + 1,
+                        max_retries,
+                        delay,
                     )
                     time.sleep(delay)
 
                 # Force refresh vehicle state to get fresh data from the vehicle
                 if self.vehicle_id:
-                    last_action = (
-                        f"Forcing refresh of state for vehicle {self.vehicle_id}"
-                    )
+                    last_action = f"Forcing refresh of state for vehicle {self.vehicle_id}"
                     self.manager.force_refresh_vehicle_state(self.vehicle_id)
-                    logger.info(
-                        f"Vehicle {self.vehicle_id} state refreshed successfully"
-                    )
+                    logger.info("Vehicle %s state refreshed successfully", self.vehicle_id)
                 else:
                     # Fallback to refresh all vehicles if no specific ID
                     last_action = "Forcing refresh of state for all vehicles"
@@ -720,40 +693,36 @@ class CachedVehicleClient:
 
                 # Check if it's a KeyError for vehicleStatus
                 if isinstance(e, KeyError) and str(e) == "'vehicleStatus'":
-                    logger.info(
-                        "vehicleStatus not available in API response, attempting cached state"
-                    )
+                    logger.info("KeyError for vehicleStatus detected, attempting fallback...")
                     try:
                         # Try cached state instead
                         if self.vehicle_id:
-                            self.manager.update_vehicle_with_cached_state(
-                                self.vehicle_id
-                            )
+                            self.manager.update_vehicle_with_cached_state(self.vehicle_id)
                             logger.info(
-                                f"Successfully retrieved cached state for vehicle {self.vehicle_id}"
+                                "Successfully retrieved cached state for vehicle %s",
+                                self.vehicle_id,
                             )
                         else:
                             self.manager.update_all_vehicles_with_cached_state()
-                            logger.info(
-                                "Successfully retrieved cached state for all vehicles"
-                            )
+                            logger.info("Successfully retrieved cached state for all vehicles")
                         return True
                     except Exception as cached_error:
-                        logger.error(
-                            f"Cached state fallback also failed: {cached_error}"
-                        )
+                        logger.error("Cached state fallback also failed: %s", cached_error)
                         # Continue with original error handling
 
                 # Only retry for rate limit errors
                 if last_error.error_type == "rate_limit":
                     logger.warning(
-                        f"Rate limit hit (attempt {attempt + 1}/{max_retries}): {e}"
+                        "Rate limit hit (attempt %d/%d): %s", attempt + 1, max_retries, e
                     )
                     if attempt == max_retries - 1:
                         logger.error("Max retries reached for rate limit")
                         raise last_error
                     continue
                 else:
+                    # Non-rate-limit error, don't retry
+                    logger.error("Non-retryable error: %s", last_error.message)
+                    raise last_error
                     # Non-rate-limit error, don't retry
                     logger.error(f"Non-retryable error: {last_error.message}")
                     raise last_error
@@ -776,19 +745,13 @@ class CachedVehicleClient:
 
             # Get the most recent cache file
             latest_cache = max(cache_files, key=lambda f: f.stat().st_mtime)
-
-            # Check if it's within retention period
-            file_age = datetime.now() - datetime.fromtimestamp(
-                latest_cache.stat().st_mtime
-            )
+            file_age = datetime.now() - datetime.fromtimestamp(latest_cache.stat().st_mtime)
             if file_age > self.cache_retention:
-                logger.warning(
-                    f"Latest cache file is {file_age} old, exceeds retention period"
-                )
+                logger.warning("Latest cache file is %s old, exceeds retention period", file_age)
                 return None
 
-            logger.info(f"Using fallback cache from {file_age} ago")
-            with open(latest_cache, "r") as f:
+            logger.info("Using fallback cache from %s ago", file_age)
+            with open(latest_cache, "r", encoding="utf-8") as f:
                 data = json.load(f)
                 # Mark fallback data as cached
                 data["is_cached"] = True
@@ -796,7 +759,7 @@ class CachedVehicleClient:
                 return data
 
         except Exception as e:
-            logger.error(f"Error loading fallback cache: {e}")
+            logger.error("Error loading fallback cache: %s", e)
             return None
 
     def _extract_trips(self, vehicle):
@@ -821,13 +784,9 @@ class CachedVehicleClient:
                 else:
                     try:
                         # Keep temperature in Fahrenheit as requested
-                        current_temp = (
-                            float(air_temp) if isinstance(air_temp, str) else air_temp
-                        )
+                        current_temp = float(air_temp) if isinstance(air_temp, str) else air_temp
                     except (ValueError, TypeError):
-                        logger.warning(
-                            f"Could not convert temperature value: {air_temp}"
-                        )
+                        logger.warning("Could not convert temperature value: %s", air_temp)
 
         # First check for detailed evTripDetails in raw data
         if hasattr(vehicle, "data") and "evTripDetails" in vehicle.data:
@@ -881,21 +840,15 @@ class CachedVehicleClient:
                     if hasattr(stat, "date"):
                         trips.append(
                             {
-                                "date": (
-                                    str(stat.date) if hasattr(stat, "date") else None
-                                ),
-                                "distance": (
-                                    stat.distance if hasattr(stat, "distance") else None
-                                ),
+                                "date": (str(stat.date) if hasattr(stat, "date") else None),
+                                "distance": (stat.distance if hasattr(stat, "distance") else None),
                                 "duration": None,
                                 "average_speed": None,
                                 "max_speed": None,
                                 "idle_time": None,
                                 "trips_count": 1,
                                 "total_consumed": (
-                                    stat.total_consumed
-                                    if hasattr(stat, "total_consumed")
-                                    else None
+                                    stat.total_consumed if hasattr(stat, "total_consumed") else None
                                 ),
                                 "regenerated_energy": (
                                     stat.regenerated_energy
@@ -943,9 +896,7 @@ class CachedVehicleClient:
         # Add current location and temperature to the most recent trip (first in list)
         if trips and current_location["latitude"] is not None:
             # Find the most recent trip by date
-            sorted_trips = sorted(
-                trips, key=lambda x: x["date"] if x["date"] else "", reverse=True
-            )
+            sorted_trips = sorted(trips, key=lambda x: x["date"] if x["date"] else "", reverse=True)
             if sorted_trips:
                 most_recent = sorted_trips[0]
                 # Find this trip in the original list and update it
@@ -955,7 +906,11 @@ class CachedVehicleClient:
                         trips[i]["end_longitude"] = current_location["longitude"]
                         trips[i]["end_temperature"] = current_temp
                         logger.info(
-                            f"Added location ({current_location['latitude']}, {current_location['longitude']}) and temp {current_temp}°C to trip from {trip['date']}"
+                            "Added location (%s, %s) and temp %s°C to trip from %s",
+                            current_location["latitude"],
+                            current_location["longitude"],
+                            current_temp,
+                            trip["date"],
                         )
                         break
 

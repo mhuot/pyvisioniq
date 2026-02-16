@@ -28,15 +28,34 @@ Usage:
 import csv
 import logging
 import os
+import sys
 from datetime import datetime
 from pathlib import Path
+
 import pandas as pd
-import sys
+
+CHARGING_SESSION_FIELDS = [
+    "session_id",
+    "start_time",
+    "end_time",
+    "duration_minutes",
+    "start_battery",
+    "end_battery",
+    "energy_added",
+    "avg_power",
+    "max_power",
+    "location_lat",
+    "location_lon",
+    "is_complete",
+]
 
 sys.path.append(str(Path(__file__).parent.parent.parent))
+# pylint: disable=wrong-import-position
 from src.storage.base import StorageBackend
+from src.utils.debug import DataValidator, DebugLogger
 from src.utils.weather import WeatherService
-from src.utils.debug import DebugLogger, DataValidator
+
+# pylint: enable=wrong-import-position
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -71,9 +90,7 @@ class CSVStorage(StorageBackend):
         daily_limit = float(os.getenv("API_DAILY_LIMIT", "30"))
         poll_interval_minutes = (24 * 60) / daily_limit if daily_limit > 0 else 48.0
         gap_multiplier = float(os.getenv("CHARGING_SESSION_GAP_MULTIPLIER", "1.5"))
-        self.charging_gap_threshold_minutes = max(
-            poll_interval_minutes * gap_multiplier, 5.0
-        )
+        self.charging_gap_threshold_minutes = max(poll_interval_minutes * gap_multiplier, 5.0)
         self.battery_capacity_kwh = float(os.getenv("BATTERY_CAPACITY_KWH", "77.4"))
 
         self._init_files()
@@ -122,6 +139,7 @@ class CSVStorage(StorageBackend):
                         "odometer",
                         "meteo_temp",
                         "vehicle_temp",
+                        "is_cached",
                     ],
                 )
                 writer.writeheader()
@@ -134,9 +152,7 @@ class CSVStorage(StorageBackend):
                 writer.writeheader()
 
         if not self.charging_sessions_file.exists():
-            with open(
-                self.charging_sessions_file, "w", newline="", encoding="utf-8"
-            ) as f:
+            with open(self.charging_sessions_file, "w", newline="", encoding="utf-8") as f:
                 writer = csv.DictWriter(
                     f,
                     fieldnames=[
@@ -183,9 +199,7 @@ class CSVStorage(StorageBackend):
                     for _, row in existing_df.iterrows():
                         # Normalize date format (remove .0 from end)
                         date_str = (
-                            str(row["date"]).replace(".0", "")
-                            if pd.notna(row["date"])
-                            else ""
+                            str(row["date"]).replace(".0", "") if pd.notna(row["date"]) else ""
                         )
                         trip_id = f"{date_str}_{row['distance']}"
                         if pd.notna(row.get("odometer_start")):
@@ -197,9 +211,7 @@ class CSVStorage(StorageBackend):
             skipped_count = 0
             for trip in trips:
                 # Normalize date format (remove .0 from end)
-                date_str = (
-                    str(trip["date"]).replace(".0", "") if trip.get("date") else ""
-                )
+                date_str = str(trip["date"]).replace(".0", "") if trip.get("date") else ""
                 trip_id = f"{date_str}_{trip['distance']}"
                 if trip.get("odometer_start") is not None:
                     trip_id += f"_{trip['odometer_start']}"
@@ -252,9 +264,7 @@ class CSVStorage(StorageBackend):
 
             # Get vehicle sensor temperature
             temp_f_vehicle = data.get("raw_data", {}).get("airTemp", {}).get("value")
-            vehicle_temp = (
-                round((temp_f_vehicle - 32) * 5 / 9, 1) if temp_f_vehicle else None
-            )
+            vehicle_temp = round((temp_f_vehicle - 32) * 5 / 9, 1) if temp_f_vehicle else None
 
             # Get Meteo weather temperature
             location = data.get("location", {})
@@ -271,7 +281,11 @@ class CSVStorage(StorageBackend):
                         else None
                     )
                     logger.info(
-                        f"Temperatures - Meteo: {temp_f_meteo}°F ({meteo_temp}°C), Vehicle: {temp_f_vehicle}°F ({vehicle_temp}°C)"
+                        "Temperatures - Meteo: %s°F (%s°C), Vehicle: %s°F (%s°C)",
+                        temp_f_meteo,
+                        meteo_temp,
+                        temp_f_vehicle,
+                        vehicle_temp,
                     )
             else:
                 logger.warning("No vehicle location available for weather data")
@@ -347,9 +361,7 @@ class CSVStorage(StorageBackend):
     def get_locations_df(self):
         """Get location data as a DataFrame"""
         if self.location_file.exists():
-            return pd.read_csv(
-                self.location_file, parse_dates=["timestamp", "last_updated"]
-            )
+            return pd.read_csv(self.location_file, parse_dates=["timestamp", "last_updated"])
         return pd.DataFrame()
 
     def get_charging_sessions_df(self):
@@ -382,15 +394,11 @@ class CSVStorage(StorageBackend):
                         if len(parts) >= 3:
                             date_part, time_part = parts[1], parts[2]
                             try:
-                                derived = datetime.strptime(
-                                    date_part + time_part, "%Y%m%d%H%M%S"
-                                )
+                                derived = datetime.strptime(date_part + time_part, "%Y%m%d%H%M%S")
                                 df.at[idx, "start_time"] = derived
                                 changed = True
                             except ValueError:
-                                logger.debug(
-                                    f"Could not reconstruct start_time for {session_id}"
-                                )
+                                logger.debug(f"Could not reconstruct start_time for {session_id}")
 
         if "end_time" in df.columns:
             df["end_time"] = pd.to_datetime(df["end_time"], errors="coerce")
@@ -410,16 +418,12 @@ class CSVStorage(StorageBackend):
         # Ensure boolean type for completion flag
         if "is_complete" in df.columns:
             df["is_complete"] = df["is_complete"].apply(
-                lambda val: (
-                    str(val).strip().lower() == "true" if pd.notna(val) else False
-                )
+                lambda val: (str(val).strip().lower() == "true" if pd.notna(val) else False)
             )
 
         # Recompute duration when possible
         if {"start_time", "end_time"}.issubset(df.columns):
-            derived_duration = (
-                df["end_time"] - df["start_time"]
-            ).dt.total_seconds() / 60
+            derived_duration = (df["end_time"] - df["start_time"]).dt.total_seconds() / 60
             if "duration_minutes" in df.columns:
                 existing_duration = df["duration_minutes"]
                 needs_update = existing_duration.isna() | (existing_duration <= 0)
@@ -458,8 +462,7 @@ class CSVStorage(StorageBackend):
                 update_mask = needs_avg & (existing_avg.isna() | (existing_avg <= 0))
                 # Replace if differs by more than 0.5 kW to correct rounding issues
                 diff_mask = (
-                    needs_avg & existing_avg.notna() & (avg_power - existing_avg).abs()
-                    > 0.5
+                    needs_avg & existing_avg.notna() & (avg_power - existing_avg).abs() > 0.5
                 )
                 update_mask |= diff_mask
             else:
@@ -481,9 +484,7 @@ class CSVStorage(StorageBackend):
                     date_format="%Y-%m-%d %H:%M:%S.%f",
                 )
             except Exception as e:
-                logger.error(
-                    f"Failed to persist reconstructed charging session data: {e}"
-                )
+                logger.error(f"Failed to persist reconstructed charging session data: {e}")
 
         return df
 
@@ -565,33 +566,16 @@ class CSVStorage(StorageBackend):
                         "is_complete": False,
                     }
 
-                    with open(
-                        self.charging_sessions_file, "a", newline="", encoding="utf-8"
-                    ) as f:
+                    with open(self.charging_sessions_file, "a", newline="", encoding="utf-8") as f:
                         writer = csv.DictWriter(
                             f,
-                            fieldnames=[
-                                "session_id",
-                                "start_time",
-                                "end_time",
-                                "duration_minutes",
-                                "start_battery",
-                                "end_battery",
-                                "energy_added",
-                                "avg_power",
-                                "max_power",
-                                "location_lat",
-                                "location_lon",
-                                "is_complete",
-                            ],
+                            fieldnames=CHARGING_SESSION_FIELDS,
                         )
                         writer.writerow(new_session)
                 else:
                     # Check if this is truly the same session or a new one
                     threshold = getattr(self, "charging_gap_threshold_minutes", 45.0)
-                    if "end_time" in active_session and pd.notna(
-                        active_session["end_time"]
-                    ):
+                    if "end_time" in active_session and pd.notna(active_session["end_time"]):
                         last_update = pd.to_datetime(active_session["end_time"])
                         current_time = pd.to_datetime(timestamp)
                         time_diff = (current_time - last_update).total_seconds() / 60
@@ -605,9 +589,7 @@ class CSVStorage(StorageBackend):
                             )
 
                             # Start new charging session
-                            session_id = (
-                                f"charge_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-                            )
+                            session_id = f"charge_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
                             new_session = {
                                 "session_id": session_id,
                                 "start_time": timestamp,
@@ -618,12 +600,8 @@ class CSVStorage(StorageBackend):
                                 "energy_added": 0,
                                 "avg_power": charging_power or 0,
                                 "max_power": charging_power or 0,
-                                "location_lat": (
-                                    location.get("latitude") if location else None
-                                ),
-                                "location_lon": (
-                                    location.get("longitude") if location else None
-                                ),
+                                "location_lat": (location.get("latitude") if location else None),
+                                "location_lon": (location.get("longitude") if location else None),
                                 "is_complete": False,
                             }
 
@@ -684,9 +662,7 @@ class CSVStorage(StorageBackend):
         finally:
             debug_logger.pop_context()
 
-    def _update_charging_session(
-        self, session_id, timestamp, battery_level, charging_power
-    ):
+    def _update_charging_session(self, session_id, timestamp, battery_level, charging_power):
         """Update an ongoing charging session"""
         sessions_df = self.get_charging_sessions_df()
 
@@ -730,9 +706,7 @@ class CSVStorage(StorageBackend):
                         "start_battery_raw": start_battery_raw,
                         "session_idx": idx,
                         "session_data": (
-                            sessions_df.loc[idx].to_dict()
-                            if idx in sessions_df.index
-                            else None
+                            sessions_df.loc[idx].to_dict() if idx in sessions_df.index else None
                         ),
                     },
                 )

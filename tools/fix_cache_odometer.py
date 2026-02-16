@@ -4,8 +4,8 @@ Fix odometer values in cache files (convert miles to km)
 """
 
 import json
-from pathlib import Path
 import shutil
+from pathlib import Path
 
 
 def fix_cache_odometer():
@@ -34,9 +34,7 @@ def fix_cache_odometer():
             if 10000 <= data["odometer"] <= 13000:  # Likely unconverted miles
                 old_value = data["odometer"]
                 data["odometer"] = round(old_value * 1.60934)
-                print(
-                    f"  Fixed main odometer: {old_value} miles -> {data['odometer']} km"
-                )
+                print(f"  Fixed main odometer: {old_value} miles -> {data['odometer']} km")
 
         # Fix raw data odometers if they exist
         if "raw_data" in data:
@@ -51,9 +49,7 @@ def fix_cache_odometer():
                                 val = float(value)
                                 if 10000 <= val <= 13000:
                                     obj[key] = round(val * 1.60934)
-                                    print(
-                                        f"  Fixed {path}.{key}: {val} miles -> {obj[key]} km"
-                                    )
+                                    print(f"  Fixed {path}.{key}: {val} miles -> {obj[key]} km")
                             except (ValueError, TypeError):
                                 pass
                         elif isinstance(value, (dict, list)):

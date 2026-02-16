@@ -1,10 +1,9 @@
 """SSL patch for hyundai_kia_connect_api to handle certificate issues"""
 
 import ssl
-import requests
-from requests.adapters import HTTPAdapter
-from urllib3.poolmanager import PoolManager
+
 import urllib3
+from requests.adapters import HTTPAdapter
 
 # Disable SSL warnings
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
