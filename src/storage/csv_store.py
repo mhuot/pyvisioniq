@@ -122,6 +122,7 @@ class CSVStorage(StorageBackend):
                         "odometer",
                         "meteo_temp",
                         "vehicle_temp",
+                        "is_cached",
                     ],
                 )
                 writer.writeheader()

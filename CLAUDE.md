@@ -6,6 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Must use venv for all Python operations
 - Activate with: `source venv/bin/activate`
 - If venv has issues, recreate with: `python3 -m venv venv && source venv/bin/activate && pip install -r requirements.txt`
+- For development: `pip install -r requirements-dev.txt` (includes pytest, black, pylint, bandit)
 
 ## Common Commands
 
@@ -49,6 +50,28 @@ pylint src/ tools/ data_collector.py
 bandit -r src/ tools/ data_collector.py
 ```
 
+### CI / Makefile Shortcuts
+```bash
+# Install dev dependencies (includes pytest, black, pylint, bandit)
+make install-dev
+
+# Run all CI checks locally (format-check + lint + security + test)
+make ci
+
+# Individual targets
+make format          # Auto-format code
+make format-check    # Check formatting without modifying
+make lint            # Run pylint
+make security        # Run bandit
+make test            # Run pytest
+make coverage        # Run tests with coverage report
+make clean           # Remove generated files
+
+# Pre-commit hooks (one-time setup)
+source venv/bin/activate
+pre-commit install
+```
+
 ### Data Management Tools
 ```bash
 # All tools require venv activation first
@@ -69,7 +92,13 @@ python tools/migrate_csv_to_oracle.py --dry-run  # Preview migration without wri
 
 ### Testing
 ```bash
-# Test charging session tracking
+# Run unit tests
+pytest tests/
+
+# Run with coverage
+pytest tests/ --cov=src --cov-report=term-missing
+
+# Legacy manual charging session test
 python test_charging_session.py
 ```
 
