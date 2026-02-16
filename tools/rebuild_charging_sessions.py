@@ -46,28 +46,16 @@ class Session:
             session_id=str(row["session_id"]),
             start_time=row["start_time"],
             end_time=row["end_time"],
-            start_battery=(
-                float(row["start_battery"]) if pd.notna(row["start_battery"]) else 0.0
-            ),
-            end_battery=(
-                float(row["end_battery"]) if pd.notna(row["end_battery"]) else 0.0
-            ),
-            energy_added=(
-                float(row["energy_added"]) if pd.notna(row["energy_added"]) else 0.0
-            ),
+            start_battery=(float(row["start_battery"]) if pd.notna(row["start_battery"]) else 0.0),
+            end_battery=(float(row["end_battery"]) if pd.notna(row["end_battery"]) else 0.0),
+            energy_added=(float(row["energy_added"]) if pd.notna(row["energy_added"]) else 0.0),
             avg_power=float(row["avg_power"]) if pd.notna(row["avg_power"]) else 0.0,
             max_power=float(row["max_power"]) if pd.notna(row["max_power"]) else 0.0,
-            location_lat=(
-                float(row["location_lat"]) if pd.notna(row["location_lat"]) else None
-            ),
-            location_lon=(
-                float(row["location_lon"]) if pd.notna(row["location_lon"]) else None
-            ),
+            location_lat=(float(row["location_lat"]) if pd.notna(row["location_lat"]) else None),
+            location_lon=(float(row["location_lon"]) if pd.notna(row["location_lon"]) else None),
             is_complete=bool(row["is_complete"]),
             duration_minutes=(
-                float(row["duration_minutes"])
-                if pd.notna(row["duration_minutes"])
-                else 0.0
+                float(row["duration_minutes"]) if pd.notna(row["duration_minutes"]) else 0.0
             ),
         )
 
@@ -76,9 +64,7 @@ class Session:
             self.duration_minutes = 0.0
             self.avg_power = 0.0
             return
-        self.duration_minutes = round(
-            (self.end_time - self.start_time).total_seconds() / 60.0, 1
-        )
+        self.duration_minutes = round((self.end_time - self.start_time).total_seconds() / 60.0, 1)
         battery_delta = max(self.end_battery - self.start_battery, 0.0)
         self.energy_added = round((battery_delta / 100.0) * battery_capacity_kwh, 2)
         duration_hours = self.duration_minutes / 60.0
@@ -88,9 +74,7 @@ class Session:
             self.avg_power = 0.0
 
 
-def merge_sessions(
-    df: pd.DataFrame, gap_minutes: float, capacity_kwh: float
-) -> List[Session]:
+def merge_sessions(df: pd.DataFrame, gap_minutes: float, capacity_kwh: float) -> List[Session]:
     sessions: List[Session] = []
     for _, row in df.iterrows():
         session = Session.from_row(row)
@@ -136,9 +120,7 @@ def main() -> None:
     df = df.sort_values("start_time")
     gap_minutes = getattr(storage, "charging_gap_threshold_minutes", 45.0)
     capacity = getattr(storage, "battery_capacity_kwh", 77.4)
-    print(
-        f"Using gap threshold {gap_minutes:.1f} minutes and capacity {capacity:.2f} kWh"
-    )
+    print(f"Using gap threshold {gap_minutes:.1f} minutes and capacity {capacity:.2f} kWh")
 
     merged = merge_sessions(df, gap_minutes, capacity)
     print(f"Merged {len(df)} records down to {len(merged)}")

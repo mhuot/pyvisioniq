@@ -29,9 +29,7 @@ def init_auth(app):
     """
     global _identity_auth  # pylint: disable=global-statement
 
-    app.secret_key = os.getenv(
-        "FLASK_SECRET_KEY", app.config.get("SECRET_KEY", "dev-secret-key")
-    )
+    app.secret_key = os.getenv("FLASK_SECRET_KEY", app.config.get("SECRET_KEY", "dev-secret-key"))
 
     if not _auth_enabled():
         logger.info("AUTH_ENABLED=false - all routes are public")

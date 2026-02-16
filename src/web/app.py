@@ -1,18 +1,20 @@
-from flask import Flask, render_template, jsonify, Response, send_file, request
-import plotly.graph_objs as go
-import plotly.utils
 import json
 import os
-from datetime import datetime, timedelta
 import sys
+import base64
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict
+
 import numpy as np
 import pandas as pd
+import plotly.graph_objs as go
+import plotly.utils
+from flask import Flask, Response, jsonify, render_template, request, send_file
 
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
-from src.api.client import CachedVehicleClient, APIError
+from src.api.client import APIError, CachedVehicleClient
 from src.storage.factory import create_storage
 from src.web.cache_routes import cache_bp
 from src.web.debug_routes import debug_bp
@@ -34,6 +36,9 @@ storage = create_storage()
 # Register blueprints
 app.register_blueprint(cache_bp)
 app.register_blueprint(debug_bp)
+
+# Global cache for battery history
+cached_battery_history = {"data": None, "timestamp": None}
 
 
 def clean_nan_values(data):
@@ -118,9 +123,7 @@ def refresh_data():
                 try:
                     from datetime import datetime
 
-                    api_time = datetime.fromisoformat(
-                        str(api_updated).replace("Z", "+00:00")
-                    )
+                    api_time = datetime.fromisoformat(str(api_updated).replace("Z", "+00:00"))
                     age_minutes = int(
                         (datetime.now(api_time.tzinfo) - api_time).total_seconds() / 60
                     )
@@ -151,17 +154,13 @@ def refresh_data():
         # Use our custom error classification
         status_code = 429 if e.error_type == "rate_limit" else 500
         return (
-            jsonify(
-                {"status": "error", "message": e.message, "error_type": e.error_type}
-            ),
+            jsonify({"status": "error", "message": e.message, "error_type": e.error_type}),
             status_code,
         )
 
     except Exception as e:
         # Fallback for unexpected errors
-        app.logger.error(
-            f"Unexpected error in refresh_data: {type(e).__name__}: {str(e)}"
-        )
+        app.logger.error(f"Unexpected error in refresh_data: {type(e).__name__}: {str(e)}")
         return (
             jsonify(
                 {
@@ -177,11 +176,8 @@ def refresh_data():
 def get_trip_detail(trip_id):
     """Get detailed information about a specific trip"""
     try:
-        import base64
-        import pandas as pd
-
-        app.logger.info(f"=== Trip Detail Request ===")
-        app.logger.info(f"Raw trip_id: {trip_id}")
+        app.logger.info("=== Trip Detail Request ===")
+        app.logger.info("Raw trip_id: %s", trip_id)
 
         trips_df = storage.get_trips_df()
 
@@ -196,7 +192,7 @@ def get_trip_detail(trip_id):
         app.logger.info(f"Trip ID parts: {parts}")
 
         if len(parts) < 2:
-            app.logger.error(f"Invalid trip ID format: {parts}")
+            app.logger.error("Invalid trip ID format: %s", parts)
             return jsonify({"error": "Invalid trip ID"}), 400
 
         # Decode the base64 encoded date
@@ -207,53 +203,60 @@ def get_trip_detail(trip_id):
             if padding != 4:
                 encoded_date += "=" * padding
             date_str = base64.b64decode(encoded_date).decode("utf-8")
-            app.logger.info(f"Decoded date from base64: '{date_str}'")
+            app.logger.info("Decoded date from base64: '%s'", date_str)
         except Exception as e:
             # Fallback to old format if decoding fails
             date_str = parts[0]
-            app.logger.warning(
-                f"Base64 decode failed: {e}, using raw date: '{date_str}'"
-            )
+            app.logger.warning("Base64 decode failed: %s, using raw date: '%s'", e, date_str)
 
         distance = float(parts[1])
         odometer = float(parts[2]) if len(parts) > 2 and parts[2] else None
 
         app.logger.info(
-            f"Parsed values - date: '{date_str}', distance: {distance}, odometer: {odometer}"
+            "Parsed values - date: '%s', distance: %s, odometer: %s",
+            date_str,
+            distance,
+            odometer,
         )
 
         # Find the trip - handle various date formats
         # The date might come as "2025-05-25T10:05:49" (from JSON) but CSV has "2025-05-25 10:05:49.0"
         # Convert T to space for matching
         clean_date_str = date_str.replace("T", " ").replace(".0", "").strip()
-        trips_df["clean_date"] = (
-            trips_df["date"].astype(str).str.replace(".0", "").str.strip()
-        )
+        trips_df["clean_date"] = trips_df["date"].astype(str).str.replace(".0", "").str.strip()
 
         # Debug logging - show all available trips
-        app.logger.info(f"=== Searching for trip ===")
+        app.logger.info("=== Searching for trip ===")
         app.logger.info(
-            f"Looking for: date='{clean_date_str}', distance={distance}, odometer={odometer}"
+            "Looking for: date='%s', distance=%s, odometer=%s",
+            clean_date_str,
+            distance,
+            odometer,
         )
-        app.logger.info(f"Available trips (first 10):")
+        app.logger.info("Available trips (first 10):")
         for idx, row in trips_df.head(10).iterrows():
             app.logger.info(
-                f"  Trip {idx}: date='{row['clean_date']}', distance={row['distance']}, odometer={row.get('odometer_start', 'N/A')}"
+                "  Trip %s: date='%s', distance=%s, odometer=%s",
+                idx,
+                row["clean_date"],
+                row["distance"],
+                row.get("odometer_start", "N/A"),
             )
 
-        mask = (trips_df["clean_date"] == clean_date_str) & (
-            trips_df["distance"] == distance
-        )
+        mask = (trips_df["clean_date"] == clean_date_str) & (trips_df["distance"] == distance)
         if odometer is not None:
             mask = mask & (trips_df["odometer_start"] == odometer)
 
         trip_data = trips_df[mask]
 
-        app.logger.info(f"Matching trips found: {len(trip_data)}")
+        app.logger.info("Matching trips found: %s", len(trip_data))
 
         if trip_data.empty:
             app.logger.error(
-                f"Trip not found! No match for date='{clean_date_str}', distance={distance}, odometer={odometer}"
+                "Trip not found! No match for date='%s', distance=%s, odometer=%s",
+                clean_date_str,
+                distance,
+                odometer,
             )
             return jsonify({"error": "Trip not found"}), 404
 
@@ -265,9 +268,7 @@ def get_trip_detail(trip_id):
 
         # Calculate energy efficiency if possible
         if trip["distance"] and trip["total_consumed"]:
-            trip["efficiency_wh_per_km"] = round(
-                trip["total_consumed"] / trip["distance"], 1
-            )
+            trip["efficiency_wh_per_km"] = round(trip["total_consumed"] / trip["distance"], 1)
         else:
             trip["efficiency_wh_per_km"] = None
 
@@ -346,16 +347,12 @@ def get_trips():
             if pd.notna(row.get("distance")) and row["distance"] > 0:
                 # Use total consumed for efficiency calculation
                 total_consumed = (
-                    row.get("total_consumed", 0)
-                    if pd.notna(row.get("total_consumed"))
-                    else 0
+                    row.get("total_consumed", 0) if pd.notna(row.get("total_consumed")) else 0
                 )
 
                 # Efficiency in Wh/km
                 efficiency_wh_per_km = (
-                    round(total_consumed / row["distance"], 1)
-                    if total_consumed > 0
-                    else 0
+                    round(total_consumed / row["distance"], 1) if total_consumed > 0 else 0
                 )
                 page_trips.loc[idx, "efficiency_wh_per_km"] = efficiency_wh_per_km
             else:
@@ -392,91 +389,41 @@ def get_trips():
         return jsonify({"error": str(e)}), 500
 
 
-@app.route("/api/battery-history")
+@app.route("/api/battery/history")
 def get_battery_history():
+    """Get battery history data"""
     try:
-        # Get parameters from query string
-        hours = request.args.get("hours", "24")
-        start_date = request.args.get("start_date")
-        end_date = request.args.get("end_date")
+        # Check if cache is fresh enough
+        if cached_battery_history["data"] is not None:
+            age = (datetime.now() - cached_battery_history["timestamp"]).total_seconds()
+            if age < 60:  # Cache for 1 minute
+                return jsonify(cached_battery_history["data"])
 
-        # If custom date range is provided
-        if hours == "custom" and start_date and end_date:
-            battery_df = storage.get_battery_df()
-            if not battery_df.empty:
+        battery_df = storage.get_battery_df()
+
+        if battery_df.empty:
+            return jsonify([])
+
+        # Filter by hours if requested
+        hours = request.args.get("hours")
+        if hours:
+            try:
+                hours_int = int(hours)
+                cutoff = datetime.now() - timedelta(hours=hours_int)
                 battery_df["timestamp"] = pd.to_datetime(battery_df["timestamp"])
-                # Filter by date range
-                start = pd.to_datetime(start_date)
-                end = pd.to_datetime(end_date) + pd.Timedelta(
-                    days=1
-                )  # Include end date
-                battery_df = battery_df[
-                    (battery_df["timestamp"] >= start) & (battery_df["timestamp"] < end)
-                ]
-        else:
-            # Convert hours to days for the storage function
-            if hours == "all":
-                days = None  # Get all data
-            else:
-                try:
-                    hours_int = int(hours)
-                    days = hours_int / 24.0
-                except ValueError:
-                    days = 1  # Default to 1 day if invalid
+                battery_df = battery_df[battery_df["timestamp"] >= cutoff]
+            except ValueError:
+                pass
 
-            battery_df = storage.get_battery_history(days=days)
-        if not battery_df.empty:
-            # Fill NaN values with None before any processing
-            battery_df = battery_df.fillna(value=np.nan).replace([np.nan], [None])
-            # Create battery level chart
-            battery_trace = go.Scatter(
-                x=battery_df["timestamp"],
-                y=battery_df["battery_level"],
-                mode="lines+markers",
-                name="Battery Level",
-                line=dict(color="#2ecc71", width=3),
-                connectgaps=False,  # Show gaps for missing data
-            )
+        # Sort by timestamp
+        battery_df = battery_df.sort_values("timestamp")
 
-            # Create temperature chart
-            temp_trace = go.Scatter(
-                x=battery_df["timestamp"],
-                y=battery_df["temperature"],
-                mode="lines+markers",
-                name="Temperature",
-                line=dict(color="#e74c3c", width=2),
-                yaxis="y2",
-                connectgaps=False,  # Show gaps for missing data
-            )
+        # Convert to JSON friendly format
+        result = battery_df.to_dict(orient="records")
+        return jsonify(result)
 
-            layout = go.Layout(
-                title="Battery Level vs Temperature",
-                xaxis=dict(title="Time"),
-                yaxis=dict(title="Battery Level (%)", side="left"),
-                yaxis2=dict(title="Temperature (°C)", side="right", overlaying="y"),
-                hovermode="x unified",
-                template="plotly_white",
-            )
-
-            fig = go.Figure(data=[battery_trace, temp_trace], layout=layout)
-            # Convert NaN to null for JSON compatibility
-            graphJSON = json.dumps(fig, cls=plotly.utils.PlotlyJSONEncoder)
-            graphJSON = graphJSON.replace("NaN", "null")
-
-            # Convert DataFrame to JSON string with proper NaN handling
-            data_json = battery_df.to_json(orient="records", date_format="iso")
-            data_json = data_json.replace("NaN", "null")
-
-            # Parse and clean the data
-            data_list = json.loads(data_json)
-            chart_data = json.loads(graphJSON.replace("NaN", "null"))
-
-            # Clean any remaining NaN values
-            response_data = clean_nan_values({"chart": chart_data, "data": data_list})
-
-            return jsonify(response_data)
-        return jsonify({"chart": None, "data": []})
     except Exception as e:
+        app.logger.error("Error fetching battery history: %s", e)
         return jsonify({"error": str(e)}), 500
 
 
@@ -516,9 +463,7 @@ def debug_api():
                 "config": {
                     "region": client.region,
                     "brand": client.brand,
-                    "vehicle_id": (
-                        client.vehicle_id[:10] + "..." if client.vehicle_id else None
-                    ),
+                    "vehicle_id": (client.vehicle_id[:10] + "..." if client.vehicle_id else None),
                 },
                 "cache": cache_info,
             }
@@ -542,20 +487,14 @@ def get_temperature_efficiency():
         efficiency_data = []
 
         for _, trip in trips_df.iterrows():
-            if (
-                trip["distance"] > 0
-                and trip["total_consumed"]
-                and trip["total_consumed"] > 0
-            ):
+            if trip["distance"] > 0 and trip["total_consumed"] and trip["total_consumed"] > 0:
                 # Calculate efficiency
                 efficiency_wh_per_km = trip["total_consumed"] / trip["distance"]
                 efficiency_mi_per_kwh = 1000 / (efficiency_wh_per_km * 1.60934)
 
                 # Find closest battery reading to get temperature
                 trip_time = pd.to_datetime(trip["date"])
-                battery_df["timestamp"] = pd.to_datetime(
-                    battery_df["timestamp"], format="ISO8601"
-                )
+                battery_df["timestamp"] = pd.to_datetime(battery_df["timestamp"], format="ISO8601")
                 time_diffs = abs(battery_df["timestamp"] - trip_time)
                 closest_idx = time_diffs.idxmin()
 
@@ -660,12 +599,8 @@ def get_charging_temperature_impact():
         if sessions_df.empty or battery_df.empty:
             return jsonify({"error": "No charging or temperature data available"}), 404
 
-        sessions_df["start_time"] = pd.to_datetime(
-            sessions_df["start_time"], errors="coerce"
-        )
-        sessions_df["end_time"] = pd.to_datetime(
-            sessions_df["end_time"], errors="coerce"
-        )
+        sessions_df["start_time"] = pd.to_datetime(sessions_df["start_time"], errors="coerce")
+        sessions_df["end_time"] = pd.to_datetime(sessions_df["end_time"], errors="coerce")
         battery_df["timestamp"] = pd.to_datetime(
             battery_df["timestamp"], format="ISO8601", errors="coerce"
         )
@@ -719,9 +654,7 @@ def get_charging_temperature_impact():
             if energy_added <= 0:
                 continue
 
-            avg_power = (
-                energy_added / (duration_minutes / 60.0) if duration_minutes > 0 else 0
-            )
+            avg_power = energy_added / (duration_minutes / 60.0) if duration_minutes > 0 else 0
             if avg_power <= 0:
                 continue
 
@@ -733,9 +666,7 @@ def get_charging_temperature_impact():
                     "duration_minutes": round(float(duration_minutes), 1),
                     "start_time": session["start_time"].isoformat(),
                     "end_time": (
-                        session["end_time"].isoformat()
-                        if pd.notna(session["end_time"])
-                        else None
+                        session["end_time"].isoformat() if pd.notna(session["end_time"]) else None
                     ),
                 }
             )
@@ -760,11 +691,7 @@ def get_charging_temperature_impact():
 
         if not raw_points:
             return (
-                jsonify(
-                    {
-                        "error": "Could not match charging sessions with temperature readings"
-                    }
-                ),
+                jsonify({"error": "Could not match charging sessions with temperature readings"}),
                 404,
             )
 
@@ -812,9 +739,7 @@ def get_charging_temperature_impact():
                         "max": round(max(avg_powers), 2),
                     },
                     "average_power": round(sum(avg_powers) / len(avg_powers), 2),
-                    "average_duration_minutes": round(
-                        sum(durations) / len(durations), 1
-                    ),
+                    "average_duration_minutes": round(sum(durations) / len(durations), 1),
                     "total_energy_kwh": round(sum(energies), 2),
                     "best_temperature_band": (
                         {
@@ -841,9 +766,7 @@ def get_charging_temperature_impact():
         )
 
     except Exception as e:
-        app.logger.error(
-            f"Error in charging temperature impact analysis: {e}", exc_info=True
-        )
+        app.logger.error(f"Error in charging temperature impact analysis: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 
@@ -852,6 +775,7 @@ def get_efficiency_stats():
     """Get efficiency statistics for different time periods"""
     try:
         from datetime import datetime, timedelta
+
         import pandas as pd
 
         trips_df = storage.get_trips_df()
@@ -860,16 +784,12 @@ def get_efficiency_stats():
             return jsonify({"error": "No trips found"}), 404
 
         # Convert date column to datetime, handling .0 suffix
-        trips_df["date"] = (
-            trips_df["date"].astype(str).str.replace(r"\.0+$", "", regex=True)
-        )
+        trips_df["date"] = trips_df["date"].astype(str).str.replace(r"\.0+$", "", regex=True)
         trips_df["date"] = pd.to_datetime(trips_df["date"])
 
         # Calculate efficiency in Wh/km for each trip
         trips_df["efficiency_wh_per_km"] = trips_df.apply(
-            lambda row: (
-                row["total_consumed"] / row["distance"] if row["distance"] > 0 else None
-            ),
+            lambda row: (row["total_consumed"] / row["distance"] if row["distance"] > 0 else None),
             axis=1,
         )
 
@@ -932,10 +852,7 @@ def get_efficiency_stats():
                     trips_df[trips_df["date"] >= periods["last_day"]]["distance"].sum()
                 ),
                 "energy_kwh": float(
-                    trips_df[trips_df["date"] >= periods["last_day"]][
-                        "total_consumed"
-                    ].sum()
-                    / 1000
+                    trips_df[trips_df["date"] >= periods["last_day"]]["total_consumed"].sum() / 1000
                 ),
             },
             "last_week": {
@@ -943,22 +860,16 @@ def get_efficiency_stats():
                     trips_df[trips_df["date"] >= periods["last_week"]]["distance"].sum()
                 ),
                 "energy_kwh": float(
-                    trips_df[trips_df["date"] >= periods["last_week"]][
-                        "total_consumed"
-                    ].sum()
+                    trips_df[trips_df["date"] >= periods["last_week"]]["total_consumed"].sum()
                     / 1000
                 ),
             },
             "last_month": {
                 "distance_km": float(
-                    trips_df[trips_df["date"] >= periods["last_month"]][
-                        "distance"
-                    ].sum()
+                    trips_df[trips_df["date"] >= periods["last_month"]]["distance"].sum()
                 ),
                 "energy_kwh": float(
-                    trips_df[trips_df["date"] >= periods["last_month"]][
-                        "total_consumed"
-                    ].sum()
+                    trips_df[trips_df["date"] >= periods["last_month"]]["total_consumed"].sum()
                     / 1000
                 ),
             },
@@ -993,29 +904,28 @@ def get_all_locations():
             trips_df = trips_df[trips_df["date"].notna()]
 
             app.logger.info(
-                f"Before filtering: {len(trips_df)} trips, date range: {trips_df['date'].min()} to {trips_df['date'].max()}"
+                "Before filtering: %d trips, date range: %s to %s",
+                len(trips_df),
+                trips_df["date"].min(),
+                trips_df["date"].max(),
             )
 
             if hours == "custom" and start_date and end_date:
                 # Filter by custom date range
                 start = pd.to_datetime(start_date)
                 end = pd.to_datetime(end_date) + pd.Timedelta(days=1)
-                trips_df = trips_df[
-                    (trips_df["date"] >= start) & (trips_df["date"] < end)
-                ]
+                trips_df = trips_df[(trips_df["date"] >= start) & (trips_df["date"] < end)]
                 app.logger.info(
-                    f"Custom date filter: {start} to {end}, {len(trips_df)} trips remain"
+                    "Custom date filter: %s to %s, %s trips remain", start, end, len(trips_df)
                 )
             elif hours != "all":
                 try:
                     # Filter trips by time range
                     hours_int = int(hours)
                     cutoff = pd.Timestamp.now() - pd.Timedelta(hours=hours_int)
-                    app.logger.info(
-                        f"Time filter: last {hours_int} hours, cutoff: {cutoff}"
-                    )
+                    app.logger.info("Time filter: last %s hours, cutoff: %s", hours_int, cutoff)
                     trips_df = trips_df[trips_df["date"] >= cutoff]
-                    app.logger.info(f"After time filter: {len(trips_df)} trips remain")
+                    app.logger.info("After time filter: %s trips remain", len(trips_df))
                 except (ValueError, TypeError) as e:
                     app.logger.error(f"Error filtering by hours: {e}")
                     pass  # Use all data if conversion fails
@@ -1030,21 +940,15 @@ def get_all_locations():
         locations = []
         coords_count = 0
         for _, trip in trips_df.iterrows():
-            if pd.notna(trip.get("end_latitude")) and pd.notna(
-                trip.get("end_longitude")
-            ):
+            if pd.notna(trip.get("end_latitude")) and pd.notna(trip.get("end_longitude")):
                 coords_count += 1
                 locations.append(
                     {
                         "lat": float(trip["end_latitude"]),
                         "lng": float(trip["end_longitude"]),
                         "date": str(trip["date"]),
-                        "distance": (
-                            float(trip["distance"]) if pd.notna(trip["distance"]) else 0
-                        ),
-                        "duration": (
-                            int(trip["duration"]) if pd.notna(trip["duration"]) else 0
-                        ),
+                        "distance": (float(trip["distance"]) if pd.notna(trip["distance"]) else 0),
+                        "duration": (int(trip["duration"]) if pd.notna(trip["duration"]) else 0),
                         "efficiency": (
                             round(trip["total_consumed"] / trip["distance"], 1)
                             if trip["distance"] and trip["distance"] > 0
@@ -1111,7 +1015,10 @@ def get_charging_sessions():
         end_date = request.args.get("end_date")
 
         app.logger.info(
-            f"Filtering charging sessions: hours={hours}, start_date={start_date}, end_date={end_date}"
+            "Filtering charging sessions: hours=%s, start_date=%s, end_date=%s",
+            hours,
+            start_date,
+            end_date,
         )
 
         # Keep a copy so we can fall back to recent history if filters remove everything
@@ -1134,8 +1041,7 @@ def get_charging_sessions():
             start_dt = pd.to_datetime(start_date)
             end_dt = pd.to_datetime(end_date) + pd.Timedelta(days=1)  # Include end date
             sessions_df = sessions_df[
-                (sessions_df["start_time"] >= start_dt)
-                & (sessions_df["start_time"] < end_dt)
+                (sessions_df["start_time"] >= start_dt) & (sessions_df["start_time"] < end_dt)
             ]
         elif hours != "all":
             # Hours-based filtering
@@ -1145,21 +1051,23 @@ def get_charging_sessions():
                 if sessions_df["start_time"].dt.tz is not None:
                     from datetime import timezone
 
-                    cutoff_time = datetime.now(timezone.utc) - timedelta(
-                        hours=hours_int
-                    )
+                    cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours_int)
                 else:
                     cutoff_time = datetime.now() - timedelta(hours=hours_int)
 
-                app.logger.info(f"Current time: {datetime.now()}")
-                app.logger.info(f"Cutoff time ({hours_int}h ago): {cutoff_time}")
-                app.logger.info(f"Filtering sessions from {cutoff_time} onwards")
+                app.logger.info("Current time: %s", datetime.now())
+                app.logger.info("Cutoff time (%sh ago): %s", hours_int, cutoff_time)
+                app.logger.info("Filtering sessions from %s onwards", cutoff_time)
 
                 # Debug: show which sessions pass the filter
                 for idx, row in sessions_df.iterrows():
                     passes = row["start_time"] >= cutoff_time
                     app.logger.info(
-                        f"  - {row['session_id']}: {row['start_time']} >= {cutoff_time} ? {passes}"
+                        "  - %s: %s >= %s ? %s",
+                        row["session_id"],
+                        row["start_time"],
+                        cutoff_time,
+                        passes,
                     )
 
                 sessions_df = sessions_df[sessions_df["start_time"] >= cutoff_time]
@@ -1167,25 +1075,23 @@ def get_charging_sessions():
                 pass  # If hours is invalid, show all
 
         # Log the filtered dataframe info
-        app.logger.info(f"After filtering: {len(sessions_df)} sessions remain")
+        app.logger.info("After filtering: %s sessions remain", len(sessions_df))
         if not sessions_df.empty:
             app.logger.info(
-                f"Sessions dates: {sessions_df['start_time'].min()} to {sessions_df['start_time'].max()}"
+                "Sessions dates: %s to %s",
+                sessions_df["start_time"].min(),
+                sessions_df["start_time"].max(),
             )
-            app.logger.info(
-                f"Active sessions: {len(sessions_df[~sessions_df['is_complete']])}"
-            )
+            app.logger.info("Active sessions: %s", len(sessions_df[~sessions_df["is_complete"]]))
         elif not original_sessions.empty:
             # fall back to most recent sessions across full history so UI still has content
-            fallback_candidates = original_sessions[
-                original_sessions["start_time"].notna()
-            ]
+            fallback_candidates = original_sessions[original_sessions["start_time"].notna()]
             if fallback_candidates.empty:
                 return jsonify([])
             fallback_count = min(len(fallback_candidates), 10)
-            sessions_df = fallback_candidates.sort_values(
-                "start_time", ascending=False
-            ).head(fallback_count)
+            sessions_df = fallback_candidates.sort_values("start_time", ascending=False).head(
+                fallback_count
+            )
             app.logger.info(
                 "No sessions matched filter; returning %s most recent sessions instead",
                 fallback_count,
@@ -1205,14 +1111,10 @@ def get_charging_sessions():
             session_data = {
                 "session_id": session["session_id"],
                 "start_time": (
-                    session["start_time"].isoformat()
-                    if pd.notna(session["start_time"])
-                    else None
+                    session["start_time"].isoformat() if pd.notna(session["start_time"]) else None
                 ),
                 "end_time": (
-                    session["end_time"].isoformat()
-                    if pd.notna(session["end_time"])
-                    else None
+                    session["end_time"].isoformat() if pd.notna(session["end_time"]) else None
                 ),
                 "duration_minutes": (
                     float(session["duration_minutes"])
@@ -1220,35 +1122,21 @@ def get_charging_sessions():
                     else 0
                 ),
                 "start_battery": (
-                    int(session["start_battery"])
-                    if pd.notna(session["start_battery"])
-                    else 0
+                    int(session["start_battery"]) if pd.notna(session["start_battery"]) else 0
                 ),
                 "end_battery": (
-                    int(session["end_battery"])
-                    if pd.notna(session["end_battery"])
-                    else 0
+                    int(session["end_battery"]) if pd.notna(session["end_battery"]) else 0
                 ),
                 "energy_added": (
-                    float(session["energy_added"])
-                    if pd.notna(session["energy_added"])
-                    else 0
+                    float(session["energy_added"]) if pd.notna(session["energy_added"]) else 0
                 ),
-                "avg_power": (
-                    float(session["avg_power"]) if pd.notna(session["avg_power"]) else 0
-                ),
-                "max_power": (
-                    float(session["max_power"]) if pd.notna(session["max_power"]) else 0
-                ),
+                "avg_power": (float(session["avg_power"]) if pd.notna(session["avg_power"]) else 0),
+                "max_power": (float(session["max_power"]) if pd.notna(session["max_power"]) else 0),
                 "location_lat": (
-                    float(session["location_lat"])
-                    if pd.notna(session["location_lat"])
-                    else None
+                    float(session["location_lat"]) if pd.notna(session["location_lat"]) else None
                 ),
                 "location_lon": (
-                    float(session["location_lon"])
-                    if pd.notna(session["location_lon"])
-                    else None
+                    float(session["location_lon"]) if pd.notna(session["location_lon"]) else None
                 ),
                 "is_complete": (
                     str(session["is_complete"]).lower() == "true"
@@ -1292,15 +1180,11 @@ def get_collection_status():
                     # If the calculated time has passed, find the next scheduled slot
                     if next_collection <= now:
                         # Calculate today's scheduled times
-                        today_start = now.replace(
-                            hour=0, minute=0, second=0, microsecond=0
-                        )
+                        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
 
                         # Find next available slot
                         for i in range(calls_today, daily_limit):
-                            scheduled_time = today_start + timedelta(
-                                minutes=interval_minutes * i
-                            )
+                            scheduled_time = today_start + timedelta(minutes=interval_minutes * i)
                             if scheduled_time > now:
                                 next_collection = scheduled_time
                                 break
@@ -1346,9 +1230,7 @@ def get_current_status():
         battery_df = storage.get_battery_df()
         if not battery_df.empty:
             # Use pandas to_json to handle NaN properly
-            latest_json = battery_df.iloc[[-1]].to_json(
-                orient="records", date_format="iso"
-            )
+            latest_json = battery_df.iloc[[-1]].to_json(orient="records", date_format="iso")
             latest_data = json.loads(latest_json)[0]
 
             # Get weather data if using meteo
@@ -1396,13 +1278,9 @@ def get_current_status():
 
             # Add API freshness information
             if latest_cache_data and "api_last_updated" in latest_cache_data:
-                response_data["api_last_updated"] = latest_cache_data[
-                    "api_last_updated"
-                ]
+                response_data["api_last_updated"] = latest_cache_data["api_last_updated"]
             if latest_cache_data:
-                response_data["hyundai_data_fresh"] = latest_cache_data.get(
-                    "hyundai_data_fresh"
-                )
+                response_data["hyundai_data_fresh"] = latest_cache_data.get("hyundai_data_fresh")
 
             # Add weather data if available
             if weather_data:

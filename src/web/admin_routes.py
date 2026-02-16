@@ -93,9 +93,7 @@ def raw_response_detail(response_id):
             return jsonify({"error": "Response not found"}), 404
         return jsonify(result)
     except Exception as exc:
-        logger.error(
-            "Error fetching raw response %d: %s", response_id, exc, exc_info=True
-        )
+        logger.error("Error fetching raw response %d: %s", response_id, exc, exc_info=True)
         return jsonify({"error": str(exc)}), 500
 
 

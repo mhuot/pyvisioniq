@@ -1,6 +1,6 @@
 """Tests for WeatherService."""
 
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -49,6 +49,7 @@ class TestGetCurrentWeather:
         assert service.get_current_weather(None, None) is None
         assert service.get_current_weather(44.0, None) is None
         assert service.get_current_weather(None, -93.0) is None
+
     @patch("src.utils.weather.requests.get")
     def test_successful_fetch(self, mock_get, tmp_cache_dir):
         service = WeatherService(cache_dir=tmp_cache_dir)

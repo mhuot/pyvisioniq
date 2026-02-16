@@ -1,8 +1,9 @@
-from flask import Blueprint, jsonify, render_template, request, Response
-from pathlib import Path
 import json
-from datetime import datetime
 import os
+from datetime import datetime
+from pathlib import Path
+
+from flask import Blueprint, Response, jsonify, render_template, request
 
 cache_bp = Blueprint("cache", __name__, url_prefix="/cache")
 
@@ -22,8 +23,7 @@ def get_file_info(file_path):
         "size": stat.st_size,
         "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
         "age_hours": round(
-            (datetime.now() - datetime.fromtimestamp(stat.st_mtime)).total_seconds()
-            / 3600,
+            (datetime.now() - datetime.fromtimestamp(stat.st_mtime)).total_seconds() / 3600,
             1,
         ),
         "is_history": file_path.name.startswith("history_"),
@@ -70,10 +70,8 @@ def list_cache_files():
                     "history_files": len(history_files),
                     "error_files": len(error_files),
                     "current_files": len(current_files),
-                    "cache_validity_minutes": client.cache_validity.total_seconds()
-                    / 60,
-                    "cache_retention_hours": client.cache_retention.total_seconds()
-                    / 3600,
+                    "cache_validity_minutes": client.cache_validity.total_seconds() / 60,
+                    "cache_retention_hours": client.cache_retention.total_seconds() / 3600,
                 },
             }
         )
@@ -181,9 +179,7 @@ def force_cache_update():
                     "data": {
                         "battery_level": data.get("battery", {}).get("level"),
                         "range": data.get("battery", {}).get("range"),
-                        "temperature": data.get("raw_data", {})
-                        .get("airTemp", {})
-                        .get("value"),
+                        "temperature": data.get("raw_data", {}).get("airTemp", {}).get("value"),
                         "timestamp": data.get("timestamp"),
                     },
                 }

@@ -4,10 +4,10 @@ Reprocess all cache files to update CSV data with latest changes.
 This will read all cached data and rebuild the CSV files without duplicates.
 """
 
-import sys
 import json
-from pathlib import Path
+import sys
 from datetime import datetime
+from pathlib import Path
 
 # Add parent directory to path
 sys.path.append(str(Path(__file__).parent.parent))
@@ -37,10 +37,7 @@ def process_cache_files():
     # Get all cache files sorted by timestamp
     cache_files = []
     for file in cache_dir.glob("*.json"):
-        if (
-            file.stem.startswith("history_")
-            or file.stem == "72a2f11d47c418e96847e34b5bf75766"
-        ):
+        if file.stem.startswith("history_") or file.stem == "72a2f11d47c418e96847e34b5bf75766":
             # Extract timestamp from filename
             if file.stem.startswith("history_"):
                 parts = file.stem.split("_")

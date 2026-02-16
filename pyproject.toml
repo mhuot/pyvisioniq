@@ -19,6 +19,8 @@ disable = [
     "too-many-arguments",
     "broad-exception-caught",
     "import-error",
+    "duplicate-code",
+    "too-many-lines",
 ]
 
 [tool.pytest.ini_options]

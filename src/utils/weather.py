@@ -1,12 +1,13 @@
 """Weather data fetching module using Open-Meteo API"""
 
-import os
 import json
 import logging
-import requests
+import os
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Optional, Dict
+from typing import Dict, Optional
+
+import requests
 
 logger = logging.getLogger(__name__)
 
@@ -69,9 +70,7 @@ class WeatherService:
                 "humidity": current.get("relative_humidity_2m"),
                 "wind_speed": current.get("wind_speed_10m"),
                 "weather_code": current.get("weather_code"),
-                "description": self._get_weather_description(
-                    current.get("weather_code")
-                ),
+                "description": self._get_weather_description(current.get("weather_code")),
                 "timestamp": datetime.now().isoformat(),
                 "source": "meteo",
                 "location": {"lat": lat, "lon": lon},
