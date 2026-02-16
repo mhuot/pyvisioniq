@@ -1,7 +1,5 @@
 """Shared fixtures for tests."""
 
-import os
-import tempfile
 import pytest
 
 
