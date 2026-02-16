@@ -10,48 +10,47 @@ from src.utils.weather import WeatherService
 
 
 class TestWeatherDescription:
-    def setup_method(self):
-        self.service = WeatherService(cache_dir="cache")
+    def test_clear_sky(self, tmp_path):
+        service = WeatherService(cache_dir=tmp_path)
+        assert service._get_weather_description(0) == "Clear sky"
 
-    def test_clear_sky(self):
-        assert self.service._get_weather_description(0) == "Clear sky"
+    def test_thunderstorm(self, tmp_path):
+        service = WeatherService(cache_dir=tmp_path)
+        assert service._get_weather_description(95) == "Thunderstorm"
 
-    def test_thunderstorm(self):
-        assert self.service._get_weather_description(95) == "Thunderstorm"
+    def test_unknown_code(self, tmp_path):
+        service = WeatherService(cache_dir=tmp_path)
+        assert service._get_weather_description(999) == "Weather code 999"
 
-    def test_unknown_code(self):
-        assert self.service._get_weather_description(999) == "Weather code 999"
-
-    def test_none_code(self):
-        assert self.service._get_weather_description(None) == "Unknown"
+    def test_none_code(self, tmp_path):
+        service = WeatherService(cache_dir=tmp_path)
+        assert service._get_weather_description(None) == "Unknown"
 
 
 class TestTemperatureConversion:
-    def setup_method(self):
-        self.service = WeatherService(cache_dir="cache")
+    def test_freezing_point(self, tmp_path):
+        service = WeatherService(cache_dir=tmp_path)
+        assert service.get_temperature_in_celsius(32) == 0.0
 
-    def test_freezing_point(self):
-        assert self.service.get_temperature_in_celsius(32) == 0.0
+    def test_boiling_point(self, tmp_path):
+        service = WeatherService(cache_dir=tmp_path)
+        assert service.get_temperature_in_celsius(212) == 100.0
 
-    def test_boiling_point(self):
-        assert self.service.get_temperature_in_celsius(212) == 100.0
+    def test_body_temp(self, tmp_path):
+        service = WeatherService(cache_dir=tmp_path)
+        assert service.get_temperature_in_celsius(98.6) == pytest.approx(37.0, abs=0.1)
 
-    def test_body_temp(self):
-        assert self.service.get_temperature_in_celsius(98.6) == pytest.approx(37.0, abs=0.1)
-
-    def test_below_zero(self):
-        assert self.service.get_temperature_in_celsius(0) == pytest.approx(-17.8, abs=0.1)
+    def test_below_zero(self, tmp_path):
+        service = WeatherService(cache_dir=tmp_path)
+        assert service.get_temperature_in_celsius(0) == pytest.approx(-17.8, abs=0.1)
 
 
 class TestGetCurrentWeather:
-    def setup_method(self):
-        self.service = WeatherService(cache_dir="cache")
-
-    def test_missing_coordinates_returns_none(self):
-        assert self.service.get_current_weather(None, None) is None
-        assert self.service.get_current_weather(44.0, None) is None
-        assert self.service.get_current_weather(None, -93.0) is None
-
+    def test_missing_coordinates_returns_none(self, tmp_path):
+        service = WeatherService(cache_dir=tmp_path)
+        assert service.get_current_weather(None, None) is None
+        assert service.get_current_weather(44.0, None) is None
+        assert service.get_current_weather(None, -93.0) is None
     @patch("src.utils.weather.requests.get")
     def test_successful_fetch(self, mock_get, tmp_cache_dir):
         service = WeatherService(cache_dir=tmp_cache_dir)
