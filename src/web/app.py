@@ -27,7 +27,7 @@ try:
     client = CachedVehicleClient()
     app.config["cache_client"] = client  # Store client in app config for blueprints
 except Exception as e:
-    print(f"Warning: Failed to initialize API client: {e}")
+    app.logger.warning("Failed to initialize API client: %s", e)
     client = None
     app.config["cache_client"] = None
 
@@ -1305,7 +1305,7 @@ def get_current_status():
             }
         )
     except Exception as e:
-        print(f"Error in current-status: {e}")
+        app.logger.error("Error in current-status: %s", e)
         return jsonify({"error": str(e)}), 500
 
 

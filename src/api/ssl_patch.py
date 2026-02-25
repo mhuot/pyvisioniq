@@ -1,8 +1,11 @@
 """SSL patch for hyundai_kia_connect_api to handle certificate issues"""
 
+import logging
 import ssl
 
 import urllib3
+
+logger = logging.getLogger(__name__)
 from requests.adapters import HTTPAdapter
 
 # Disable SSL warnings
@@ -38,12 +41,12 @@ def patch_hyundai_ssl():
                 adapter = SSLAdapter()
                 self.sessions.mount("https://", adapter)
                 self.sessions.verify = False
-                print("SSL verification disabled for Hyundai API")
+                logger.info("SSL verification disabled for Hyundai API")
 
         # Apply the patch
         ApiImpl.__init__ = patched_init
         return True
 
     except Exception as e:
-        print(f"Failed to patch SSL: {e}")
+        logger.error("Failed to patch SSL: %s", e)
         return False

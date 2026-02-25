@@ -4,7 +4,6 @@ import logging
 import os
 import random
 import time
-import traceback
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -63,7 +62,7 @@ class CachedVehicleClient:
     def _setup_api(self):
         # Check if credentials are provided
         if not all([self.username, self.password, self.pin]):
-            print("Warning: Missing API credentials. API calls will not work.")
+            logger.warning("Missing API credentials. API calls will not work.")
             self.manager = None
             return
 
@@ -74,7 +73,7 @@ class CachedVehicleClient:
         try:
             # Try to work around SSL issues
             if os.getenv("DISABLE_SSL_VERIFY", "false").lower() == "true":
-                print("WARNING: SSL verification will be disabled")
+                logger.warning("SSL verification will be disabled")
                 from .ssl_patch import patch_hyundai_ssl
 
                 patch_hyundai_ssl()
@@ -87,7 +86,7 @@ class CachedVehicleClient:
                 pin=self.pin,
             )
         except Exception as e:
-            print(f"Warning: Failed to initialize VehicleManager: {e}")
+            logger.warning("Failed to initialize VehicleManager: %s", e)
             self.manager = None
 
     def _get_cache_key(self, method_name):
@@ -162,11 +161,11 @@ class CachedVehicleClient:
         if not self.manager:
             return False
         try:
-            print("Attempting to refresh token...")
+            logger.info("Attempting to refresh token...")
             self.manager.check_and_refresh_token()
-            print("Token refreshed successfully")
+            logger.info("Token refreshed successfully")
         except Exception as e:
-            print(f"Error refreshing token: {type(e).__name__}: {e}")
+            logger.error("Error refreshing token: %s: %s", type(e).__name__, e)
 
             # Save token error for debugging
             error_data = {
@@ -193,11 +192,13 @@ class CachedVehicleClient:
         previous_cache = self._load_cache_entry(cache_key)
 
         if not self.manager:
-            print("Error: VehicleManager not initialized")
+            logger.error("VehicleManager not initialized")
             return None
 
-        print("Forcing cache update from API...")
-        print(f"Region: {self.region}, Brand: {self.brand}, Vehicle ID: {self.vehicle_id}")
+        logger.info("Forcing cache update from API...")
+        logger.info(
+            "Region: %s, Brand: %s, Vehicle ID: %s", self.region, self.brand, self.vehicle_id
+        )
 
         if not self.check_and_refresh_token():
             return None
@@ -223,14 +224,14 @@ class CachedVehicleClient:
                         data["hyundai_data_fresh"] = is_fresh
                         data["is_cached"] = not is_fresh
                         self._save_to_cache(cache_key, data)
-                        print("Cache updated successfully!")
+                        logger.info("Cache updated successfully")
                         return data
 
-            print("Failed to update cache")
+            logger.warning("Failed to update cache")
             return None
 
         except Exception as e:
-            print(f"Error during force cache update: {e}")
+            logger.error("Error during force cache update: %s", e)
             return None
 
     def _load_cache_entry(self, cache_key):
@@ -419,8 +420,7 @@ class CachedVehicleClient:
             return data
 
         except Exception as e:
-            logger.error("Error processing vehicle data: %s", e)
-            traceback.print_exc()
+            logger.error("Error processing vehicle data: %s", e, exc_info=True)
             return None
 
     def get_vehicle_data(self):
@@ -428,7 +428,7 @@ class CachedVehicleClient:
         cached_data = self._load_from_cache(cache_key)
 
         if cached_data:
-            print(f"Using cached vehicle data (age: {self._get_cache_age(cache_key)})")
+            logger.info("Using cached vehicle data (age: %s)", self._get_cache_age(cache_key))
             # Mark data as coming from cache
             cached_data["is_cached"] = True
             cached_data["hyundai_data_fresh"] = False
@@ -437,17 +437,19 @@ class CachedVehicleClient:
         previous_cache = self._load_cache_entry(cache_key)
 
         if not self.manager:
-            print("Error: VehicleManager not initialized")
+            logger.error("VehicleManager not initialized")
             return None
 
-        print("Fetching fresh vehicle data from API...")
-        print(f"Region: {self.region}, Brand: {self.brand}, Vehicle ID: {self.vehicle_id}")
+        logger.info("Fetching fresh vehicle data from API...")
+        logger.info(
+            "Region: %s, Brand: %s, Vehicle ID: %s", self.region, self.brand, self.vehicle_id
+        )
 
         if not self.check_and_refresh_token():
             return None
 
         try:
-            print("Updating vehicle data...")
+            logger.info("Updating vehicle data...")
 
             # Check if vehicle_id is set
             if not self.vehicle_id:
@@ -492,7 +494,7 @@ class CachedVehicleClient:
                 logger.error("No vehicle data available")
                 return self._get_last_successful_cache()
 
-            print(f"Vehicle data retrieved")
+            logger.info("Vehicle data retrieved")
 
             # Process the vehicle data
             data = self._process_vehicle_data(vehicle)
@@ -508,7 +510,7 @@ class CachedVehicleClient:
                 return self._get_last_successful_cache()
 
         except Exception as e:
-            print(f"Error fetching vehicle data: {type(e).__name__}: {e}")
+            logger.error("Error fetching vehicle data: %s: %s", type(e).__name__, e)
 
             # Check if this is a vehicleStatus KeyError
             if isinstance(e, KeyError) and str(e) == "'vehicleStatus'":
@@ -657,7 +659,7 @@ class CachedVehicleClient:
         last_error = None
         last_action = None
         for attempt in range(max_retries):
-            print(f"Attempt {attempt + 1} of {max_retries} to update vehicle data...")
+            logger.info("Attempt %d of %d to update vehicle data...", attempt + 1, max_retries)
             try:
                 # Add jitter to prevent thundering herd
                 if attempt > 0:
@@ -686,10 +688,13 @@ class CachedVehicleClient:
 
             except Exception as e:
                 last_error = self._classify_error(e)
-                print(
-                    f"Error during vehicle update: {last_error.message} (attempt {attempt + 1}/{max_retries})"
+                logger.error(
+                    "Error during vehicle update: %s (attempt %d/%d)",
+                    last_error.message,
+                    attempt + 1,
+                    max_retries,
                 )
-                print(f"Last action: {last_action}")
+                logger.error("Last action: %s", last_action)
 
                 # Check if it's a KeyError for vehicleStatus
                 if isinstance(e, KeyError) and str(e) == "'vehicleStatus'":
