@@ -75,19 +75,18 @@ pre-commit install
 ### Data Management Tools
 ```bash
 # All tools require venv activation first
-python tools/reprocess_cache_complete.py       # Rebuild CSV files from cache
-python tools/deduplicate_trips_v2.py           # Remove duplicate trips
-python tools/fix_charging_sessions.py          # Fix charging session data issues
-python tools/fix_charging_sessions_columns.py  # Fix charging session column structure
-python tools/rebuild_charging_sessions.py      # Rebuild charging sessions from scratch
-python tools/migrate_trips_location.py         # Add location data to trips
-python tools/add_temperature_columns.py        # Add temperature data to CSVs
-python tools/add_charging_power_column.py      # Add charging power column
-python tools/fix_cache_odometer.py             # Fix odometer readings in cache
-python tools/add_is_cached_column.py           # Add is_cached column to battery_status.csv
-python tools/recompute_is_cached.py            # Recompute is_cached flags
-python tools/migrate_csv_to_oracle.py          # Migrate CSV data to Oracle ADB
-python tools/migrate_csv_to_oracle.py --dry-run  # Preview migration without writing
+python tools/reprocess_cache_complete.py                  # Rebuild CSV files from cache (recovery)
+python tools/deduplicate_trips_v2.py                      # Remove duplicate trips
+python tools/rebuild_sessions_from_battery.py              # Rebuild charging sessions from battery history
+python tools/rebuild_sessions_from_battery.py --preview    # Preview rebuild without writing
+python tools/rebuild_charging_sessions.py                  # Merge fragmented charging sessions
+python tools/recompute_is_cached.py                        # Recompute is_cached flags (dry run)
+python tools/recompute_is_cached.py --write-cache          # Recompute and persist changes
+python tools/migrate_csv_to_oracle.py                      # Migrate CSV data to Oracle ADB
+python tools/migrate_csv_to_oracle.py --dry-run            # Preview migration without writing
+python tools/analyze_errors.py                             # Analyze API error patterns
+
+# Archived one-time scripts are in tools/archive/
 ```
 
 ### Testing
@@ -97,18 +96,12 @@ pytest tests/
 
 # Run with coverage
 pytest tests/ --cov=src --cov-report=term-missing
-
-# Legacy manual charging session test
-python test_charging_session.py
 ```
 
 ### Development and Debugging
 ```bash
 # Run with debug mode enabled for verbose logging
 DEBUG_MODE=true python -m src.web.app
-
-# Analyze error data (when debug files exist)
-python analyze_errors.py    # Processes debug/*.json error files
 ```
 
 ## High-Level Architecture
@@ -199,6 +192,7 @@ Critical settings that must be configured:
 - `DEBUG_MODE`: Enables verbose logging and debug routes
 - `TZ`: Timezone for data collection (default: America/Chicago)
 - `PORT`: Web server port (default: 5000)
+- `SECRET_KEY`: Flask secret key (defaults to dev-secret-key; set in production)
 - `WEATHER_SOURCE`: "meteo" for Open-Meteo API or "vehicle" for car sensor
 - `STORAGE_BACKEND`: Storage backend to use — `csv` (default), `oracle`, or `dual` (CSV + Oracle)
 - `DUAL_READ_FROM`: When using dual mode, which backend to read from — `csv` (default) or `oracle`
@@ -226,7 +220,8 @@ pyvisionic/
 │       ├── debug_routes.py    # Blueprint for /debug routes (DEBUG_MODE only)
 │       ├── templates/         # HTML templates
 │       └── static/            # CSS, JS, images
-├── tools/                      # Data migration/repair scripts
+├── tools/                      # Active data management scripts (archived ones in tools/archive/)
+│   └── archive/                # One-time migration/fix scripts (already applied)
 ├── data/                       # CSV files (trips, battery_status, locations, charging_sessions)
 ├── cache/                      # Cached API responses (timestamped history files)
 ├── logs/                       # Application logs
