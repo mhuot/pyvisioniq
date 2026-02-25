@@ -13,11 +13,11 @@ A comprehensive Python web application for monitoring and visualizing Hyundai/Ki
 - **Docker Support**: Full containerization with docker compose
 
 ### Web Dashboard
-- **Interactive Charts**: 
+- **Interactive Charts**:
   - Battery level with temperature correlation
   - Energy consumption breakdown by component (drivetrain, climate, accessories)
   - Trip efficiency trends over time
-- **Efficiency Statistics**: 
+- **Efficiency Statistics**:
   - Miles per kWh (mi/kWh) calculations
   - Time-based averages (day/week/month/year)
   - Best/worst/average efficiency tracking
@@ -63,12 +63,12 @@ cd pyvisionic
 cat > .env << EOF
 BLUELINKUSER=your_username
 BLUELINKPASS=your_password
-BLUELINKREGION=3  # 1=USA, 2=Canada, 3=Europe
-BLUELINKBRAND=2   # 1=Hyundai, 2=Kia, 3=Genesis
+BLUELINKREGION=1  # 1=Europe, 2=Canada, 3=USA, 4=China, 5=Australia
+BLUELINKBRAND=1   # 1=Kia, 2=Hyundai, 3=Genesis
 EOF
 ```
 
-3. Run with docker-compose:
+3. Start the containers:
 ```bash
 docker compose up -d
 ```
@@ -99,8 +99,8 @@ pip install -r requirements.txt
 cat > .env << EOF
 BLUELINKUSER=your_username
 BLUELINKPASS=your_password
-BLUELINKREGION=3  # 1=USA, 2=Canada, 3=Europe
-BLUELINKBRAND=2   # 1=Hyundai, 2=Kia, 3=Genesis
+BLUELINKREGION=1  # 1=Europe, 2=Canada, 3=USA, 4=China, 5=Australia
+BLUELINKBRAND=1   # 1=Kia, 2=Hyundai, 3=Genesis
 EOF
 ```
 
@@ -200,13 +200,18 @@ For local development without HTTPS, set the redirect URI to `http://localhost:5
 - `BLUELINKPASS`: Your Hyundai/Kia Connect password
 - `BLUELINKPIN`: Your Hyundai/Kia Connect PIN (optional, only needed for remote commands)
 - `BLUELINKVID`: Your vehicle ID (obtained from first run if not set)
-- `BLUELINKREGION`: Region code (1=USA, 2=Canada, 3=Europe)
-- `BLUELINKBRAND`: Brand (1=Hyundai, 2=Kia, 3=Genesis)
+- `BLUELINKREGION`: Region code (1=Europe, 2=Canada, 3=USA, 4=China, 5=Australia)
+- `BLUELINKBRAND`: Brand (1=Kia, 2=Hyundai, 3=Genesis)
 - `API_DAILY_LIMIT`: API call limit (default: 30)
+- `CACHE_DURATION_HOURS`: How long to retain cache files (default: 48)
 - `DEBUG_MODE`: Enable verbose logging and debug routes (true/false)
 - `TZ`: Timezone for data collection (default: America/Chicago)
 - `PORT`: Web server port (default: 5000)
+- `SECRET_KEY`: Flask secret key for sessions (set a strong value in production)
+- `WEATHER_SOURCE`: Temperature data source — `meteo` (Open-Meteo API) or `vehicle` (car sensor)
+- `DISABLE_SSL_VERIFY`: Set to `true` to bypass SSL certificate verification
 - `STORAGE_BACKEND`: Storage backend — `csv` (default), `oracle`, or `dual`
+- `DUAL_READ_FROM`: When using dual mode, which backend to read from — `csv` (default) or `oracle`
 - `ORACLE_USER`: Oracle ADB username (required for oracle/dual)
 - `ORACLE_PASSWORD`: Oracle ADB password (required for oracle/dual)
 - `ORACLE_DSN`: Oracle TNS name from wallet (required for oracle/dual)
@@ -254,14 +259,15 @@ For local development without HTTPS, set the redirect URI to `http://localhost:5
 
 ### Data Management Tools
 Located in `tools/` directory:
-- `reprocess_cache_complete.py`: Rebuild CSV files from cache
+- `reprocess_cache_complete.py`: Rebuild CSV files from cache (recovery)
 - `deduplicate_trips_v2.py`: Remove duplicate trip entries
-- `migrate_trips_location.py`: Add location data to trips
-- `fix_cache_odometer.py`: Fix odometer readings in cache
-- `fix_charging_sessions.py`: Fix charging session data issues
-- `add_temperature_columns.py`: Add temperature data to CSVs
-- `add_charging_power_column.py`: Add charging power data
+- `rebuild_sessions_from_battery.py`: Rebuild charging sessions from battery history (`--preview` for dry run)
+- `rebuild_charging_sessions.py`: Merge fragmented charging sessions
+- `recompute_is_cached.py`: Recompute is_cached flags (`--write-cache` to persist)
+- `analyze_errors.py`: Analyze API error patterns
 - `migrate_csv_to_oracle.py`: Migrate CSV data to Oracle ADB (supports `--dry-run`)
+
+One-time migration scripts that have already been applied are archived in `tools/archive/`.
 
 ## Data Storage
 
@@ -295,7 +301,7 @@ pyvisionic/
 │   │   ├── dual_store.py     # Dual-write (CSV + Oracle)
 │   │   └── factory.py        # Storage factory (reads STORAGE_BACKEND)
 │   └── web/          # Flask web application, admin dashboard, auth
-├── tools/            # Data management scripts
+├── tools/            # Data management scripts (archived one-time scripts in tools/archive/)
 ├── docs/             # Architecture documentation
 ├── data/             # CSV data files
 ├── cache/            # Cached API responses
@@ -312,6 +318,18 @@ For detailed architectural diagrams and technical documentation, see [docs/ARCHI
 - API endpoint mappings
 - Data storage schema
 
+### Makefile Shortcuts
+Common development tasks are available via `make`:
+```bash
+make ci              # Run all CI checks (format, lint, security, test)
+make format          # Auto-format code with black
+make lint            # Run pylint
+make security        # Run bandit security scan
+make test            # Run pytest
+make coverage        # Run tests with coverage report
+make install-dev     # Install development dependencies
+```
+
 ### Adding Features
 1. API changes: Modify `src/api/client.py`
 2. Storage changes: Update `src/storage/csv_store.py`
@@ -319,9 +337,12 @@ For detailed architectural diagrams and technical documentation, see [docs/ARCHI
 4. New tools: Add scripts to `tools/` directory
 
 ## Known Issues
-- Temperature data may not update correctly from API
-- Data validation rejects numpy.int64 types in charging session tracking
-- Virtual environment created on macOS may need recreation on Linux
+- **Temperature stale data**: Vehicle sensor may not update reliably; use `WEATHER_SOURCE=meteo` for Open-Meteo API instead
+- **numpy type validation**: DataValidator handles numpy.int64 to prevent JSON serialization errors
+- **Cross-platform venv**: Virtual environment created on macOS may need recreation on Linux
+- **vehicleStatus KeyError**: During Hyundai API maintenance windows, the app gracefully falls back to the last cached response
+- **SSL certificate issues**: Set `DISABLE_SSL_VERIFY=true` to bypass (uses ssl_patch.py)
+- **Rate limiting backoff**: Automatic backoff extends the next collection interval by 1.5x (max 4x) when rate-limited
 
 ## Troubleshooting
 
