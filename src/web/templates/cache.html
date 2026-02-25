@@ -209,7 +209,7 @@
             try {
                 const response = await fetch('/cache/api/files');
                 const data = await response.json();
-                
+
                 if (response.ok) {
                     displayStats(data.stats);
                     displayFiles(data.files);
@@ -257,16 +257,16 @@
 
         function displayFiles(files) {
             const container = document.getElementById('file-list');
-            
+
             if (files.length === 0) {
                 container.innerHTML = '<div class="loading">No cache files found</div>';
                 return;
             }
-            
+
             container.innerHTML = files.map(file => {
                 let icon = '📄';
                 let tags = [];
-                
+
                 if (file.is_history) {
                     icon = '📚';
                     tags.push('<span class="tag tag-history">history</span>');
@@ -276,7 +276,7 @@
                 } else {
                     icon = '💾';
                 }
-                
+
                 return `
                     <div class="file-item">
                         <div class="file-icon">${icon}</div>
@@ -302,19 +302,19 @@
             try {
                 const response = await fetch(`/cache/api/file/${filename}`);
                 const data = await response.json();
-                
+
                 if (response.ok) {
                     let modalContent = `<h2>${filename}</h2>`;
-                    
+
                     if (data.is_current) {
                         modalContent += '<span class="tag tag-current">current cache</span>';
                     }
                     if (data.is_valid) {
                         modalContent += '<span class="tag tag-valid">valid</span>';
                     }
-                    
+
                     modalContent += `<pre>${JSON.stringify(data.content, null, 2)}</pre>`;
-                    
+
                     document.getElementById('modal-body').innerHTML = modalContent;
                     document.getElementById('file-modal').style.display = 'block';
                 } else {
@@ -327,13 +327,13 @@
 
         async function deleteFile(filename) {
             if (!confirm(`Delete ${filename}?`)) return;
-            
+
             try {
                 const response = await fetch(`/cache/api/delete/${filename}`, {
                     method: 'DELETE'
                 });
                 const data = await response.json();
-                
+
                 if (response.ok) {
                     showSuccess(data.message);
                     loadFiles();
@@ -347,14 +347,14 @@
 
         async function forceUpdate() {
             if (!confirm('Force a cache update? This will count against your daily API limit.')) return;
-            
+
             try {
                 showInfo('Updating cache from API...');
                 const response = await fetch('/cache/api/force-update', {
                     method: 'POST'
                 });
                 const data = await response.json();
-                
+
                 if (response.ok) {
                     showSuccess(`Cache updated! Battery: ${data.data.battery_level}%, Range: ${data.data.range}km, Temp: ${data.data.temperature}°F`);
                     loadFiles();
@@ -368,13 +368,13 @@
 
         async function clearOldCache() {
             if (!confirm('Clear all cache files older than retention period?')) return;
-            
+
             try {
                 const response = await fetch('/cache/api/clear-old', {
                     method: 'POST'
                 });
                 const data = await response.json();
-                
+
                 if (response.ok) {
                     showSuccess(data.message);
                     loadFiles();
@@ -414,12 +414,12 @@
             const container = document.querySelector('.cache-container');
             const existing = document.querySelector('.message-alert');
             if (existing) existing.remove();
-            
+
             const alert = document.createElement('div');
             alert.className = `message-alert ${type}`;
             alert.textContent = message;
             container.insertBefore(alert, container.firstChild);
-            
+
             if (type !== 'info') {
                 setTimeout(() => alert.remove(), 5000);
             }
@@ -427,7 +427,7 @@
 
         // Load files on page load
         loadFiles();
-        
+
         // Refresh every 30 seconds
         setInterval(loadFiles, 30000);
     </script>

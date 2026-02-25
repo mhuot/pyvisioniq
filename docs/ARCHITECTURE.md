@@ -20,27 +20,27 @@ graph TB
         Weather[Open-Meteo API<br/>Weather data]
         OSM[OpenStreetMap<br/>Map tiles]
     end
-    
+
     subgraph "PyVisionic Container"
         subgraph "Background Services"
             DC[Data Collector<br/>Continuous collection<br/>48min intervals]
         end
-        
+
         subgraph "API Layer"
             Client[CachedVehicleClient<br/>Authentication<br/>Caching<br/>Error handling]
             SSL[SSL Patch<br/>Certificate fix]
         end
-        
+
         subgraph "Storage Layer"
             CSV[CSVStorage<br/>4 CSV files<br/>Deduplication]
             Cache[Cache Files<br/>JSON responses<br/>48hr retention]
         end
-        
+
         subgraph "Web Layer"
             Flask[Flask App<br/>12 API endpoints<br/>Gunicorn WSGI]
             Static[Static Assets<br/>CSS/JS/Images]
         end
-        
+
         subgraph "Data Files"
             Trips[trips.csv]
             Battery[battery_status.csv]
@@ -48,13 +48,13 @@ graph TB
             Sessions[charging_sessions.csv]
         end
     end
-    
+
     subgraph "User Interface"
         Browser[Web Browser<br/>Dashboard UI]
         Charts[Chart.js<br/>Battery/Energy charts]
         Maps[Leaflet Maps<br/>Trip locations]
     end
-    
+
     API --> Client
     Weather --> Client
     Client --> SSL
@@ -87,7 +87,7 @@ sequenceDiagram
     participant Flask as Flask App
     participant UI as Web UI
     participant Weather as Open-Meteo API
-    
+
     Note over DC: Every 48 minutes
     DC->>Cache: Check cache validity
     alt Cache Invalid
@@ -100,23 +100,23 @@ sequenceDiagram
         CSV->>CSV: Deduplicate trips
         CSV->>CSV: Detect charging sessions
     end
-    
+
     Note over UI: User visits dashboard
     UI->>Flask: GET /
     Flask-->>UI: HTML dashboard
-    
+
     UI->>Flask: GET /api/current-status
     Flask->>CSV: Read latest battery data
     CSV-->>Flask: Battery status
     Flask-->>UI: JSON response
     UI->>UI: Update status display
-    
+
     UI->>Flask: GET /api/battery-history
     Flask->>CSV: Read battery history
     CSV-->>Flask: Historical data
     Flask-->>UI: JSON response
     UI->>UI: Render charts
-    
+
     Note over UI: User clicks refresh
     UI->>Flask: POST /api/refresh
     Flask->>DC: Force data collection
@@ -138,7 +138,7 @@ graph TB
             Title[PyVisionic Title]
             Status[Data Collection Status<br/>API calls: X/30<br/>Next: in Y minutes]
         end
-        
+
         subgraph "Main Content"
             subgraph "Current Status Card"
                 Battery[Battery Level: X%]
@@ -147,35 +147,35 @@ graph TB
                 Location[Last Location]
                 Weather[Weather: X°C/F]
             end
-            
+
             subgraph "Charts Section"
                 BatteryChart[Battery History Chart<br/>Chart.js Line Chart]
                 EnergyChart[Energy Usage Chart<br/>Chart.js Doughnut]
                 TempChart[Temperature Impact<br/>Chart.js Scatter + Bar]
             end
-            
+
             subgraph "Data Tables"
                 TripsTable[Recent Trips<br/>Paginated table]
                 ChargingTable[Charging Sessions<br/>History display]
             end
-            
+
             subgraph "Interactive Map"
                 LocationsMap[Trip Locations<br/>Leaflet map<br/>Red dots for trips<br/>Blue dot for current]
             end
         end
-        
+
         subgraph "Modals"
             TripModal[Trip Details Modal<br/>Individual trip map<br/>Energy breakdown]
             CacheModal[Cache Management<br/>File browser<br/>Clear options]
         end
-        
+
         subgraph "Controls"
             UnitsToggle[Metric/Imperial Toggle]
             RefreshBtn[Manual Refresh]
             ClearCache[Clear Cache]
         end
     end
-    
+
     subgraph "JavaScript Interactions"
         Dashboard[dashboard.js<br/>Main controller]
         AJAX[AJAX requests<br/>Real-time updates]
@@ -186,7 +186,7 @@ graph TB
         Units[Unit conversion]
         Notifications[Toast notifications]
     end
-    
+
     Dashboard --> AJAX
     Dashboard --> Charts
     Dashboard --> MapCtrl
@@ -194,7 +194,7 @@ graph TB
     Dashboard --> Modals
     Dashboard --> Units
     Dashboard --> Notifications
-    
+
     AJAX --> Status
     AJAX --> Battery
     AJAX --> BatteryChart
@@ -212,7 +212,7 @@ The Flask application's API endpoints and their relationships to data sources:
 graph LR
     subgraph "Flask Routes"
         Root["/"]
-        
+
         subgraph "Data Endpoints"
             CurrentStatus["/api/current-status<br/>Latest vehicle data"]
             BatteryHistory["/api/battery-history<br/>Historical battery data"]
@@ -223,24 +223,24 @@ graph LR
             EfficiencyStats["/api/efficiency-stats<br/>Performance statistics"]
             TempEfficiency["/api/temperature-efficiency<br/>Temperature impact analysis"]
         end
-        
+
         subgraph "Control Endpoints"
             Refresh["/api/refresh<br/>Force data collection"]
             CollectionStatus["/api/collection-status<br/>API usage tracking"]
             ClearCache["/api/clear-cache<br/>Cache management"]
         end
-        
+
         subgraph "Cache Interface"
             CacheFiles["/cache/<path><br/>Cache file browser"]
         end
     end
-    
+
     subgraph "Data Sources"
         CSVFiles[CSV Storage<br/>trips.csv<br/>battery_status.csv<br/>locations.csv<br/>charging_sessions.csv]
         CacheJSON[Cache Files<br/>JSON responses]
         APIHistory[API Call History<br/>Rate limit tracking]
     end
-    
+
     CurrentStatus --> CSVFiles
     BatteryHistory --> CSVFiles
     Trips --> CSVFiles
@@ -249,7 +249,7 @@ graph LR
     ChargingSessions --> CSVFiles
     EfficiencyStats --> CSVFiles
     TempEfficiency --> CSVFiles
-    
+
     Refresh --> CSVFiles
     CollectionStatus --> APIHistory
     ClearCache --> CacheJSON
@@ -281,7 +281,7 @@ erDiagram
         float meteo_temp
         float vehicle_temp
     }
-    
+
     BATTERY_STATUS {
         datetime timestamp
         datetime api_last_updated
@@ -298,7 +298,7 @@ erDiagram
         float meteo_temp
         float vehicle_temp
     }
-    
+
     LOCATIONS {
         datetime timestamp
         float latitude
@@ -307,7 +307,7 @@ erDiagram
         float meteo_temp
         float vehicle_temp
     }
-    
+
     CHARGING_SESSIONS {
         datetime session_id
         datetime start_time
@@ -320,14 +320,14 @@ erDiagram
         float max_power
         string status
     }
-    
+
     CACHE_FILES {
         string filename
         datetime timestamp
         json data
         string cache_type
     }
-    
+
     API_HISTORY {
         date last_reset
         int calls_today

@@ -114,7 +114,7 @@ DEBUG_MODE=true python -m src.web.app
    - Stores data via storage backend (CSVStorage, OracleStorage, or DualWriteStorage)
 
 2. **CachedVehicleClient** (`src/api/client.py`):
-   - Handles all Hyundai/Kia Connect API communication  
+   - Handles all Hyundai/Kia Connect API communication
    - Implements smart caching with separate validity and retention periods:
      - Cache validity: Calculated from API_DAILY_LIMIT (e.g., 30 calls/day = 45.6 min validity)
      - Cache retention: Configured via CACHE_DURATION_HOURS (default 48 hours)
@@ -182,7 +182,7 @@ Web UI routes:
 ## Environment Variables (.env)
 Critical settings that must be configured:
 - `BLUELINKVID`: Vehicle ID - obtain from first run if not set
-- `BLUELINKUSER`: Hyundai/Kia Connect account username  
+- `BLUELINKUSER`: Hyundai/Kia Connect account username
 - `BLUELINKPASS`: Hyundai/Kia Connect account password
 - `BLUELINKPIN`: Account PIN for remote commands
 - `BLUELINKREGION`: 1=Europe, 2=Canada, 3=USA, 4=China, 5=Australia
