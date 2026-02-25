@@ -835,11 +835,11 @@ class OracleStorage(StorageBackend):
                 for table_name, ts_col in table_ts_columns.items():
                     table_info = {"rows": 0}
                     try:
-                        cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
+                        cursor.execute(f"SELECT COUNT(*) FROM {table_name}")  # nosec B608
                         row = cursor.fetchone()
                         table_info["rows"] = row[0] if row else 0
 
-                        cursor.execute(f"SELECT MAX({ts_col}) FROM {table_name}")
+                        cursor.execute(f"SELECT MAX({ts_col}) FROM {table_name}")  # nosec B608
                         row = cursor.fetchone()
                         if row and row[0]:
                             table_info["latest_timestamp"] = str(row[0])

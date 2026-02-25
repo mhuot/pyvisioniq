@@ -94,7 +94,7 @@ class CachedVehicleClient:
         if not self.vehicle_id:
             return "sample_data"
         key_string = f"{self.vehicle_id}_{method_name}"
-        return hashlib.md5(key_string.encode()).hexdigest()
+        return hashlib.md5(key_string.encode()).hexdigest()  # nosec B324 - cache key, not security
 
     def _get_cache_path(self, cache_key):
         return self.cache_dir / f"{cache_key}.json"
@@ -298,7 +298,9 @@ class CachedVehicleClient:
         try:
             raw = data.get("raw_data", {}) if isinstance(data, dict) else {}
             serialized = json.dumps(raw, sort_keys=True, default=str)
-            return hashlib.md5(serialized.encode("utf-8")).hexdigest()
+            return hashlib.md5(
+                serialized.encode("utf-8")
+            ).hexdigest()  # nosec B324 - change detection, not security
         except Exception as e:
             logger.debug("Unable to build raw data signature: %s", e)
             return None
@@ -664,7 +666,7 @@ class CachedVehicleClient:
                 # Add jitter to prevent thundering herd
                 if attempt > 0:
                     base_delay = 2**attempt  # Exponential backoff: 2, 4, 8 seconds
-                    jitter = random.uniform(0.5, 1.5)  # Add randomness
+                    jitter = random.uniform(0.5, 1.5)  # nosec B311 - backoff jitter, not security
                     delay = base_delay * jitter
                     logger.info(
                         "Rate limit retry %d/%d, waiting %.1fs",

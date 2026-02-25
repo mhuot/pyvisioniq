@@ -106,7 +106,9 @@ def raw_data_signature(data: Dict) -> Optional[str]:
     try:
         raw = data.get("raw_data", {}) if isinstance(data, dict) else {}
         serialized = json.dumps(raw, sort_keys=True, default=str)
-        return md5(serialized.encode("utf-8")).hexdigest()
+        return md5(
+            serialized.encode("utf-8")
+        ).hexdigest()  # nosec B324 - change detection, not security
     except Exception:
         return None
 

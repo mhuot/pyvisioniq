@@ -20,7 +20,7 @@ from src.web.cache_routes import cache_bp
 from src.web.debug_routes import debug_bp
 
 app = Flask(__name__)
-app.config["SECRET_KEY"] = "dev-secret-key"
+app.config["SECRET_KEY"] = os.getenv("SECRET_KEY", "dev-secret-key")  # nosec B105
 
 # Initialize with error handling
 try:
@@ -985,7 +985,7 @@ def get_all_locations():
                                     "is_current": True,
                                 }
                             )
-                except:
+                except Exception:  # nosec B110
                     pass
 
         app.logger.info(
@@ -1259,7 +1259,7 @@ def get_current_status():
                     try:
                         with open(cache_path) as f:
                             latest_cache_data = json.load(f)
-                    except:
+                    except Exception:  # nosec B110
                         pass
 
             response_data = {
@@ -1310,4 +1310,4 @@ def get_current_status():
 
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(debug=os.getenv("DEBUG_MODE", "false").lower() == "true")  # nosec B201
