@@ -19,6 +19,7 @@ ENV/
 .env.local
 data/
 cache/
+debug/
 logs/
 *.log
 nohup.out
