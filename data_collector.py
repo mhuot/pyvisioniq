@@ -311,8 +311,8 @@ if __name__ == "__main__":
 
     if len(sys.argv) > 1 and sys.argv[1] == "--once":
         # Run once for testing
-        Success = collector.run_once()
-        sys.exit(0 if Success else 1)
+        success = collector.run_once()
+        sys.exit(0 if success else 1)
     else:
         # Run continuously
         collector.run_forever()
