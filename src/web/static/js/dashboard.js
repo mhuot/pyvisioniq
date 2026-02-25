@@ -21,7 +21,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const tripsTable = document.getElementById('trips-tbody');
     const chartDiv = document.getElementById('battery-chart');
     const energyChartDiv = document.getElementById('energy-chart');
-    
+
     // Unit conversion functions
     const conversions = {
         kmToMiles: (km) => km * 0.621371,
@@ -30,27 +30,27 @@ document.addEventListener('DOMContentLoaded', function() {
         fahrenheitToCelsius: (f) => (f - 32) * 5/9,
         whPerKmToMiPerKwh: (whPerKm) => 1000 / (whPerKm * 1.60934)
     };
-    
+
     let currentUnits = localStorage.getItem('units') || 'metric';
     let currentTrips = [];
     let currentData = {
         batteryHistory: null,
         trips: null
     };
-    
+
     // Set initial units
     updateUnitsDisplay();
-    
+
     function updateUnitsDisplay() {
         unitsText.textContent = currentUnits === 'metric' ? 'km' : 'mi';
         unitsToggle.classList.toggle('imperial', currentUnits === 'imperial');
     }
-    
+
     unitsToggle.addEventListener('click', function() {
         currentUnits = currentUnits === 'metric' ? 'imperial' : 'metric';
         localStorage.setItem('units', currentUnits);
         updateUnitsDisplay();
-        
+
         // Re-render everything with new units
         loadCurrentStatus();
         // Reload trips with current pagination settings
@@ -59,24 +59,24 @@ document.addEventListener('DOMContentLoaded', function() {
             updateBatteryChart(currentData.batteryHistory);
         }
     });
-    
+
     async function loadCurrentStatus() {
         try {
             const response = await fetch('/api/current-status');
             const data = await response.json();
-            
+
             if (data.battery_level !== null && batteryLevel) {
                 batteryLevel.textContent = data.battery_level + '%';
                 // Store current battery level for active charging session display
                 currentData.battery = data.battery_level;
-                
+
                 // Add charging effect to battery level display
                 if (data.is_charging) {
                     batteryLevel.classList.add('charging');
                 } else {
                     batteryLevel.classList.remove('charging');
                 }
-                
+
                 const batteryIcon = document.querySelector('.battery-icon');
                 if (batteryIcon) {
                     batteryIcon.className = 'battery-icon';
@@ -86,7 +86,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     else batteryIcon.classList.add('critical');
                 }
             }
-            
+
             // Handle charging indicator and rate
             const chargingIndicator = document.getElementById('charging-indicator');
             const chargingRate = document.getElementById('charging-rate');
@@ -108,73 +108,73 @@ document.addEventListener('DOMContentLoaded', function() {
                     currentData.chargingPower = null;
                 }
             }
-            
+
             if (data.range !== null && range) {
-                const rangeValue = currentUnits === 'metric' ? 
+                const rangeValue = currentUnits === 'metric' ?
                     data.range : conversions.kmToMiles(data.range);
                 range.textContent = Math.round(rangeValue) + (currentUnits === 'metric' ? ' km' : ' mi');
             }
-            
+
             if (temperature) {
                 // Check if we have weather data from Meteo
                 if (data.weather && data.weather_source === 'meteo') {
                     // Weather data from Meteo comes in Fahrenheit
                     const tempF = data.weather.temperature;
-                    const tempValue = currentUnits === 'metric' ? 
+                    const tempValue = currentUnits === 'metric' ?
                         conversions.fahrenheitToCelsius(tempF) : tempF;
-                    
+
                     let weatherText = Math.round(tempValue) + '°' + (currentUnits === 'metric' ? 'C' : 'F');
-                    
+
                     // Add weather description if available
                     if (data.weather.description) {
                         weatherText += ` - ${data.weather.description}`;
                     }
-                    
+
                     temperature.innerHTML = weatherText;
-                    
+
                     // Add title attribute with more details including vehicle sensor comparison
                     let titleText = '';
                     if (data.weather.feels_like && data.weather.humidity) {
-                        const feelsLike = currentUnits === 'metric' ? 
+                        const feelsLike = currentUnits === 'metric' ?
                             conversions.fahrenheitToCelsius(data.weather.feels_like) : data.weather.feels_like;
                         titleText = `Feels like: ${Math.round(feelsLike)}°, Humidity: ${data.weather.humidity}%, Wind: ${data.weather.wind_speed} mph`;
                     }
-                    
+
                     // Add vehicle sensor comparison if available
                     if (data.vehicle_temp !== null && data.vehicle_temp !== undefined) {
-                        const vehicleTempValue = currentUnits === 'metric' ? 
+                        const vehicleTempValue = currentUnits === 'metric' ?
                             data.vehicle_temp : conversions.celsiusToFahrenheit(data.vehicle_temp);
                         titleText += `\nVehicle sensor: ${Math.round(vehicleTempValue)}°${currentUnits === 'metric' ? 'C' : 'F'}`;
-                        
+
                         // Show difference
                         if (data.meteo_temp !== null) {
                             const diff = Math.abs(data.meteo_temp - data.vehicle_temp);
                             titleText += ` (${diff.toFixed(1)}° difference)`;
                         }
                     }
-                    
+
                     if (titleText) {
                         temperature.title = titleText;
                     }
                 } else if (data.temperature !== null) {
                     // Fallback to vehicle sensor (already in Celsius)
-                    const tempValue = currentUnits === 'metric' ? 
+                    const tempValue = currentUnits === 'metric' ?
                         data.temperature : conversions.celsiusToFahrenheit(data.temperature);
                     temperature.textContent = Math.round(tempValue) + '°' + (currentUnits === 'metric' ? 'C' : 'F') + ' (vehicle)';
                 }
             }
-            
+
             if (data.odometer !== null && odometer) {
-                const odoValue = currentUnits === 'metric' ? 
+                const odoValue = currentUnits === 'metric' ?
                     data.odometer : conversions.kmToMiles(data.odometer);
                 odometer.textContent = Math.round(odoValue).toLocaleString() + (currentUnits === 'metric' ? ' km' : ' mi');
             }
-            
+
             if (data.last_updated && lastUpdated) {
                 const date = new Date(data.last_updated);
                 lastUpdated.textContent = date.toLocaleString();
             }
-            
+
             // Update data freshness indicator based on api_last_updated
             const dataFreshness = document.getElementById('data-freshness');
             if (dataFreshness && data.api_last_updated) {
@@ -182,9 +182,9 @@ document.addEventListener('DOMContentLoaded', function() {
                     const apiUpdateTime = new Date(data.api_last_updated);
                     const now = new Date();
                     const ageMinutes = Math.floor((now - apiUpdateTime) / (1000 * 60));
-                    
+
                     let freshnessText, className, title;
-                    
+
                     if (ageMinutes < 5) {
                         // Very fresh data (less than 5 minutes)
                         freshnessText = ' (fresh - ' + ageMinutes + 'm ago)';
@@ -209,11 +209,11 @@ document.addEventListener('DOMContentLoaded', function() {
                         className = 'data-freshness very-old';
                         title = 'Vehicle data is ' + ageDays + ' days old - click Refresh Data for current information';
                     }
-                    
+
                     dataFreshness.textContent = freshnessText;
                     dataFreshness.className = className;
                     dataFreshness.title = title;
-                    
+
                 } catch (error) {
                     // Fallback to is_cached if api_last_updated parsing fails
                     if (data.is_cached === true) {
@@ -248,7 +248,7 @@ document.addEventListener('DOMContentLoaded', function() {
             console.error('Error loading current status:', error);
         }
     }
-    
+
     // Load initial data
     loadCurrentStatus();
     loadBatteryHistory(24); // Default to 24 hours
@@ -257,23 +257,23 @@ document.addEventListener('DOMContentLoaded', function() {
     loadChargingSessions(24);
     loadTemperatureEfficiency(24);
     loadChargingTemperatureImpact(24);
-    
+
     // Initialize and load map
     initializeLocationsMap().then(() => {
         loadLocationsMap(24);
     });
-    
+
     // Master time range button handlers
     const timeRangeButtons = document.querySelectorAll('.master-time-range-controls .time-range-btn');
     let currentTimeRange = '24'; // Default to 24 hours
     let currentStartDate = null;
     let currentEndDate = null;
-    
+
     const customDateRange = document.getElementById('custom-date-range');
     const applyCustomRangeBtn = document.getElementById('apply-custom-range');
     const masterStartDate = document.getElementById('master-start-date');
     const masterEndDate = document.getElementById('master-end-date');
-    
+
     timeRangeButtons.forEach(button => {
         button.addEventListener('click', function() {
             // Update active state
@@ -283,10 +283,10 @@ document.addEventListener('DOMContentLoaded', function() {
             });
             this.classList.add('active');
             this.setAttribute('aria-pressed', 'true');
-            
+
             // Update current time range
             currentTimeRange = this.getAttribute('data-hours');
-            
+
             // Show/hide custom date range
             if (currentTimeRange === 'custom') {
                 customDateRange.style.display = 'flex';
@@ -306,33 +306,33 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         });
     });
-    
+
     // Custom date range apply button
     if (applyCustomRangeBtn) {
         applyCustomRangeBtn.addEventListener('click', function() {
             currentStartDate = masterStartDate.value;
             currentEndDate = masterEndDate.value;
-            
+
             if (!currentStartDate || !currentEndDate) {
                 showNotification('Please select both start and end dates', 'warning');
                 return;
             }
-            
+
             if (currentStartDate > currentEndDate) {
                 showNotification('Start date must be before end date', 'warning');
                 return;
             }
-            
+
             // Load data with custom date range
             loadAllDataForTimeRange('custom', currentStartDate, currentEndDate);
         });
     }
-    
+
     // Function to load all data for a specific time range
     async function loadAllDataForTimeRange(hours, startDate = null, endDate = null) {
         // Show loading indicator
         showNotification('Updating data for selected time range...', 'info');
-        
+
         // Load all time-dependent data in parallel
         await Promise.all([
             loadBatteryHistory(hours, startDate, endDate),
@@ -343,10 +343,10 @@ document.addEventListener('DOMContentLoaded', function() {
             loadTemperatureEfficiency(hours, startDate, endDate),
             loadChargingTemperatureImpact(hours, startDate, endDate)
         ]);
-        
+
         showNotification('Data updated', 'success');
     }
-    
+
     // Helper function to suggest next longer time range
     function getNextLongerTimeRange(currentRange) {
         const ranges = ['24', '48', '168', '720', 'all'];
@@ -356,7 +356,7 @@ document.addEventListener('DOMContentLoaded', function() {
         }
         return 'all';
     }
-    
+
     // Helper function to get human-readable time range
     function getTimeRangeLabel(hours) {
         switch(hours) {
@@ -369,13 +369,13 @@ document.addEventListener('DOMContentLoaded', function() {
             default: return hours + ' hours';
         }
     }
-    
+
     // Function to show empty state with time range suggestion
     function showEmptyStateWithSuggestion(container, currentRange, dataType = 'data') {
         const nextRange = getNextLongerTimeRange(currentRange);
         const currentLabel = getTimeRangeLabel(currentRange);
         const nextLabel = getTimeRangeLabel(nextRange);
-        
+
         const emptyStateHTML = `
             <div class="empty-state">
                 <div class="empty-state-icon">📭</div>
@@ -386,15 +386,15 @@ document.addEventListener('DOMContentLoaded', function() {
                 </button>
             </div>
         `;
-        
+
         container.innerHTML = emptyStateHTML;
-        
+
         // Add click handler for the suggestion button
         const expandBtn = container.querySelector('.expand-range-btn');
         if (expandBtn) {
             expandBtn.addEventListener('click', async function() {
                 const suggestedRange = this.getAttribute('data-range');
-                
+
                 // If this is a map container, restore it before loading new data
                 if (container.id === 'locations-map') {
                     container.innerHTML = '';
@@ -402,7 +402,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     // Re-initialize the map
                     await initializeLocationsMap();
                 }
-                
+
                 // Update the active time range button
                 const timeRangeButtons = document.querySelectorAll('.master-time-range-controls .time-range-btn');
                 timeRangeButtons.forEach(btn => {
@@ -413,7 +413,7 @@ document.addEventListener('DOMContentLoaded', function() {
                         btn.setAttribute('aria-pressed', 'true');
                     }
                 });
-                
+
                 // Update current range and load data
                 currentTimeRange = suggestedRange;
                 loadAllDataForTimeRange(suggestedRange);
@@ -427,17 +427,17 @@ document.addEventListener('DOMContentLoaded', function() {
         try {
             const statusResponse = await fetch('/api/collection-status');
             const statusData = await statusResponse.json();
-            
+
             const callsToday = statusData.calls_today || 0;
             const dailyLimit = statusData.daily_limit || 30;
             const callsRemaining = dailyLimit - callsToday;
-            
+
             // Show warning dialog with accessible formatting
             const message = `Manual refresh will use 1 of your ${dailyLimit} daily API calls.\n\n` +
                           `Current usage: ${callsToday} of ${dailyLimit} calls\n` +
                           `Calls remaining: ${callsRemaining}\n\n` +
                           `Do you want to continue?`;
-            
+
             // For screen readers, announce the warning
             const announcement = `Warning: Manual refresh will use 1 API call. You have used ${callsToday} of ${dailyLimit} calls today.`;
             const liveRegion = document.createElement('div');
@@ -446,35 +446,35 @@ document.addEventListener('DOMContentLoaded', function() {
             liveRegion.className = 'sr-only';
             liveRegion.textContent = announcement;
             document.body.appendChild(liveRegion);
-            
+
             // Give screen readers time to announce before showing dialog
             await new Promise(resolve => setTimeout(resolve, 100));
-            
+
             const userConfirmed = confirm(message);
             document.body.removeChild(liveRegion);
-            
+
             if (!userConfirmed) {
                 return;
             }
-            
+
             // Check if limit reached
             if (callsToday >= dailyLimit) {
                 showNotification('Daily API limit reached. Try again tomorrow.', 'warning');
                 return;
             }
-            
+
         } catch (error) {
             console.error('Error checking API status:', error);
             // Continue anyway if we can't check status
         }
-        
+
         refreshBtn.disabled = true;
         refreshBtn.textContent = 'Refreshing...';
-        
+
         try {
             const response = await fetch('/api/refresh');
             const data = await response.json();
-            
+
             if (response.ok) {
                 showNotification(data.message || 'Data refreshed successfully', 'success');
                 // Reload all data including collection status
@@ -495,7 +495,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 const errorType = data.error_type || 'error';
                 const notificationType = errorType === 'rate_limit' ? 'warning' : 'error';
                 showNotification(data.message || 'Failed to refresh data', notificationType);
-                
+
                 // Log additional error details for debugging
                 console.error('Refresh error:', data);
             }
@@ -507,33 +507,33 @@ document.addEventListener('DOMContentLoaded', function() {
             refreshBtn.textContent = 'Refresh Data';
         }
     });
-    
+
     async function loadBatteryHistory(hours = 24, startDate = null, endDate = null) {
         try {
             // Show loading state
             const chartContainer = document.querySelector('#battery-chart').parentElement;
             chartContainer.style.position = 'relative';
-            
+
             // Add loading overlay
             const loadingOverlay = document.createElement('div');
             loadingOverlay.className = 'chart-loading';
             loadingOverlay.innerHTML = '<div class="loading-spinner"></div><p>Loading data...</p>';
             chartContainer.appendChild(loadingOverlay);
-            
+
             // Build query parameters
             const params = new URLSearchParams({ hours });
             if (startDate) params.append('start_date', startDate);
             if (endDate) params.append('end_date', endDate);
-            
+
             const response = await fetch(`/api/battery-history?${params}`);
             const data = await response.json();
             currentData.batteryHistory = data;
-            
+
             // Remove loading overlay
             if (loadingOverlay.parentElement) {
                 loadingOverlay.remove();
             }
-            
+
             updateBatteryChart(data);
         } catch (error) {
             console.error('Error loading battery history:', error);
@@ -544,42 +544,42 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         }
     }
-    
-    
+
+
     function updateBatteryChart(data) {
         if (!data.data || data.data.length === 0) return;
-        
+
         const ctx = chartDiv.getContext('2d');
         const units = currentUnits;
-        
+
         // Prepare data
         const chartData = data.data.map(d => ({
             x: new Date(d.timestamp),
             battery: d.battery_level,
-            temperature: d.temperature !== null && units === 'imperial' ? 
+            temperature: d.temperature !== null && units === 'imperial' ?
                 conversions.celsiusToFahrenheit(d.temperature) : d.temperature,
             is_cached: d.is_cached
         }));
-        
+
         // Update existing chart or create new one
         if (batteryChart) {
             // Update existing chart data
             batteryChart.data.datasets[0].data = chartData.map(d => ({x: d.x, y: d.battery}));
             batteryChart.data.datasets[1].data = chartData.map(d => ({x: d.x, y: d.temperature}));
-            
+
             // Update point colors based on cache status
-            batteryChart.data.datasets[0].pointBackgroundColor = chartData.map(d => 
+            batteryChart.data.datasets[0].pointBackgroundColor = chartData.map(d =>
                 d.is_cached ? 'rgba(52, 152, 219, 0.5)' : '#3498db'
             );
-            batteryChart.data.datasets[0].pointBorderColor = chartData.map(d => 
+            batteryChart.data.datasets[0].pointBorderColor = chartData.map(d =>
                 d.is_cached ? 'rgba(52, 152, 219, 0.8)' : '#2980b9'
             );
-            
+
             batteryChart.options.scales.y1.title.text = `Temperature (°${units === 'imperial' ? 'F' : 'C'})`;
             batteryChart.update('none'); // Update without animation for performance
             return;
         }
-        
+
         // Create new chart only if it doesn't exist
         batteryChart = new Chart(ctx, {
             type: 'line',
@@ -595,10 +595,10 @@ document.addEventListener('DOMContentLoaded', function() {
                     pointRadius: 3,
                     pointHoverRadius: 5,
                     // Different colors for cached vs fresh data
-                    pointBackgroundColor: chartData.map(d => 
+                    pointBackgroundColor: chartData.map(d =>
                         d.is_cached ? 'rgba(52, 152, 219, 0.5)' : '#3498db'
                     ),
-                    pointBorderColor: chartData.map(d => 
+                    pointBorderColor: chartData.map(d =>
                         d.is_cached ? 'rgba(52, 152, 219, 0.8)' : '#2980b9'
                     )
                 }, {
@@ -767,7 +767,7 @@ document.addEventListener('DOMContentLoaded', function() {
         }
 
         const ctx = energyChartDiv.getContext('2d');
-        
+
         // Update existing chart or create new one
         if (energyChart) {
             // Update existing chart data
@@ -867,22 +867,22 @@ document.addEventListener('DOMContentLoaded', function() {
                 if (chart.config.options.elements && chart.config.options.elements.center) {
                     const ctx = chart.ctx;
                     const centerConfig = chart.config.options.elements.center;
-                    
+
                     ctx.save();
                     ctx.font = '14px ' + centerConfig.fontStyle;
                     ctx.fillStyle = centerConfig.color;
                     ctx.textAlign = 'center';
                     ctx.textBaseline = 'middle';
-                    
+
                     const centerX = (chart.chartArea.left + chart.chartArea.right) / 2;
                     const centerY = (chart.chartArea.top + chart.chartArea.bottom) / 2;
-                    
+
                     ctx.fillText(centerConfig.text, centerX, centerY - 10);
-                    
+
                     ctx.font = '12px ' + centerConfig.fontStyle;
                     ctx.fillStyle = '#666';
                     ctx.fillText(centerConfig.subText, centerX, centerY + 10);
-                    
+
                     ctx.restore();
                 }
             }
@@ -891,17 +891,17 @@ document.addEventListener('DOMContentLoaded', function() {
 
     function updateTripsTable(trips) {
         tripsTable.innerHTML = '';
-        
+
         trips.forEach((trip) => {
             const row = document.createElement('tr');
             row.className = 'clickable';
-            
+
             const date = new Date(trip.date);
-            const distance = currentUnits === 'metric' ? 
+            const distance = currentUnits === 'metric' ?
                 trip.distance : conversions.kmToMiles(trip.distance);
-            const avgSpeed = trip.average_speed ? 
+            const avgSpeed = trip.average_speed ?
                 (currentUnits === 'metric' ? trip.average_speed : conversions.kmToMiles(trip.average_speed)) : null;
-            
+
             // Calculate efficiency display
             let efficiencyDisplay = '-';
             if (trip.efficiency_wh_per_km) {
@@ -913,7 +913,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     efficiencyDisplay = `${miPerKwh.toFixed(1)} mi/kWh`;
                 }
             }
-            
+
             row.innerHTML = `
                 <td>${formatDate(date)}</td>
                 <td>${distance.toFixed(1)} ${currentUnits === 'metric' ? 'km' : 'mi'}</td>
@@ -927,11 +927,11 @@ document.addEventListener('DOMContentLoaded', function() {
                 <td>${trip.regenerated_energy || '-'}</td>
                 <td>${trip.end_latitude && trip.end_longitude ? '📍' : '-'}</td>
             `;
-            
+
             // Create trip ID in the format expected by backend: date_distance_odometer
             let dateStr = trip.date.toString();
             dateStr = dateStr.replace(/\.0+$/, '');
-            
+
             // Create composite trip ID
             const tripParts = [
                 btoa(dateStr),
@@ -939,66 +939,66 @@ document.addEventListener('DOMContentLoaded', function() {
                 trip.odometer_start || '0'
             ];
             const tripId = tripParts.join('_');
-            
+
             row.addEventListener('click', () => {
                 showTripModal(tripId);
             });
-            
+
             tripsTable.appendChild(row);
         });
     }
-    
+
     function formatDate(date) {
         // Handle special cases
         if (date === 'Current Location' || !date) {
             return 'Current Location';
         }
-        
+
         // Clean pandas timestamp format (remove .0 suffix)
         if (typeof date === 'string') {
             date = date.replace(/\.0+$/, '');
         }
-        
+
         // Try to create Date object
         const dateObj = new Date(date);
-        
+
         // Check if date is valid
         if (isNaN(dateObj.getTime())) {
             return date.toString(); // Return original if can't parse
         }
-        
-        const options = { 
-            month: 'short', 
-            day: 'numeric', 
-            hour: '2-digit', 
-            minute: '2-digit' 
+
+        const options = {
+            month: 'short',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit'
         };
         return dateObj.toLocaleDateString('en-US', options);
     }
-    
+
     async function loadCollectionStatus() {
         try {
             const response = await fetch('/api/collection-status');
             const data = await response.json();
-            
+
             const callsToday = document.getElementById('api-calls-today');
             const nextCollection = document.getElementById('next-collection');
             const headerApiCalls = document.getElementById('header-api-calls');
-            
+
             if (callsToday) {
                 callsToday.textContent = `${data.calls_today}/${data.daily_limit}`;
                 callsToday.className = data.calls_today >= data.daily_limit ? 'limit-reached' : '';
             }
-            
+
             // Update header API usage indicator
             if (headerApiCalls) {
                 const callsText = `${data.calls_today}/${data.daily_limit}`;
                 headerApiCalls.textContent = callsText;
-                
+
                 // Update aria-label for screen readers
                 const percentage = Math.round((data.calls_today / data.daily_limit) * 100);
                 let ariaLabel = `${data.calls_today} of ${data.daily_limit} API calls used today (${percentage}%)`;
-                
+
                 // Apply warning classes and update aria-label
                 headerApiCalls.className = '';
                 if (data.calls_today >= data.daily_limit) {
@@ -1008,15 +1008,15 @@ document.addEventListener('DOMContentLoaded', function() {
                     headerApiCalls.className = 'limit-warning';
                     ariaLabel += '. Approaching daily limit.';
                 }
-                
+
                 headerApiCalls.setAttribute('aria-label', ariaLabel);
             }
-            
+
             if (nextCollection && data.next_collection) {
                 const next = new Date(data.next_collection);
                 const now = new Date();
                 const diff = Math.round((next - now) / 60000);
-                
+
                 if (diff > 0) {
                     nextCollection.textContent = `in ${diff} minutes`;
                 } else {
@@ -1027,13 +1027,13 @@ document.addEventListener('DOMContentLoaded', function() {
             console.error('Error loading collection status:', error);
         }
     }
-    
+
     function showNotification(message, type = 'info') {
         const notification = document.createElement('div');
         notification.className = `notification ${type}`;
         notification.textContent = message;
         document.body.appendChild(notification);
-        
+
         setTimeout(() => {
             notification.classList.add('fade-out');
             setTimeout(() => notification.remove(), 300);
@@ -1047,12 +1047,12 @@ document.addEventListener('DOMContentLoaded', function() {
                 console.error('Map element not found: locations-map');
                 return;
             }
-            
+
             // If we already have a valid map instance, just return
             if (locationsMap && locationsMap._container && locationsMap._container.parentNode) {
                 return;
             }
-            
+
             // Check if the container has an existing Leaflet map that we don't know about
             if (mapElement._leaflet_id && mapElement.querySelector('.leaflet-container')) {
                 // Try to find and use the existing map instance
@@ -1060,7 +1060,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 console.log('Map container already has Leaflet instance, skipping initialization');
                 return;
             }
-            
+
             // Clean up any existing map instance
             if (locationsMap) {
                 try {
@@ -1071,62 +1071,62 @@ document.addEventListener('DOMContentLoaded', function() {
                 locationsMap = null;
                 mapMarkers = [];
             }
-            
+
             // Ensure the map container has the right class
             mapElement.className = 'map-container';
-            
+
             // Only clear if it has empty state content
             if (mapElement.innerHTML.includes('empty-state')) {
                 mapElement.innerHTML = '';
                 // Wait for DOM to update
                 await new Promise(resolve => setTimeout(resolve, 50));
             }
-            
+
             // Double-check the container is truly empty of Leaflet instances
             if (mapElement._leaflet_id) {
                 console.warn('Container still has _leaflet_id after cleanup, aborting initialization');
                 return;
             }
-            
+
             // Create new map instance
             locationsMap = L.map('locations-map').setView([44.9778, -93.2650], 10);
-            
+
             L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
                 attribution: '© OpenStreetMap contributors'
             }).addTo(locationsMap);
-            
+
         } catch (error) {
             console.error('Error initializing locations map:', error);
             // If initialization fails, ensure we clear the reference
             locationsMap = null;
         }
     }
-    
+
     async function loadLocationsMap(hours = 'all', startDate = null, endDate = null) {
         try {
             // Initialize map if it doesn't exist
             if (!locationsMap) {
                 await initializeLocationsMap();
-                
+
                 // If initialization failed, skip loading
                 if (!locationsMap) {
                     console.warn('Failed to initialize locations map, skipping load');
                     return;
                 }
             }
-            
+
             const params = new URLSearchParams({ hours });
             if (startDate) params.append('start_date', startDate);
             if (endDate) params.append('end_date', endDate);
-            
+
             const response = await fetch(`/api/locations?${params}`);
             if (response.ok) {
                 const locations = await response.json();
                 console.log(`Loaded ${locations.length} locations`);
-                
+
                 mapMarkers.forEach(marker => locationsMap.removeLayer(marker));
                 mapMarkers = [];
-                
+
                 // Check for empty state
                 if (locations.length === 0 && hours !== 'all' && hours !== 'custom') {
                     const mapContainer = document.getElementById('locations-map');
@@ -1135,28 +1135,28 @@ document.addEventListener('DOMContentLoaded', function() {
                         if (!mapContainer.dataset.originalContent) {
                             mapContainer.dataset.originalContent = 'true';
                         }
-                        
+
                         // Clear any existing map instance to avoid memory leaks
                         if (locationsMap) {
                             locationsMap.remove();
                             locationsMap = null;
                         }
-                        
+
                         showEmptyStateWithSuggestion(mapContainer, hours, 'trip locations');
                         return;
                     }
                 }
-                
+
                 // Ensure map is initialized before adding locations
                 if (!locationsMap) {
                     await initializeLocationsMap();
                 }
-                
+
                 if (locations.length > 0) {
                     const bounds = [];
-                    
+
                     locations.forEach(loc => {
-                        const icon = loc.is_current ? 
+                        const icon = loc.is_current ?
                             L.divIcon({
                                 html: '<div style="background-color: #e74c3c; width: 20px; height: 20px; border-radius: 50%; border: 3px solid white; box-shadow: 0 2px 5px rgba(0,0,0,0.3);"></div>',
                                 iconSize: [20, 20],
@@ -1167,10 +1167,10 @@ document.addEventListener('DOMContentLoaded', function() {
                                 iconSize: [15, 15],
                                 className: 'trip-location-icon'
                             });
-                        
+
                         const marker = L.marker([loc.lat, loc.lng], { icon })
                             .addTo(locationsMap);
-                        
+
                         let popupContent = `<strong>${formatDate(loc.date)}</strong>`;
                         if (loc.distance > 0) {
                             popupContent += `<br>Distance: ${loc.distance} km`;
@@ -1182,12 +1182,12 @@ document.addEventListener('DOMContentLoaded', function() {
                         if (loc.temperature !== null && loc.temperature !== undefined) {
                             popupContent += `<br>Temperature: ${loc.temperature}°F`;
                         }
-                        
+
                         marker.bindPopup(popupContent);
                         mapMarkers.push(marker);
                         bounds.push([loc.lat, loc.lng]);
                     });
-                    
+
                     if (bounds.length > 0) {
                         locationsMap.fitBounds(bounds, { padding: [50, 50] });
                     }
@@ -1199,23 +1199,23 @@ document.addEventListener('DOMContentLoaded', function() {
             console.error('Error loading locations:', error);
         }
     }
-    
+
     async function loadEfficiencyStats(hours = 'all', startDate = null, endDate = null) {
         try {
             const params = new URLSearchParams({ hours });
             if (startDate) params.append('start_date', startDate);
             if (endDate) params.append('end_date', endDate);
-            
+
             const response = await fetch(`/api/efficiency-stats?${params}`);
             if (!response.ok) {
                 throw new Error(`HTTP error! status: ${response.status}`);
             }
             const stats = await response.json();
-            
+
             const displayStat = (elementId, data) => {
                 const valueElement = document.getElementById(elementId);
                 const detailElement = document.getElementById(elementId + '-detail');
-                
+
                 if (valueElement && data) {
                     valueElement.textContent = `${data.average} mi/kWh`;
                 }
@@ -1223,26 +1223,26 @@ document.addEventListener('DOMContentLoaded', function() {
                     detailElement.textContent = `Best: ${data.best} | Worst: ${data.worst}`;
                 }
             };
-            
+
             displayStat('efficiency-day', stats.last_day);
             displayStat('efficiency-week', stats.last_week);
             displayStat('efficiency-month', stats.last_month);
             displayStat('efficiency-all', stats.all_time);
-            
+
         } catch (error) {
             console.error('Error loading efficiency stats:', error);
         }
     }
-    
+
     async function loadTemperatureEfficiency(hours = 'all', startDate = null, endDate = null) {
         try {
             const params = new URLSearchParams({ hours });
             if (startDate) params.append('start_date', startDate);
             if (endDate) params.append('end_date', endDate);
-            
+
             const response = await fetch(`/api/temperature-efficiency?${params}`);
             const data = await response.json();
-            
+
             if (!response.ok || !data.raw_data || data.raw_data.length === 0) {
                 const container = document.getElementById('temperature-stats');
                 if (container) {
@@ -1254,20 +1254,20 @@ document.addEventListener('DOMContentLoaded', function() {
                 }
                 return;
             }
-            
+
             // Create scatter plot with trend line
             const ctx = document.getElementById('temperature-efficiency-chart').getContext('2d');
-            
+
             // Prepare data for scatter plot
             const scatterData = data.raw_data.map(point => ({
                 x: point.temperature,
                 y: point.efficiency
             }));
-            
+
             // Prepare data for bar chart (binned data)
             const barLabels = data.temperature_bins.map(bin => bin.temperature_range);
             const barData = data.temperature_bins.map(bin => bin.avg_efficiency);
-            
+
             // Update or create chart
             if (tempEfficiencyChart) {
                 tempEfficiencyChart.data.datasets[0].data = scatterData;
@@ -1364,20 +1364,20 @@ document.addEventListener('DOMContentLoaded', function() {
                     }
                 });
             }
-            
+
             // Display statistics
             let statsHtml = '<div class="temp-efficiency-stats">';
             statsHtml += '<h3>Temperature Impact Summary</h3>';
             statsHtml += '<div class="stats-grid">';
-            
+
             // Find best and worst temperature ranges
-            const bestBin = data.temperature_bins.reduce((a, b) => 
+            const bestBin = data.temperature_bins.reduce((a, b) =>
                 a.avg_efficiency > b.avg_efficiency ? a : b
             );
-            const worstBin = data.temperature_bins.reduce((a, b) => 
+            const worstBin = data.temperature_bins.reduce((a, b) =>
                 a.avg_efficiency < b.avg_efficiency ? a : b
             );
-            
+
             statsHtml += `
                 <div class="stat-item">
                     <span class="stat-label">Best Efficiency Range:</span>
@@ -1395,13 +1395,13 @@ document.addEventListener('DOMContentLoaded', function() {
                     <span class="stat-detail">From best to worst conditions</span>
                 </div>
             `;
-            
+
             statsHtml += '</div></div>';
             document.getElementById('temperature-stats').innerHTML = statsHtml;
-            
+
         } catch (error) {
             console.error('Error loading temperature efficiency data:', error);
-            document.getElementById('temperature-stats').innerHTML = 
+            document.getElementById('temperature-stats').innerHTML =
                 '<div class="no-data">Error loading temperature efficiency data</div>';
         }
     }
@@ -1587,21 +1587,21 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         }
     }
-    
+
     async function loadChargingSessions(hours = 'all', startDate = null, endDate = null) {
         try {
             const params = new URLSearchParams({ hours });
             if (startDate) params.append('start_date', startDate);
             if (endDate) params.append('end_date', endDate);
-            
+
             console.log(`Loading charging sessions with params: ${params.toString()}`);
             const response = await fetch(`/api/charging-sessions?${params}`);
             const sessions = await response.json();
             console.log(`Received ${sessions.length} charging sessions:`, sessions);
-            
+
             const container = document.getElementById('charging-sessions-container');
             if (!container) return;
-            
+
             if (sessions.length === 0) {
                 if (hours !== 'all' && hours !== 'custom') {
                     showEmptyStateWithSuggestion(container, hours, 'charging sessions');
@@ -1610,31 +1610,31 @@ document.addEventListener('DOMContentLoaded', function() {
                 }
                 return;
             }
-            
+
             let html = '<div class="sessions-grid">';
-            
+
             sessions.forEach(session => {
                 console.log(`Session ${session.session_id}: is_complete=${session.is_complete}, active=${!session.is_complete}`);
-                
+
                 const startTime = new Date(session.start_time);
                 let duration = session.duration_minutes;
-                
+
                 // For active sessions, calculate real-time duration
                 if (!session.is_complete) {
                     console.log(`Active session found: ${session.session_id}`);
                     const now = new Date();
                     duration = Math.floor((now - startTime) / 60000); // Convert to minutes
                 }
-                
+
                 const formatDuration = (minutes) => {
                     if (!minutes && minutes !== 0) return '--';
                     const hours = Math.floor(minutes / 60);
                     const mins = Math.round(minutes % 60);
                     return hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
                 };
-                
+
                 const sessionClass = session.is_complete ? 'session-complete' : 'session-active';
-                
+
                 html += `
                     <div class="charging-session ${sessionClass}">
                         <div class="session-header">
@@ -1662,10 +1662,10 @@ document.addEventListener('DOMContentLoaded', function() {
                     </div>
                 `;
             });
-            
+
             html += '</div>';
             container.innerHTML = html;
-            
+
         } catch (error) {
             console.error('Error loading charging sessions:', error);
             const container = document.getElementById('charging-sessions-container');
@@ -1674,18 +1674,18 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         }
     }
-    
+
     // Pagination variables
     let currentPage = 1;
     let perPage = 10;
     let totalPages = 1;
-    
+
     // Pagination event handlers
     const prevPageBtn = document.getElementById('prev-page');
     const nextPageBtn = document.getElementById('next-page');
     const pageInfo = document.getElementById('page-info');
     const perPageSelect = document.getElementById('per-page');
-    
+
     if (prevPageBtn) {
         prevPageBtn.addEventListener('click', () => {
             if (currentPage > 1) {
@@ -1694,7 +1694,7 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         });
     }
-    
+
     if (nextPageBtn) {
         nextPageBtn.addEventListener('click', () => {
             if (currentPage < totalPages) {
@@ -1703,7 +1703,7 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         });
     }
-    
+
     if (perPageSelect) {
         perPageSelect.addEventListener('change', (e) => {
             perPage = parseInt(e.target.value);
@@ -1711,46 +1711,46 @@ document.addEventListener('DOMContentLoaded', function() {
             loadTripsWithPagination(currentTimeRange);
         });
     }
-    
+
     async function loadTripsWithPagination(hours = 'all', startDate = null, endDate = null) {
         try {
             // Get filter values
             const minDistance = document.getElementById('min-distance').value;
             const maxDistance = document.getElementById('max-distance').value;
-            
+
             const params = new URLSearchParams({
                 page: currentPage,
                 per_page: perPage,
                 hours: hours
             });
-            
+
             // Use master date range if custom
             if (hours === 'custom' && startDate && endDate) {
                 params.append('start_date', startDate);
                 params.append('end_date', endDate);
             }
-            
+
             if (minDistance) params.append('min_distance', minDistance);
             if (maxDistance) params.append('max_distance', maxDistance);
-            
+
             const response = await fetch(`/api/trips?${params}`);
             const data = await response.json();
-            
+
             totalPages = data.total_pages || 1;
             currentPage = data.page || 1;
-            
+
             // Check if we have no trips and should show empty state
             const trips = data.trips || [];
             if (trips.length === 0 && hours !== 'all' && hours !== 'custom') {
                 const tableContainer = document.querySelector('.table-container');
                 if (tableContainer) {
                     showEmptyStateWithSuggestion(tableContainer, hours, 'trips');
-                    
+
                     // Hide pagination controls
                     if (pageInfo) pageInfo.style.display = 'none';
                     if (prevPageBtn) prevPageBtn.style.display = 'none';
                     if (nextPageBtn) nextPageBtn.style.display = 'none';
-                    
+
                     return;
                 }
             } else {
@@ -1759,14 +1759,14 @@ document.addEventListener('DOMContentLoaded', function() {
                 if (prevPageBtn) prevPageBtn.style.display = 'inline-block';
                 if (nextPageBtn) nextPageBtn.style.display = 'inline-block';
             }
-            
+
             updateTripsTable(trips);
-            
+
             // Update pagination controls
             if (pageInfo) pageInfo.textContent = `Page ${currentPage} of ${totalPages}`;
             if (prevPageBtn) prevPageBtn.disabled = currentPage <= 1;
             if (nextPageBtn) nextPageBtn.disabled = currentPage >= totalPages;
-            
+
             // Also update the energy chart with all trips
             if (data.trips) {
                 updateEnergyChart(data.trips);
@@ -1775,15 +1775,15 @@ document.addEventListener('DOMContentLoaded', function() {
             console.error('Error loading trips with pagination:', error);
         }
     }
-    
+
     // Replace initial loadTrips with pagination version
     loadTripsWithPagination(24);
-    
+
     // Modal handling
     const modal = document.getElementById('tripModal');
     const modalClose = document.querySelector('.modal-close');
     let tripEnergyChart = null;
-    
+
     if (modalClose) {
         modalClose.addEventListener('click', () => {
             modal.style.display = 'none';
@@ -1793,7 +1793,7 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         });
     }
-    
+
     window.addEventListener('click', (event) => {
         if (event.target === modal) {
             modal.style.display = 'none';
@@ -1803,28 +1803,28 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         }
     });
-    
+
     async function showTripModal(tripId) {
         try {
             const response = await fetch(`/api/trip/${tripId}`);
             if (!response.ok) {
                 throw new Error('Failed to load trip details');
             }
-            
+
             const trip = await response.json();
-            
+
             // Update modal title
-            document.getElementById('modal-title').textContent = 
+            document.getElementById('modal-title').textContent =
                 `Trip Details - ${formatDate(new Date(trip.date))}`;
-            
+
             // Create stats grid with proper unit conversions
-            const distance = currentUnits === 'metric' ? 
+            const distance = currentUnits === 'metric' ?
                 trip.distance : conversions.kmToMiles(trip.distance);
-            const avgSpeed = currentUnits === 'metric' ? 
+            const avgSpeed = currentUnits === 'metric' ?
                 trip.average_speed : conversions.kmToMiles(trip.average_speed);
-            const maxSpeed = currentUnits === 'metric' ? 
+            const maxSpeed = currentUnits === 'metric' ?
                 trip.max_speed : conversions.kmToMiles(trip.max_speed);
-                
+
             const statsHtml = `
                 <div class="stat-card">
                     <h3>Distance</h3>
@@ -1844,8 +1844,8 @@ document.addEventListener('DOMContentLoaded', function() {
                 </div>
                 <div class="stat-card">
                     <h3>Efficiency</h3>
-                    <p>${currentUnits === 'metric' ? 
-                        Math.round(trip.efficiency_wh_per_km) + ' Wh/km' : 
+                    <p>${currentUnits === 'metric' ?
+                        Math.round(trip.efficiency_wh_per_km) + ' Wh/km' :
                         conversions.whPerKmToMiPerKwh(trip.efficiency_wh_per_km).toFixed(1) + ' mi/kWh'}</p>
                 </div>
                 <div class="stat-card">
@@ -1854,14 +1854,14 @@ document.addEventListener('DOMContentLoaded', function() {
                 </div>
             `;
             document.getElementById('trip-stats').innerHTML = statsHtml;
-            
+
             // Create energy breakdown chart
             const ctx = document.getElementById('trip-energy-chart').getContext('2d');
-            
+
             if (tripEnergyChart) {
                 tripEnergyChart.destroy();
             }
-            
+
             tripEnergyChart = new Chart(ctx, {
                 type: 'bar',
                 data: {
@@ -1904,48 +1904,48 @@ document.addEventListener('DOMContentLoaded', function() {
                     }
                 }
             });
-            
+
             // Create map if location available
             if (trip.end_latitude && trip.end_longitude) {
                 setTimeout(() => {
                     if (tripMap) {
                         tripMap.remove();
                     }
-                    
+
                     tripMap = L.map('trip-map').setView([trip.end_latitude, trip.end_longitude], 13);
-                    
+
                     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
                         attribution: '© OpenStreetMap contributors'
                     }).addTo(tripMap);
-                    
+
                     L.marker([trip.end_latitude, trip.end_longitude])
                         .addTo(tripMap)
                         .bindPopup('Trip End Location')
                         .openPopup();
                 }, 100);
             } else {
-                document.getElementById('trip-map').innerHTML = 
+                document.getElementById('trip-map').innerHTML =
                     '<div class="no-data">No location data available for this trip</div>';
             }
-            
+
             // Show modal
             modal.style.display = 'block';
-            
+
         } catch (error) {
             console.error('Error loading trip details:', error);
             alert('Failed to load trip details');
         }
     }
-    
+
     // Reduce update frequency and stagger the calls
     setInterval(() => {
         loadCollectionStatus();
     }, 60000);
-    
+
     setInterval(() => {
         loadEfficiencyStats();
     }, 300000); // Every 5 minutes
-    
+
     setInterval(() => {
         loadLocationsMap();
     }, 300000); // Every 5 minutes
@@ -1965,27 +1965,27 @@ style.textContent = `
         z-index: 1000;
         animation: slideIn 0.3s ease-out;
     }
-    
+
     .notification.success {
         background-color: #2ecc71;
     }
-    
+
     .notification.error {
         background-color: #e74c3c;
     }
-    
+
     .notification.info {
         background-color: #3498db;
     }
-    
+
     .notification.warning {
         background-color: #f39c12;
     }
-    
+
     .notification.fade-out {
         animation: slideOut 0.3s ease-out forwards;
     }
-    
+
     @keyframes slideIn {
         from {
             transform: translateX(100%);
@@ -1996,7 +1996,7 @@ style.textContent = `
             opacity: 1;
         }
     }
-    
+
     @keyframes slideOut {
         from {
             transform: translateX(0);

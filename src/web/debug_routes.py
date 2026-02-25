@@ -190,50 +190,50 @@ def debug_dashboard():
     </head>
     <body>
         <h1>PyVisionic Debug Dashboard</h1>
-        
+
         <div class="section">
             <h2>Recent Errors</h2>
             <button onclick="loadErrors()">Load Errors</button>
             <div id="errors"></div>
         </div>
-        
+
         <div class="section">
             <h2>Data Validation</h2>
             <button onclick="validateData()">Validate Data</button>
             <div id="validation"></div>
         </div>
-        
+
         <div class="section">
             <h2>Data Types</h2>
             <button onclick="checkDataTypes()">Check Data Types</button>
             <div id="datatypes"></div>
         </div>
-        
+
         <div class="section">
             <h2>Recent Logs</h2>
             <button onclick="loadLogs()">Load Logs</button>
             <div id="logs"></div>
         </div>
-        
+
         <script>
             async function loadErrors() {
                 const resp = await fetch('/api/debug/errors');
                 const errors = await resp.json();
                 document.getElementById('errors').innerHTML = '<pre>' + JSON.stringify(errors, null, 2) + '</pre>';
             }
-            
+
             async function validateData() {
                 const resp = await fetch('/api/debug/validate');
                 const result = await resp.json();
                 document.getElementById('validation').innerHTML = '<pre>' + JSON.stringify(result, null, 2) + '</pre>';
             }
-            
+
             async function checkDataTypes() {
                 const resp = await fetch('/api/debug/data-types');
                 const types = await resp.json();
                 document.getElementById('datatypes').innerHTML = '<pre>' + JSON.stringify(types, null, 2) + '</pre>';
             }
-            
+
             async function loadLogs() {
                 const resp = await fetch('/api/debug/logs');
                 const logs = await resp.json();

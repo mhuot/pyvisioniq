@@ -1019,95 +1019,95 @@ a:focus {
         gap: 1rem;
         text-align: center;
     }
-    
+
     .header-controls {
         flex-direction: column;
         width: 100%;
         gap: 1rem;
     }
-    
+
     .cache-link {
         order: 1;
         width: 100%;
     }
-    
+
     .refresh-button {
         order: 2;
         width: 100%;
     }
-    
+
     .units-button {
         order: 3;
         width: 100%;
     }
-    
+
     h1 {
         font-size: 1.5rem;
     }
-    
+
     .status-grid {
         grid-template-columns: repeat(2, 1fr);
     }
-    
+
     section {
         padding: 1.5rem;
     }
-    
+
     .chart-container {
         height: 300px;
     }
-    
+
     .master-time-range-section {
         padding: 1rem;
     }
-    
+
     .time-range-label {
         width: 100%;
         margin-bottom: 0.5rem;
     }
-    
+
     .master-time-range-controls {
         width: 100%;
         justify-content: space-between;
     }
-    
+
     .time-range-btn {
         flex: 1;
         min-width: 0;
         padding: 0.5rem 0.25rem;
         font-size: 0.75rem;
     }
-    
+
     .custom-date-range {
         flex-direction: column;
         align-items: stretch;
         gap: 0.5rem;
     }
-    
+
     .date-input-group {
         width: 100%;
     }
-    
+
     .date-input-group input[type="date"] {
         width: 100%;
     }
-    
+
     #apply-custom-range {
         width: 100%;
     }
-    
+
     .empty-state {
         padding: 2rem 1rem;
     }
-    
+
     .empty-state-icon {
         font-size: 2.5rem;
     }
-    
+
     .empty-state h3 {
         font-size: 1.1rem;
     }
-    
+
     .expand-range-btn {
         padding: 0.75rem 1rem;
         font-size: 0.9rem;
@@ -1118,11 +1118,11 @@ a:focus {
     .status-grid {
         grid-template-columns: 1fr;
     }
-    
+
     .table-container {
         font-size: 0.75rem;
     }
-    
+
     th, td {
         padding: 0.5rem;
     }
@@ -1133,12 +1133,12 @@ a:focus {
         height: 300px \!important;
         padding: 1rem;
     }
-    
+
     /* Ensure charts are responsive */
     .chart-container canvas {
         max-height: 280px \!important;
     }
-    
+
     /* Prevent overlapping on doughnut charts */
     #energy-chart {
         max-width: 90%;
