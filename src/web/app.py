@@ -1,6 +1,5 @@
 import json
 import os
-import sys
 import base64
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -11,8 +10,6 @@ import pandas as pd
 import plotly.graph_objs as go
 import plotly.utils
 from flask import Flask, Response, jsonify, render_template, request, send_file
-
-sys.path.append(str(Path(__file__).parent.parent.parent))
 
 from src.api.client import APIError, CachedVehicleClient
 from src.storage.factory import create_storage
@@ -128,7 +125,7 @@ def refresh_data():
                         (datetime.now(api_time.tzinfo) - api_time).total_seconds() / 60
                     )
                     freshness_msg = f" (vehicle data from {age_minutes} minutes ago)"
-                except:
+                except (KeyError, TypeError, ValueError):
                     freshness_msg = ""
             else:
                 freshness_msg = ""

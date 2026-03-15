@@ -730,9 +730,6 @@ class CachedVehicleClient:
                     # Non-rate-limit error, don't retry
                     logger.error("Non-retryable error: %s", last_error.message)
                     raise last_error
-                    # Non-rate-limit error, don't retry
-                    logger.error(f"Non-retryable error: {last_error.message}")
-                    raise last_error
 
         # If we get here, we exhausted retries for rate limit
         if last_error:
