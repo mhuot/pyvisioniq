@@ -16,15 +16,9 @@ from dotenv import load_dotenv
 
 from src.api.client import CachedVehicleClient
 from src.storage.factory import create_storage
-
-sys.path.append(str(Path(__file__).parent))
-
-# Load environment first
-load_dotenv()
-
-# Import debug utilities
-sys.path.append(str(Path(__file__).parent))
 from src.utils.debug import DebugLogger, setup_debug_logging
+
+load_dotenv()
 
 # Set up logging based on debug mode
 DEBUG_MODE = os.getenv("DEBUG_MODE", "false").lower() == "true"

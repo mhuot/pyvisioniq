@@ -86,12 +86,16 @@ def get_cache_file(filename):
     if not client:
         return jsonify({"error": "Cache client not initialized"}), 500
 
-    # Validate filename (security check)
-    if ".." in filename or "/" in filename or "\\" in filename:
+    # Validate filename - resolve path and ensure it stays within cache_dir
+    try:
+        resolved = (client.cache_dir / filename).resolve()
+        if not resolved.is_relative_to(client.cache_dir.resolve()):
+            return jsonify({"error": "Invalid filename"}), 400
+    except (ValueError, OSError):
         return jsonify({"error": "Invalid filename"}), 400
 
     try:
-        file_path = client.cache_dir / filename
+        file_path = resolved
         if not file_path.exists():
             return jsonify({"error": "File not found"}), 404
 
@@ -126,12 +130,16 @@ def delete_cache_file(filename):
     if not client:
         return jsonify({"error": "Cache client not initialized"}), 500
 
-    # Validate filename
-    if ".." in filename or "/" in filename or "\\" in filename:
+    # Validate filename - resolve path and ensure it stays within cache_dir
+    try:
+        resolved = (client.cache_dir / filename).resolve()
+        if not resolved.is_relative_to(client.cache_dir.resolve()):
+            return jsonify({"error": "Invalid filename"}), 400
+    except (ValueError, OSError):
         return jsonify({"error": "Invalid filename"}), 400
 
     try:
-        file_path = client.cache_dir / filename
+        file_path = resolved
         if not file_path.exists():
             return jsonify({"error": "File not found"}), 404
 
