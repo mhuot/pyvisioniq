@@ -19,6 +19,24 @@ from src.storage.factory import create_storage
 from src.web.cache_routes import cache_bp
 from src.web.debug_routes import debug_bp
 
+
+def _tz_aware_cutoff(dt_series, hours_int):
+    """Return a cutoff timestamp compatible with *dt_series* timezone info."""
+    if hasattr(dt_series, "dt") and dt_series.dt.tz is not None:
+        from datetime import timezone
+
+        return pd.Timestamp.now(tz=timezone.utc) - pd.Timedelta(hours=hours_int)
+    return pd.Timestamp.now() - pd.Timedelta(hours=hours_int)
+
+
+def _coerce_filter_ts(value, dt_series):
+    """Convert a date string to a Timestamp matching the tz of *dt_series*."""
+    ts = pd.to_datetime(value)
+    if hasattr(dt_series, "dt") and dt_series.dt.tz is not None and ts.tz is None:
+        ts = ts.tz_localize(dt_series.dt.tz)
+    return ts
+
+
 app = Flask(__name__)
 app.config["SECRET_KEY"] = os.getenv("SECRET_KEY", "dev-secret-key")  # nosec B105
 
@@ -309,21 +327,24 @@ def get_trips():
                 }
             )
 
+        # Ensure date column is proper datetime for all filtering
+        trips_df["date"] = pd.to_datetime(trips_df["date"], errors="coerce")
+        trips_df = trips_df[trips_df["date"].notna()]
+
         # Apply time range filter first if specified
         if hours and hours != "all":
             try:
-                trips_df["date"] = pd.to_datetime(trips_df["date"])
                 hours_int = int(hours)
-                cutoff = pd.Timestamp.now() - pd.Timedelta(hours=hours_int)
+                cutoff = _tz_aware_cutoff(trips_df["date"], hours_int)
                 trips_df = trips_df[trips_df["date"] >= cutoff]
             except (ValueError, TypeError):
                 pass
 
         # Apply other filters
         if start_date:
-            trips_df = trips_df[trips_df["date"] >= start_date]
+            trips_df = trips_df[trips_df["date"] >= _coerce_filter_ts(start_date, trips_df["date"])]
         if end_date:
-            trips_df = trips_df[trips_df["date"] <= end_date]
+            trips_df = trips_df[trips_df["date"] <= _coerce_filter_ts(end_date, trips_df["date"])]
         if min_distance is not None:
             trips_df = trips_df[trips_df["distance"] >= min_distance]
         if max_distance is not None:
@@ -409,8 +430,8 @@ def get_battery_history():
         if hours:
             try:
                 hours_int = int(hours)
-                cutoff = datetime.now() - timedelta(hours=hours_int)
                 battery_df["timestamp"] = pd.to_datetime(battery_df["timestamp"])
+                cutoff = _tz_aware_cutoff(battery_df["timestamp"], hours_int)
                 battery_df = battery_df[battery_df["timestamp"] >= cutoff]
             except ValueError:
                 pass
@@ -912,8 +933,8 @@ def get_all_locations():
 
             if hours == "custom" and start_date and end_date:
                 # Filter by custom date range
-                start = pd.to_datetime(start_date)
-                end = pd.to_datetime(end_date) + pd.Timedelta(days=1)
+                start = _coerce_filter_ts(start_date, trips_df["date"])
+                end = _coerce_filter_ts(end_date, trips_df["date"]) + pd.Timedelta(days=1)
                 trips_df = trips_df[(trips_df["date"] >= start) & (trips_df["date"] < end)]
                 app.logger.info(
                     "Custom date filter: %s to %s, %s trips remain", start, end, len(trips_df)
@@ -922,7 +943,7 @@ def get_all_locations():
                 try:
                     # Filter trips by time range
                     hours_int = int(hours)
-                    cutoff = pd.Timestamp.now() - pd.Timedelta(hours=hours_int)
+                    cutoff = _tz_aware_cutoff(trips_df["date"], hours_int)
                     app.logger.info("Time filter: last %s hours, cutoff: %s", hours_int, cutoff)
                     trips_df = trips_df[trips_df["date"] >= cutoff]
                     app.logger.info("After time filter: %s trips remain", len(trips_df))
@@ -1038,8 +1059,8 @@ def get_charging_sessions():
         # Apply date filtering
         if start_date and end_date:
             # Custom date range
-            start_dt = pd.to_datetime(start_date)
-            end_dt = pd.to_datetime(end_date) + pd.Timedelta(days=1)  # Include end date
+            start_dt = _coerce_filter_ts(start_date, sessions_df["start_time"])
+            end_dt = _coerce_filter_ts(end_date, sessions_df["start_time"]) + pd.Timedelta(days=1)
             sessions_df = sessions_df[
                 (sessions_df["start_time"] >= start_dt) & (sessions_df["start_time"] < end_dt)
             ]
@@ -1047,13 +1068,7 @@ def get_charging_sessions():
             # Hours-based filtering
             try:
                 hours_int = int(hours)
-                # Use timezone-aware datetime if sessions have timezone info
-                if sessions_df["start_time"].dt.tz is not None:
-                    from datetime import timezone
-
-                    cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours_int)
-                else:
-                    cutoff_time = datetime.now() - timedelta(hours=hours_int)
+                cutoff_time = _tz_aware_cutoff(sessions_df["start_time"], hours_int)
 
                 app.logger.info("Current time: %s", datetime.now())
                 app.logger.info("Cutoff time (%sh ago): %s", hours_int, cutoff_time)
