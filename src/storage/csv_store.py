@@ -714,8 +714,7 @@ class CSVStorage(StorageBackend):
 
             battery_diff = battery_level - start_battery
             if battery_diff > 0:
-                # Assume 77.4 kWh battery (Ioniq 5 standard)
-                energy_added = (battery_diff / 100) * 77.4
+                energy_added = (battery_diff / 100) * self.battery_capacity_kwh
                 sessions_df.loc[idx, "energy_added"] = round(energy_added, 2)
 
             # Calculate average power

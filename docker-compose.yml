@@ -34,11 +34,43 @@ services:
       - ./cache:/app/cache
       - ./oracle_wallet:/app/oracle_wallet:ro
     restart: unless-stopped
-    command: >
-      sh -c "nohup python data_collector.py > /app/logs/collector.log 2>&1 &
-             python -m gunicorn --bind 0.0.0.0:${PORT:-5000} --workers 4 --threads 2 --timeout 120 src.web.app:app"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:${PORT:-5000}/api/collection-status')"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     networks:
       - nginx-proxy-network
+
+  collector:
+    container_name: pyvisionic-collector
+    build: .
+    command: python data_collector.py
+    environment:
+      - BLUELINKUSER=${BLUELINKUSER}
+      - BLUELINKPASS=${BLUELINKPASS}
+      - BLUELINKPIN=${BLUELINKPIN}
+      - BLUELINKVID=${BLUELINKVID}
+      - BLUELINKREGION=${BLUELINKREGION:-3}
+      - BLUELINKBRAND=${BLUELINKBRAND:-2}
+      - API_DAILY_LIMIT=${API_DAILY_LIMIT:-30}
+      - API_CACHE_ENABLED=${API_CACHE_ENABLED:-true}
+      - CACHE_DURATION_HOURS=${CACHE_DURATION_HOURS:-48}
+      - STORAGE_BACKEND=${STORAGE_BACKEND:-csv}
+      - DUAL_READ_FROM=${DUAL_READ_FROM:-csv}
+      - ORACLE_USER=${ORACLE_USER:-}
+      - ORACLE_PASSWORD=${ORACLE_PASSWORD:-}
+      - ORACLE_DSN=${ORACLE_DSN:-}
+      - ORACLE_WALLET_LOCATION=${ORACLE_WALLET_LOCATION:-/app/oracle_wallet}
+      - ORACLE_WALLET_PASSWORD=${ORACLE_WALLET_PASSWORD:-}
+      - TZ=${TZ:-UTC}
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./cache:/app/cache
+      - ./oracle_wallet:/app/oracle_wallet:ro
+    restart: unless-stopped
 
 networks:
   nginx-proxy-network:
