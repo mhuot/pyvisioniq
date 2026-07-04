@@ -12,8 +12,8 @@ import pandas as pd
 class StorageBackend(ABC):
     """Abstract base class for vehicle data storage backends.
 
-    All storage implementations (CSV, Oracle, etc.) must implement
-    these methods to provide a consistent interface for data access.
+    All storage implementations must implement these methods to
+    provide a consistent interface for data access.
     """
 
     @abstractmethod

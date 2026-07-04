@@ -15,7 +15,7 @@ from flask import Flask, Response, jsonify, render_template, request, send_file
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
 from src.api.client import APIError, CachedVehicleClient
-from src.storage.factory import create_storage
+from src.storage.csv_store import CSVStorage
 from src.web.cache_routes import cache_bp
 from src.web.debug_routes import debug_bp
 
@@ -31,7 +31,7 @@ except Exception as e:
     client = None
     app.config["cache_client"] = None
 
-storage = create_storage()
+storage = CSVStorage()
 
 # Register blueprints
 app.register_blueprint(cache_bp)

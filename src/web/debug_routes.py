@@ -80,9 +80,9 @@ def get_recent_logs():
 @debug_bp.route("/api/debug/data-types")
 def check_data_types():
     """Check data types in storage"""
-    from src.storage.factory import create_storage
+    from src.storage.csv_store import CSVStorage
 
-    storage = create_storage()
+    storage = CSVStorage()
 
     type_info = {}
 
@@ -119,10 +119,10 @@ def check_data_types():
 @debug_bp.route("/api/debug/validate")
 def validate_data():
     """Validate current data and check for issues"""
-    from src.storage.factory import create_storage
+    from src.storage.csv_store import CSVStorage
     from src.utils.debug import DataValidator
 
-    storage = create_storage()
+    storage = CSVStorage()
     issues = []
 
     # Check battery data
