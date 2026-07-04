@@ -32,12 +32,7 @@ addopts = "-v --tb=short"
 
 [tool.coverage.run]
 omit = [
-    "src/storage/oracle_store.py",
-    "src/storage/oracle_schema.py",
-    "src/storage/dual_store.py",
-    "src/storage/factory.py",
     "src/web/app.py",
-    "src/web/admin_routes.py",
     "src/web/auth.py",
     "src/web/auth_routes.py",
     "src/web/cache_routes.py",
