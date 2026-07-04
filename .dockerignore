@@ -1,0 +1,36 @@
+# Secrets & credentials — provided at runtime via env/compose, never baked in
+.env
+.env.*
+oracle_wallet/
+Wallet_*.zip
+*.p12
+*.jks
+cwallet.sso
+
+# Virtualenv and Python caches (image installs its own deps)
+venv/
+env/
+ENV/
+__pycache__/
+*.py[cod]
+*.so
+
+# Runtime data — mounted as volumes at runtime
+data/
+cache/
+logs/
+sessions/
+debug/
+*.log
+
+# VCS, tooling, tests — not needed in the runtime image
+.git/
+.github/
+.gitignore
+.pre-commit-config.yaml
+.pytest_cache/
+.coverage
+.vscode/
+tests/
+docs/
+*.md
