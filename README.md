@@ -1,6 +1,6 @@
 # PyVisionic
 
-A Python web application for monitoring and visualizing Hyundai/Kia Connect API data, with a focus on battery performance, trip analysis, energy efficiency, and charging behavior. Stores data in CSV files or Oracle Autonomous Database (or both), and serves an interactive dashboard.
+A Python web application for monitoring and visualizing Hyundai/Kia Connect API data, with a focus on battery performance, trip analysis, energy efficiency, and charging behavior. Stores data in CSV files and serves an interactive dashboard.
 
 ## Table of Contents
 
@@ -11,8 +11,6 @@ A Python web application for monitoring and visualizing Hyundai/Kia Connect API 
 - [Web Interface](#web-interface)
 - [API Reference](#api-reference)
 - [Data Storage](#data-storage)
-- [Storage Backends](#storage-backends)
-- [Oracle Autonomous Database](#oracle-autonomous-database)
 - [Data Management Tools](#data-management-tools)
 - [Development](#development)
 - [Project Structure](#project-structure)
@@ -26,7 +24,7 @@ A Python web application for monitoring and visualizing Hyundai/Kia Connect API 
 - **Hyundai/Kia Connect integration** via `hyundai-kia-connect-api`, supporting Hyundai, Kia, and Genesis vehicles across all regions (USA, Canada, Europe, China, Australia)
 - **Background data collector** that respects a configurable daily API limit (default 30 calls/day), evenly distributes calls throughout the day, and backs off automatically when the upstream rate-limits
 - **Two-tier caching**: a short *validity* window (≈45.6 min at 30 calls/day) controls when a new API call is made, and a longer *retention* window (default 48 h) controls how long historical responses are kept on disk
-- **Pluggable storage backends**: CSV files (default), Oracle Autonomous Database, or dual-write to both
+- **CSV storage** with automatic deduplication, easy to back up and inspect
 - **Charging session reconstruction** with automatic gap detection and energy/power calculations
 - **Weather correlation** via Open-Meteo API, with the vehicle's own temperature sensor as a fallback source
 - **Docker-first deployment** via `docker compose`, including reverse-proxy / Let's Encrypt environment variables
@@ -56,19 +54,19 @@ A Python web application for monitoring and visualizing Hyundai/Kia Connect API 
 ## Architecture Overview
 
 ```
-Hyundai/Kia API ─► CachedVehicleClient ─► Cache files ─► Storage backend ─► Flask API ─► Dashboard
+Hyundai/Kia API ─► CachedVehicleClient ─► Cache files ─► CSVStorage ─► Flask API ─► Dashboard
                         │                       │              │
-                  Rate limiting          Deduplication      CSVStorage (default)
-                  SSL workaround         Weather merge      OracleStorage
-                  Error classification   Charging sessions  DualWriteStorage (CSV + Oracle)
+                  Rate limiting          Deduplication      CSV files
+                  SSL workaround         Weather merge      Charging sessions
+                  Error classification
 ```
 
 Two processes run side-by-side:
 
-1. **`data_collector.py`** — long-running scheduler that calls the Hyundai/Kia API at evenly-spaced intervals derived from `API_DAILY_LIMIT`, then writes the parsed result through the storage backend.
-2. **`src.web.app`** — Flask app (served by Gunicorn in production) that reads from the same storage backend and renders the dashboard plus a JSON API.
+1. **`data_collector.py`** — long-running scheduler that calls the Hyundai/Kia API at evenly-spaced intervals derived from `API_DAILY_LIMIT`, then writes the parsed result to CSV.
+2. **`src.web.app`** — Flask app (served by Gunicorn in production) that reads from the same CSV files and renders the dashboard plus a JSON API.
 
-The two processes coordinate through the shared `data/`, `cache/`, and (optionally) Oracle tables. For a deeper architecture write-up, see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+The two processes coordinate through the shared `data/` and `cache/` directories. For a deeper architecture write-up, see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 ## Quick Start
 
@@ -157,26 +155,13 @@ All settings are read from environment variables (typically via `.env`). See [`.
 | `CACHE_DURATION_HOURS` | `48` | How long historical cache files are kept on disk |
 | `DISABLE_SSL_VERIFY` | `false` | If `true`, applies an SSL workaround (`src/api/ssl_patch.py`) for certificate issues |
 
-### Storage Backend
+### Data & Storage
 
 | Variable | Default | Description |
 |---|---|---|
-| `STORAGE_BACKEND` | `csv` | `csv`, `oracle`, or `dual` |
-| `DUAL_READ_FROM` | `csv` | When `STORAGE_BACKEND=dual`, which side to read from |
 | `BATTERY_CAPACITY_KWH` | `77.4` | Used for energy / kWh calculations |
 | `CHARGING_SESSION_GAP_MULTIPLIER` | `1.5` | Multiplier on the collection interval used to decide when a charging session is considered ended |
 | `WEATHER_SOURCE` | `meteo` | `meteo` (Open-Meteo API) or `vehicle` (use the car's own temperature sensor) |
-
-### Oracle Autonomous Database (required when `STORAGE_BACKEND` is `oracle` or `dual`)
-
-| Variable | Default | Description |
-|---|---|---|
-| `ORACLE_USER` | — | Schema user |
-| `ORACLE_PASSWORD` | — | Schema password |
-| `ORACLE_DSN` | — | TNS alias from the wallet (e.g. `pyvisioniq_low`) |
-| `ORACLE_WALLET_LOCATION` | — | Path to the extracted wallet directory |
-| `ORACLE_WALLET_PASSWORD` | — | Wallet password, if set |
-| `RAW_RESPONSE_RETENTION_DAYS` | `3650` | How long raw JSON responses are retained in the `api_responses` table |
 
 ### Web Server
 
@@ -263,47 +248,16 @@ All endpoints return JSON. Date parameters accept ISO-8601 (`YYYY-MM-DD`).
 - *History* files are older snapshots kept until `CACHE_DURATION_HOURS` expires
 - *Error* files capture failed responses for the `/debug` UI and `analyze_errors.py`
 
-### Oracle tables (`oracle`/`dual` backends)
-- `trips`, `battery_status`, `locations`, `charging_sessions` — same structure as the CSV files, with `MERGE`-based deduplication and unique constraints
-- `api_responses` — raw JSON payloads (CLOB) timestamped by collection; auto-purged after `RAW_RESPONSE_RETENTION_DAYS`
-
 ### Logs (`logs/`)
 - `collector.log` — data-collector output (Docker)
 - App and debug logs as configured
 
-## Storage Backends
+## Data Storage
 
-| Backend | `STORAGE_BACKEND` | Behavior |
-|---|---|---|
-| **CSVStorage** | `csv` (default) | Flat files in `data/`, deduplication via pandas |
-| **OracleStorage** | `oracle` | Oracle ADB with connection pooling (`oracledb` thin mode — no Instant Client required) |
-| **DualWriteStorage** | `dual` | Writes to both CSV and Oracle on every store; reads from `DUAL_READ_FROM` (default `csv`). Oracle errors are logged but do **not** block CSV writes. |
-
-The backend is selected by `src.storage.factory.create_storage()` at startup. Switching backends requires only an env-var change; tables are created on first connection. To move existing CSV history into Oracle, see [Oracle Autonomous Database](#oracle-autonomous-database).
-
-## Oracle Autonomous Database
-
-PyVisionic can target Oracle Autonomous Database (Always Free works fine) to enable integration with Microsoft Fabric Data Gateway, Power BI, or any Oracle-compatible BI tool.
-
-1. Provision an **Always Free Autonomous Transaction Processing (ATP)** database in the OCI console.
-2. Download the wallet zip and extract it to `oracle_wallet/` in the project root.
-3. Set the Oracle env vars in `.env`:
-   ```bash
-   STORAGE_BACKEND=dual
-   ORACLE_USER=pyvisioniq
-   ORACLE_PASSWORD=your_oracle_password
-   ORACLE_DSN=pyvisioniq_low
-   ORACLE_WALLET_LOCATION=./oracle_wallet
-   ORACLE_WALLET_PASSWORD=your_wallet_password
-   ```
-4. Migrate existing CSV history into Oracle:
-   ```bash
-   source venv/bin/activate
-   python tools/migrate_csv_to_oracle.py --dry-run   # preview
-   python tools/migrate_csv_to_oracle.py             # execute
-   ```
-
-Tables are created automatically on first connection. From there, point Microsoft Fabric's On-Premises Data Gateway (with Oracle Client installed) at the same wallet/TNS configuration and the five tables (`trips`, `battery_status`, `locations`, `charging_sessions`, `api_responses`) are queryable from Fabric and Power BI.
+Data is stored as flat CSV files in `data/`, with deduplication handled via pandas
+(`src/storage/csv_store.py`, `CSVStorage`). The files are easy to back up, inspect, and
+feed into any external analysis or BI tool. `StorageBackend` (`src/storage/base.py`)
+defines the interface, so an alternative backend could be added without touching callers.
 
 ## Data Management Tools
 
@@ -311,7 +265,6 @@ All tools live in `tools/` and require an activated venv. One-off historical scr
 
 | Tool | Purpose | Notable flags |
 |---|---|---|
-| `migrate_csv_to_oracle.py` | One-shot CSV → Oracle migration | `--dry-run`, `--batch-size N` |
 | `deduplicate_trips_v2.py` | Remove duplicate trip rows from `trips.csv` | — |
 | `rebuild_charging_sessions.py` | Merge fragmented charging sessions using the dynamic gap threshold | — |
 | `rebuild_sessions_from_battery.py` | Rebuild `charging_sessions.csv` from the battery history | `--preview` |
@@ -351,7 +304,7 @@ make clean           # remove .pytest_cache htmlcov .coverage __pycache__
 - **security** — `bandit -r ... -c pyproject.toml`
 - **test** — `pytest --cov=src --cov-report=term-missing --cov-fail-under=40` with the HTML coverage report uploaded as a 14-day artifact
 
-Coverage configuration in `pyproject.toml` deliberately omits some untested modules (Oracle store, dual-write store, web routes, auth modules, SSL patch).
+Coverage configuration in `pyproject.toml` deliberately omits some untested modules (web routes, auth modules, SSL patch).
 
 ### Debug mode
 Set `DEBUG_MODE=true` in `.env` to enable:
@@ -369,11 +322,7 @@ pyvisionic/
 │   │   └── ssl_patch.py       # Optional SSL workaround
 │   ├── storage/
 │   │   ├── base.py            # Abstract StorageBackend interface
-│   │   ├── csv_store.py       # CSVStorage (default)
-│   │   ├── oracle_store.py    # OracleStorage
-│   │   ├── oracle_schema.py   # Oracle DDL
-│   │   ├── dual_store.py      # DualWriteStorage
-│   │   └── factory.py         # create_storage() factory
+│   │   └── csv_store.py       # CSVStorage
 │   ├── utils/
 │   │   ├── weather.py         # Open-Meteo client
 │   │   └── debug.py           # DebugLogger, DataValidator
@@ -381,10 +330,9 @@ pyvisionic/
 │       ├── app.py             # Flask app + core API routes
 │       ├── cache_routes.py    # /cache blueprint
 │       ├── debug_routes.py    # /debug + /api/debug/* blueprint
-│       ├── admin_routes.py    # /admin blueprint (see Roadmap)
 │       ├── auth.py            # Entra ID auth helpers (see Roadmap)
 │       ├── auth_routes.py     # Auth blueprint (see Roadmap)
-│       ├── templates/         # index.html, cache.html, admin.html, login.html
+│       ├── templates/         # index.html, cache.html, login.html
 │       └── static/            # CSS, JS, images
 ├── tools/                     # Active data-management scripts
 │   └── archive/               # One-off migration/fix scripts (already applied)
@@ -394,7 +342,6 @@ pyvisionic/
 ├── cache/                     # Cached API responses
 ├── debug/                     # Error tracking files (created on demand)
 ├── logs/                      # Application logs
-├── oracle_wallet/             # Oracle ADB wallet (not in git)
 ├── sessions/                  # Flask-Session storage (not in git)
 ├── data_collector.py          # Background collector (CLI: --once)
 ├── run.py                     # Convenience launcher: collector + web server
@@ -430,12 +377,7 @@ The repository contains scaffolding for two features that are **not currently wi
 - Required libraries (`identity`, `flask-session`) are **not** in `requirements.txt`.
 - To activate: add the dependencies, call `init_auth(app)` and `app.register_blueprint(auth_bp)` in `src/web/app.py`, then set `AUTH_ENABLED`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`, `AZURE_TENANT_ID`, `AZURE_REDIRECT_URI`, `FLASK_SECRET_KEY`, and `ADMIN_USERS`.
 
-### Admin dashboard (`src/web/admin_routes.py`, `templates/admin.html`)
-- Blueprint defined for `/admin/`, `/admin/api/storage-stats`, `/admin/api/raw-responses`, `/admin/api/raw-response/<id>`, and `/admin/api/storage-consumption`, but the blueprint is **not** registered in `app.py`.
-- Several endpoints call `storage.get_storage_stats()`, which currently exists only on `OracleStorage` — so the admin UI is only meaningful with `STORAGE_BACKEND=oracle` or `dual`.
-- Activation requires registering the blueprint and (optionally) enabling auth so `@admin_required` can gate access.
-
-Both features are visible in the source tree because they were partially implemented; treat them as a starting point rather than as shipping functionality.
+This feature is visible in the source tree because it was partially implemented; treat it as a starting point rather than as shipping functionality.
 
 ## License
 
@@ -447,4 +389,3 @@ MIT License — see [`LICENSE`](LICENSE).
 - Flask, Gunicorn, pandas, Plotly
 - Chart.js and Leaflet.js for the dashboard
 - Open-Meteo for weather data
-- `python-oracledb` for thin-mode Oracle connectivity

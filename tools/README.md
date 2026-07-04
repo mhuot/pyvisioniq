@@ -51,17 +51,6 @@ python tools/recompute_is_cached.py --write-cache  # Persist changes
 
 **When to use:** After major cache changes or to audit historical freshness. Compares timestamps and payload hashes to determine if data was truly fresh from Hyundai.
 
-### migrate_csv_to_oracle.py
-Bulk migrates CSV data to Oracle Autonomous Database.
-
-```bash
-python tools/migrate_csv_to_oracle.py              # Full migration
-python tools/migrate_csv_to_oracle.py --dry-run    # Preview only
-python tools/migrate_csv_to_oracle.py --batch-size 500
-```
-
-**When to use:** Setting up Oracle backend or re-syncing Oracle from CSV source of truth.
-
 ### analyze_errors.py
 Analyzes error patterns from cached API error files.
 
@@ -82,7 +71,7 @@ One-time migration and fix scripts that have already been applied are in `tools/
 - `fix_charging_sessions.py` — Superseded by rebuild_sessions_from_battery.py
 - `fix_charging_sessions_columns.py` — One-time CSV column order fix
 - `fix_cache_odometer.py` — One-time miles-to-km conversion in cache
-- `csv_to_postgres.py` — PostgreSQL migration (project uses Oracle)
+- `csv_to_postgres.py` — Abandoned PostgreSQL migration experiment
 
 ## Usage Guidelines
 
