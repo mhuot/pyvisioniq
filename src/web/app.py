@@ -16,6 +16,8 @@ sys.path.append(str(Path(__file__).parent.parent.parent))
 
 from src.api.client import APIError, CachedVehicleClient
 from src.storage.csv_store import CSVStorage
+from src.web.auth import admin_required, api_login_required, init_auth, login_required
+from src.web.auth_routes import auth_bp
 from src.web.cache_routes import cache_bp
 from src.web.debug_routes import debug_bp
 
@@ -32,10 +34,16 @@ except Exception as e:
     app.config["cache_client"] = None
 
 storage = CSVStorage()
+app.config["storage"] = storage
+
+# Configure authentication. This is a no-op unless AUTH_ENABLED=true, in which
+# case route decorators below start enforcing Entra ID login.
+init_auth(app)
 
 # Register blueprints
 app.register_blueprint(cache_bp)
 app.register_blueprint(debug_bp)
+app.register_blueprint(auth_bp)
 
 # Global cache for battery history
 cached_battery_history = {"data": None, "timestamp": None}
@@ -58,6 +66,7 @@ def clean_nan_values(data):
 
 
 @app.route("/")
+@login_required
 def index():
     return render_template("index.html")
 
@@ -73,6 +82,7 @@ def favicon():
 
 
 @app.route("/api/clear-cache")
+@admin_required
 def clear_cache():
     """Clear the cache to force fresh API call"""
     try:
@@ -97,6 +107,7 @@ def clear_cache():
 
 
 @app.route("/api/refresh")
+@admin_required
 def refresh_data():
     if not client:
         return (
@@ -173,6 +184,7 @@ def refresh_data():
 
 
 @app.route("/api/trip/<trip_id>")
+@api_login_required
 def get_trip_detail(trip_id):
     """Get detailed information about a specific trip"""
     try:
@@ -284,6 +296,7 @@ def get_trip_detail(trip_id):
 
 
 @app.route("/api/trips")
+@api_login_required
 def get_trips():
     try:
         # Get query parameters for pagination and filtering
@@ -390,6 +403,7 @@ def get_trips():
 
 
 @app.route("/api/battery/history")
+@api_login_required
 def get_battery_history():
     """Get battery history data"""
     try:
@@ -428,6 +442,7 @@ def get_battery_history():
 
 
 @app.route("/api/debug")
+@admin_required
 def debug_api():
     """Debug endpoint to check API configuration and connectivity"""
     debug_info = {
@@ -473,6 +488,7 @@ def debug_api():
 
 
 @app.route("/api/temperature-efficiency")
+@api_login_required
 def get_temperature_efficiency():
     """Get efficiency data correlated with temperature"""
     try:
@@ -590,6 +606,7 @@ def get_temperature_efficiency():
 
 
 @app.route("/api/charging-temperature-impact")
+@api_login_required
 def get_charging_temperature_impact():
     """Return charging session performance grouped by ambient temperature."""
     try:
@@ -771,6 +788,7 @@ def get_charging_temperature_impact():
 
 
 @app.route("/api/efficiency-stats")
+@api_login_required
 def get_efficiency_stats():
     """Get efficiency statistics for different time periods"""
     try:
@@ -887,6 +905,7 @@ def get_efficiency_stats():
 
 
 @app.route("/api/locations")
+@api_login_required
 def get_all_locations():
     """Get all trip locations for mapping"""
     try:
@@ -999,6 +1018,7 @@ def get_all_locations():
 
 
 @app.route("/api/charging-sessions")
+@api_login_required
 def get_charging_sessions():
     """Get charging session history"""
     try:
@@ -1155,6 +1175,7 @@ def get_charging_sessions():
 
 
 @app.route("/api/collection-status")
+@api_login_required
 def get_collection_status():
     """Get data collection status"""
     try:
@@ -1225,6 +1246,7 @@ def get_collection_status():
 
 
 @app.route("/api/current-status")
+@api_login_required
 def get_current_status():
     try:
         battery_df = storage.get_battery_df()

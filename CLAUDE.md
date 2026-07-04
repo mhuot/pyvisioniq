@@ -131,6 +131,7 @@ DEBUG_MODE=true python -m src.web.app
    - Provides 12+ API endpoints for data access
    - Cache management UI via cache_bp blueprint at `/cache`
    - Debug routes via debug_bp blueprint when DEBUG_MODE=true
+   - Optional Entra ID auth via auth_bp; route decorators are no-ops unless AUTH_ENABLED=true
    - Handles NaN values for JSON serialization
 
 ### Data Flow
@@ -147,7 +148,8 @@ Hyundai/Kia API → CachedVehicleClient → Cache Files → CSVStorage → Flask
 - **Error Handling**: APIError class with error types and user-friendly messages
 - **Data Validation**: Debug utilities with DataValidator for type checking (handles numpy types)
 - **Session Management**: Charging sessions tracked with start/end times, energy added, location
-- **Docker Deployment**: Code is COPY'd into image, not mounted. Only data/logs/cache are volumes
+- **Authentication**: Opt-in Entra ID (OIDC). `login_required`/`api_login_required`/`admin_required` decorators pass through when AUTH_ENABLED=false; admin routes gate on ADMIN_USERS
+- **Docker Deployment**: Code is COPY'd into image, not mounted. Only data/logs/cache/sessions are volumes
 - **Blueprint Architecture**: Modular routes using Flask blueprints (cache_bp, debug_bp)
 
 ### API Endpoints

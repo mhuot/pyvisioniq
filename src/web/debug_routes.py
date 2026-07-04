@@ -11,10 +11,13 @@ from pathlib import Path
 import pandas as pd
 from flask import Blueprint, jsonify, render_template_string, request
 
+from src.web.auth import admin_required
+
 debug_bp = Blueprint("debug", __name__)
 
 
 @debug_bp.route("/api/debug/errors")
+@admin_required
 def get_recent_errors():
     """Get recent errors from debug directory"""
     debug_dir = Path("debug")
@@ -43,6 +46,7 @@ def get_recent_errors():
 
 
 @debug_bp.route("/api/debug/error/<error_id>")
+@admin_required
 def get_error_detail(error_id):
     """Get detailed error information"""
     error_file = Path(f"debug/error_{error_id}.json")
@@ -57,6 +61,7 @@ def get_error_detail(error_id):
 
 
 @debug_bp.route("/api/debug/logs")
+@admin_required
 def get_recent_logs():
     """Get recent log entries"""
     log_files = ["data_collector.log", "debug.log", "app.log"]
@@ -78,6 +83,7 @@ def get_recent_logs():
 
 
 @debug_bp.route("/api/debug/data-types")
+@admin_required
 def check_data_types():
     """Check data types in storage"""
     from src.storage.csv_store import CSVStorage
@@ -117,6 +123,7 @@ def check_data_types():
 
 
 @debug_bp.route("/api/debug/validate")
+@admin_required
 def validate_data():
     """Validate current data and check for issues"""
     from src.storage.csv_store import CSVStorage
@@ -172,6 +179,7 @@ def validate_data():
 
 
 @debug_bp.route("/debug")
+@admin_required
 def debug_dashboard():
     """Simple debug dashboard"""
     html = """

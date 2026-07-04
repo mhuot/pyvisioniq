@@ -15,7 +15,7 @@ A Python web application for monitoring and visualizing Hyundai/Kia Connect API 
 - [Development](#development)
 - [Project Structure](#project-structure)
 - [Troubleshooting](#troubleshooting)
-- [Roadmap / Incomplete Features](#roadmap--incomplete-features)
+- [Authentication](#authentication)
 - [License](#license)
 
 ## Features
@@ -330,8 +330,8 @@ pyvisionic/
 │       ├── app.py             # Flask app + core API routes
 │       ├── cache_routes.py    # /cache blueprint
 │       ├── debug_routes.py    # /debug + /api/debug/* blueprint
-│       ├── auth.py            # Entra ID auth helpers (see Roadmap)
-│       ├── auth_routes.py     # Auth blueprint (see Roadmap)
+│       ├── auth.py            # Entra ID auth middleware + decorators (opt-in)
+│       ├── auth_routes.py     # Auth blueprint: /login, /api/auth/status
 │       ├── templates/         # index.html, cache.html, login.html
 │       └── static/            # CSS, JS, images
 ├── tools/                     # Active data-management scripts
@@ -368,16 +368,37 @@ pyvisionic/
 | venv crashes after OS migration | Recreate it: `rm -rf venv && python3.11 -m venv venv && pip install -r requirements.txt` |
 | Code changes not reflected in Docker | The image **copies** source, not mounts — rebuild: `docker compose down && docker compose build && docker compose up -d` |
 
-## Roadmap / Incomplete Features
+## Authentication
 
-The repository contains scaffolding for two features that are **not currently wired into the running app**. They are documented here so anyone exploring the codebase isn't confused by them:
+Optional Microsoft Entra ID (OIDC) login, implemented in `src/web/auth.py` and
+`src/web/auth_routes.py`. It is **off by default** — when `AUTH_ENABLED` is not
+`true`, every route decorator is a transparent pass-through and the app behaves
+exactly as an open dashboard, so no Azure setup is needed for local or trusted
+internal use.
 
-### Microsoft Entra ID authentication (`src/web/auth.py`, `src/web/auth_routes.py`)
-- Blueprint defined, but `app.py` does **not** register it and `init_auth()` is **not** called.
-- Required libraries (`identity`, `flask-session`) are **not** in `requirements.txt`.
-- To activate: add the dependencies, call `init_auth(app)` and `app.register_blueprint(auth_bp)` in `src/web/app.py`, then set `AUTH_ENABLED`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`, `AZURE_TENANT_ID`, `AZURE_REDIRECT_URI`, `FLASK_SECRET_KEY`, and `ADMIN_USERS`.
+When enabled, browser pages require a signed-in session, data APIs return `401`
+without one, and the cache-mutation, `/api/refresh`, and `/debug` routes require
+the caller's email to be listed in `ADMIN_USERS`.
 
-This feature is visible in the source tree because it was partially implemented; treat it as a starting point rather than as shipping functionality.
+To enable it:
+
+1. Register an application in Entra ID with a redirect URI of
+   `https://your-host/auth/callback`.
+2. Set the auth variables in `.env`:
+   ```bash
+   AUTH_ENABLED=true
+   AZURE_CLIENT_ID=...
+   AZURE_CLIENT_SECRET=...
+   AZURE_TENANT_ID=...
+   AZURE_REDIRECT_URI=https://your-host/auth/callback
+   FLASK_SECRET_KEY=<random-string>       # signs session cookies
+   ADMIN_USERS=you@example.com            # comma-separated admin emails
+   ```
+3. Ensure `SESSION_FILE_DIR` (default `sessions/`, a Docker volume) is writable so
+   logins persist across restarts.
+
+`identity` and `Flask-Session` (in `requirements.txt`) are imported only when auth
+is enabled, so a CSV-only deployment with auth off carries no runtime cost.
 
 ## License
 

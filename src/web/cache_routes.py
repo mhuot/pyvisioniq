@@ -5,6 +5,8 @@ from pathlib import Path
 
 from flask import Blueprint, Response, jsonify, render_template, request
 
+from src.web.auth import admin_required, api_login_required, login_required
+
 cache_bp = Blueprint("cache", __name__, url_prefix="/cache")
 
 
@@ -32,12 +34,14 @@ def get_file_info(file_path):
 
 
 @cache_bp.route("/")
+@login_required
 def cache_viewer():
     """Render the cache viewer page"""
     return render_template("cache.html")
 
 
 @cache_bp.route("/api/files")
+@api_login_required
 def list_cache_files():
     """List all cache files with metadata"""
     client = get_cache_client()
@@ -80,6 +84,7 @@ def list_cache_files():
 
 
 @cache_bp.route("/api/file/<filename>")
+@api_login_required
 def get_cache_file(filename):
     """Get contents of a specific cache file"""
     client = get_cache_client()
@@ -120,6 +125,7 @@ def get_cache_file(filename):
 
 
 @cache_bp.route("/api/delete/<filename>", methods=["DELETE"])
+@admin_required
 def delete_cache_file(filename):
     """Delete a specific cache file"""
     client = get_cache_client()
@@ -147,6 +153,7 @@ def delete_cache_file(filename):
 
 
 @cache_bp.route("/api/clear-old", methods=["POST"])
+@admin_required
 def clear_old_cache():
     """Clear cache files older than retention period"""
     client = get_cache_client()
@@ -162,6 +169,7 @@ def clear_old_cache():
 
 
 @cache_bp.route("/api/force-update", methods=["POST"])
+@admin_required
 def force_cache_update():
     """Force a cache update from the API"""
     client = get_cache_client()
