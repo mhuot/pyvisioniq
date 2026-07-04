@@ -902,14 +902,14 @@ document.addEventListener('DOMContentLoaded', function() {
             const avgSpeed = trip.average_speed ? 
                 (currentUnits === 'metric' ? trip.average_speed : conversions.kmToMiles(trip.average_speed)) : null;
             
-            // Calculate efficiency display
+            // Calculate efficiency display. Always surface mi/kWh; in metric
+            // mode show Wh/km alongside it so both units are available.
             let efficiencyDisplay = '-';
             if (trip.efficiency_wh_per_km) {
+                const miPerKwh = conversions.whPerKmToMiPerKwh(trip.efficiency_wh_per_km);
                 if (currentUnits === 'metric') {
-                    efficiencyDisplay = `${Math.round(trip.efficiency_wh_per_km)} Wh/km`;
+                    efficiencyDisplay = `${Math.round(trip.efficiency_wh_per_km)} Wh/km · ${miPerKwh.toFixed(1)} mi/kWh`;
                 } else {
-                    // Convert Wh/km to mi/kWh
-                    const miPerKwh = conversions.whPerKmToMiPerKwh(trip.efficiency_wh_per_km);
                     efficiencyDisplay = `${miPerKwh.toFixed(1)} mi/kWh`;
                 }
             }
