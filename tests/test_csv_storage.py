@@ -136,3 +136,56 @@ class TestGetDataFrames:
     def test_latest_trips_empty(self, storage):
         df = storage.get_latest_trips(limit=5)
         assert df.empty
+
+
+class TestChargingSessionsRead:
+    """get_charging_sessions_df must be a pure read with sane derived fields."""
+
+    HEADER = (
+        "session_id,start_time,end_time,duration_minutes,start_battery,end_battery,"
+        "energy_added,avg_power,max_power,location_lat,location_lon,is_complete\n"
+    )
+
+    def _write(self, storage, rows):
+        storage.charging_sessions_file.write_text(self.HEADER + "".join(rows))
+
+    def test_read_does_not_rewrite_file(self, storage):
+        """Reading sessions must not write back to disk (would race the collector)."""
+        # Row with missing duration/avg_power so the old code would "repair" and persist.
+        self._write(
+            storage,
+            [
+                "charge_20240115_100000,2024-01-15 10:00:00,2024-01-15 11:00:00,"
+                ",50,70,,,7.2,44.9,-93.1,True\n"
+            ],
+        )
+        before = storage.charging_sessions_file.read_bytes()
+        storage.get_charging_sessions_df()
+        after = storage.charging_sessions_file.read_bytes()
+        assert before == after  # read is pure
+
+    def test_tiny_duration_yields_no_absurd_power(self, storage):
+        """A sub-minute session must not produce a huge avg_power (the 2322 kW bug)."""
+        # 3.87 kWh over 0.1 min would be ~2322 kW if divided naively.
+        self._write(
+            storage,
+            [
+                "charge_20240115_100000,2024-01-15 10:00:00,2024-01-15 10:00:06,"
+                "0.1,50,55,3.87,,7.2,44.9,-93.1,True\n"
+            ],
+        )
+        df = storage.get_charging_sessions_df()
+        power = df.iloc[0]["avg_power"]
+        assert pd.isna(power) or power == 0  # left unset, not fabricated
+
+    def test_long_session_gets_average_power(self, storage):
+        """A session past the duration floor gets a plausible avg_power filled in."""
+        self._write(
+            storage,
+            [
+                "charge_20240115_100000,2024-01-15 10:00:00,2024-01-15 11:00:00,"
+                "60,50,70,10.0,,7.2,44.9,-93.1,True\n"
+            ],
+        )
+        df = storage.get_charging_sessions_df()
+        assert df.iloc[0]["avg_power"] == pytest.approx(10.0)  # 10 kWh over 1 h

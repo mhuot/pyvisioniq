@@ -92,6 +92,10 @@ class CSVStorage(StorageBackend):
         gap_multiplier = float(os.getenv("CHARGING_SESSION_GAP_MULTIPLIER", "1.5"))
         self.charging_gap_threshold_minutes = max(poll_interval_minutes * gap_multiplier, 5.0)
         self.battery_capacity_kwh = float(os.getenv("BATTERY_CAPACITY_KWH", "77.4"))
+        # Minimum session duration (minutes) before an average power is computed.
+        # Below this, energy/duration divides by a tiny interval and yields absurd
+        # kW values, so avg_power is left unset for such short fragments.
+        self.min_power_duration_minutes = float(os.getenv("MIN_POWER_DURATION_MINUTES", "5.0"))
 
         self._init_files()
 
@@ -379,8 +383,6 @@ class CSVStorage(StorageBackend):
         if df.empty:
             return df
 
-        changed = False
-
         # Normalize start and end timestamps
         if "start_time" in df.columns:
             df["start_time"] = pd.to_datetime(df["start_time"], errors="coerce")
@@ -396,7 +398,6 @@ class CSVStorage(StorageBackend):
                             try:
                                 derived = datetime.strptime(date_part + time_part, "%Y%m%d%H%M%S")
                                 df.at[idx, "start_time"] = derived
-                                changed = True
                             except ValueError:
                                 logger.debug(f"Could not reconstruct start_time for {session_id}")
 
@@ -421,70 +422,42 @@ class CSVStorage(StorageBackend):
                 lambda val: (str(val).strip().lower() == "true" if pd.notna(val) else False)
             )
 
-        # Recompute duration when possible
+        # Fill derived fields in-memory only, for display. This method is a pure
+        # read: it never writes back to disk, so it cannot race the collector
+        # process, which is the sole writer of charging_sessions.csv.
+
+        # Duration from start/end when the stored value is missing or invalid.
         if {"start_time", "end_time"}.issubset(df.columns):
             derived_duration = (df["end_time"] - df["start_time"]).dt.total_seconds() / 60
-            if "duration_minutes" in df.columns:
-                existing_duration = df["duration_minutes"]
-                needs_update = existing_duration.isna() | (existing_duration <= 0)
-                # Replace clearly wrong values (>1 minute difference)
-                delta = (derived_duration - existing_duration).abs()
-                needs_update |= delta > 1
-            else:
-                needs_update = derived_duration.notna()
-                df["duration_minutes"] = None
-            if needs_update.any():
-                df.loc[needs_update, "duration_minutes"] = derived_duration.round(1)
-                changed = True
+            if "duration_minutes" not in df.columns:
+                df["duration_minutes"] = pd.NA
+            needs_duration = df["duration_minutes"].isna() | (df["duration_minutes"] <= 0)
+            df.loc[needs_duration, "duration_minutes"] = derived_duration[needs_duration].round(1)
 
-        # Recompute energy_added from battery delta when available
+        # Energy from battery delta when the stored value is missing.
         if {"start_battery", "end_battery"}.issubset(df.columns):
             battery_delta = df["end_battery"] - df["start_battery"]
             estimated_energy = (battery_delta / 100.0) * self.battery_capacity_kwh
-            if "energy_added" in df.columns:
-                needs_energy = df["energy_added"].isna() | (df["energy_added"] <= 0)
-            else:
-                needs_energy = battery_delta.notna()
-                df["energy_added"] = None
-            needs_energy &= battery_delta > 0
-            if needs_energy.any():
-                df.loc[needs_energy, "energy_added"] = estimated_energy.round(2)
-                changed = True
+            if "energy_added" not in df.columns:
+                df["energy_added"] = pd.NA
+            needs_energy = (df["energy_added"].isna() | (df["energy_added"] <= 0)) & (
+                battery_delta > 0
+            )
+            df.loc[needs_energy, "energy_added"] = estimated_energy[needs_energy].round(2)
 
-        # Recompute average power when we have duration and energy
+        # Average power from energy and duration when missing. A minimum-duration
+        # floor prevents dividing by a tiny interval and reporting absurd kW.
         if {"energy_added", "duration_minutes"}.issubset(df.columns):
-            duration_hours = df["duration_minutes"] / 60.0
-            duration_hours = duration_hours.replace({0: pd.NA})
-            avg_power = df["energy_added"] / duration_hours
-            needs_avg = duration_hours > 0
-            if "avg_power" in df.columns:
-                existing_avg = df["avg_power"]
-                update_mask = needs_avg & (existing_avg.isna() | (existing_avg <= 0))
-                # Replace if differs by more than 0.5 kW to correct rounding issues
-                diff_mask = (
-                    needs_avg & existing_avg.notna() & (avg_power - existing_avg).abs() > 0.5
-                )
-                update_mask |= diff_mask
-            else:
-                update_mask = needs_avg
-                df["avg_power"] = None
-            if update_mask.any():
-                # Round only the values being updated, handling NA values properly
-                rounded_power = avg_power[update_mask].apply(
-                    lambda x: round(x, 2) if pd.notna(x) else x
-                )
-                df.loc[update_mask, "avg_power"] = rounded_power
-                changed = True
-
-        if changed:
-            try:
-                df.to_csv(
-                    self.charging_sessions_file,
-                    index=False,
-                    date_format="%Y-%m-%d %H:%M:%S.%f",
-                )
-            except Exception as e:
-                logger.error(f"Failed to persist reconstructed charging session data: {e}")
+            if "avg_power" not in df.columns:
+                df["avg_power"] = pd.NA
+            long_enough = df["duration_minutes"] >= self.min_power_duration_minutes
+            needs_power = (
+                (df["avg_power"].isna() | (df["avg_power"] <= 0))
+                & long_enough
+                & (df["energy_added"] > 0)
+            )
+            computed_power = df["energy_added"] / (df["duration_minutes"] / 60.0)
+            df.loc[needs_power, "avg_power"] = computed_power[needs_power].round(2)
 
         return df
 
@@ -714,12 +687,15 @@ class CSVStorage(StorageBackend):
 
             battery_diff = battery_level - start_battery
             if battery_diff > 0:
-                # Assume 77.4 kWh battery (Ioniq 5 standard)
-                energy_added = (battery_diff / 100) * 77.4
+                energy_added = (battery_diff / 100) * self.battery_capacity_kwh
                 sessions_df.loc[idx, "energy_added"] = round(energy_added, 2)
 
-            # Calculate average power
-            if duration > 0 and sessions_df.loc[idx, "energy_added"] > 0:
+            # Calculate average power. Require a minimum duration so a tiny
+            # interval between snapshots can't yield an absurd kW value.
+            if (
+                duration >= self.min_power_duration_minutes
+                and sessions_df.loc[idx, "energy_added"] > 0
+            ):
                 avg_power = sessions_df.loc[idx, "energy_added"] / (duration / 60)
                 sessions_df.loc[idx, "avg_power"] = round(avg_power, 2)
 
