@@ -1844,8 +1844,9 @@ document.addEventListener('DOMContentLoaded', function() {
                 </div>
                 <div class="stat-card">
                     <h3>Efficiency</h3>
-                    <p>${currentUnits === 'metric' ? 
-                        Math.round(trip.efficiency_wh_per_km) + ' Wh/km' : 
+                    <p>${currentUnits === 'metric' ?
+                        Math.round(trip.efficiency_wh_per_km) + ' Wh/km · ' +
+                            conversions.whPerKmToMiPerKwh(trip.efficiency_wh_per_km).toFixed(1) + ' mi/kWh' :
                         conversions.whPerKmToMiPerKwh(trip.efficiency_wh_per_km).toFixed(1) + ' mi/kWh'}</p>
                 </div>
                 <div class="stat-card">
