@@ -89,28 +89,31 @@ function classifyChargingSpans(spans, rows) {
             }
         });
 
-        let type;
-        if (peakPower >= CHARGE_LEVEL_KW.dcfc) {
-            type = 'dcfc';
-        } else if (peakPower >= CHARGE_LEVEL_KW.l2) {
-            type = 'l2';
-        } else if (peakPower > 0) {
-            type = 'l1';
-        } else {
-            // No power reading inside the span: estimate from SOC gain rate
+        // No power reading inside the span: estimate from SOC gain rate
+        let socRate = 0;
+        if (peakPower === 0) {
             const before = readings.filter(r => r.timestamp <= span.start).pop();
             const after = readings.find(r => r.timestamp >= span.end);
-            type = 'l1';
             if (before && after && after.timestamp > before.timestamp) {
                 const hours = (after.timestamp - before.timestamp) / 3600000;
-                const socRate = (after.level - before.level) / hours;
-                if (socRate >= CHARGE_RATE_PCT_PER_HOUR.dcfc) type = 'dcfc';
-                else if (socRate >= CHARGE_RATE_PCT_PER_HOUR.l2) type = 'l2';
+                socRate = (after.level - before.level) / hours;
             }
         }
-        return { ...span, type };
+        return { ...span, type: classifyChargeLevel(peakPower, socRate) };
     });
 }
+
+// Shared L1/L2/DCFC decision used by both the chart bands and the sessions table
+function classifyChargeLevel(peakPowerKw, socRatePerHour) {
+    if (peakPowerKw >= CHARGE_LEVEL_KW.dcfc) return 'dcfc';
+    if (peakPowerKw >= CHARGE_LEVEL_KW.l2) return 'l2';
+    if (peakPowerKw > 0) return 'l1';
+    if (socRatePerHour >= CHARGE_RATE_PCT_PER_HOUR.dcfc) return 'dcfc';
+    if (socRatePerHour >= CHARGE_RATE_PCT_PER_HOUR.l2) return 'l2';
+    return 'l1';
+}
+
+const CHARGE_TYPE_LABELS = { l1: 'L1', l2: 'L2', dcfc: 'DC Fast' };
 
 // Group consecutive is_charging readings into contiguous time spans
 function computeChargingSpans(rows) {
@@ -1823,16 +1826,18 @@ document.addEventListener('DOMContentLoaded', function() {
             const params = new URLSearchParams({ hours });
             if (startDate) params.append('start_date', startDate);
             if (endDate) params.append('end_date', endDate);
-            
-            console.log(`Loading charging sessions with params: ${params.toString()}`);
-            const response = await fetch(`/api/charging-sessions?${params}`);
-            const sessions = await response.json();
-            console.log(`Received ${sessions.length} charging sessions:`, sessions);
-            
+
+            // Battery readings supply trustworthy SOC and power figures; the
+            // session records' stored stats are unreliable for older data
+            const [sessions, batteryRows] = await Promise.all([
+                fetch(`/api/charging-sessions?${params}`).then(r => r.json()),
+                fetch(`/api/battery/history?${params}`).then(r => r.json()).catch(() => [])
+            ]);
+
             const container = document.getElementById('charging-sessions-container');
             if (!container) return;
-            
-            if (sessions.length === 0) {
+
+            if (!Array.isArray(sessions) || sessions.length === 0) {
                 if (hours !== 'all' && hours !== 'custom') {
                     showEmptyStateWithSuggestion(container, hours, 'charging sessions');
                 } else {
@@ -1840,62 +1845,88 @@ document.addEventListener('DOMContentLoaded', function() {
                 }
                 return;
             }
-            
-            let html = '<div class="sessions-grid">';
-            
-            sessions.forEach(session => {
-                console.log(`Session ${session.session_id}: is_complete=${session.is_complete}, active=${!session.is_complete}`);
-                
-                const startTime = new Date(session.start_time);
+
+            const readings = (Array.isArray(batteryRows) ? batteryRows : [])
+                .map(row => ({
+                    timestamp: new Date(row.timestamp),
+                    level: row.battery_level,
+                    power: Number(row.charging_power) || 0
+                }))
+                .filter(r => !Number.isNaN(r.timestamp.valueOf()))
+                .sort((a, b) => a.timestamp - b.timestamp);
+
+            const formatDuration = (minutes) => {
+                if (!minutes && minutes !== 0) return '--';
+                const wholeHours = Math.floor(minutes / 60);
+                const mins = Math.round(minutes % 60);
+                return wholeHours > 0 ? `${wholeHours}h ${mins}m` : `${mins}m`;
+            };
+
+            const rowsHtml = sessions.map(session => {
+                const start = new Date(String(session.start_time).replace(' ', 'T'));
+                const end = session.end_time ?
+                    new Date(String(session.end_time).replace(' ', 'T')) : new Date();
+
                 let duration = session.duration_minutes;
-                
-                // For active sessions, calculate real-time duration
                 if (!session.is_complete) {
-                    console.log(`Active session found: ${session.session_id}`);
-                    const now = new Date();
-                    duration = Math.floor((now - startTime) / 60000); // Convert to minutes
+                    duration = Math.floor((Date.now() - start) / 60000);
                 }
-                
-                const formatDuration = (minutes) => {
-                    if (!minutes && minutes !== 0) return '--';
-                    const hours = Math.floor(minutes / 60);
-                    const mins = Math.round(minutes % 60);
-                    return hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
-                };
-                
-                const sessionClass = session.is_complete ? 'session-complete' : 'session-active';
-                
-                html += `
-                    <div class="charging-session ${sessionClass}">
-                        <div class="session-header">
-                            <h4>${formatDate(startTime)}</h4>
-                            ${!session.is_complete ? '<span class="charging-badge">⚡ Charging</span>' : ''}
-                        </div>
-                        <div class="session-details">
-                            <div class="session-stat">
-                                <span class="stat-label">Duration</span>
-                                <span class="stat-value">${formatDuration(duration)}${!session.is_complete ? ' (ongoing)' : ''}</span>
-                            </div>
-                            <div class="session-stat">
-                                <span class="stat-label">Battery</span>
-                                <span class="stat-value">${session.start_battery}% → ${!session.is_complete && currentData.battery ? currentData.battery + '%' : session.end_battery + '%'}</span>
-                            </div>
-                            <div class="session-stat">
-                                <span class="stat-label">Energy Added</span>
-                                <span class="stat-value">${session.energy_added.toFixed(1)} kWh</span>
-                            </div>
-                            <div class="session-stat">
-                                <span class="stat-label">${!session.is_complete ? 'Current Power' : 'Max Power'}</span>
-                                <span class="stat-value">${!session.is_complete && currentData.chargingPower ? currentData.chargingPower.toFixed(1) : session.max_power.toFixed(1)} kW</span>
-                            </div>
-                        </div>
-                    </div>
+
+                // Derive SOC and peak power from the battery readings around the session
+                const before = readings.filter(r => r.timestamp <= start).pop();
+                const after = session.is_complete ?
+                    readings.find(r => r.timestamp >= end) : readings[readings.length - 1];
+                let peakPower = 0;
+                readings.forEach(r => {
+                    if (r.timestamp >= start && r.timestamp <= end) {
+                        peakPower = Math.max(peakPower, r.power);
+                    }
+                });
+
+                const startLevel = before ? before.level : session.start_battery;
+                const endLevel = after ? after.level : session.end_battery;
+                const socGain = (Number.isFinite(startLevel) && Number.isFinite(endLevel)) ?
+                    Math.round(endLevel - startLevel) : null;
+
+                let socRate = 0;
+                if (peakPower === 0 && before && after && after.timestamp > before.timestamp) {
+                    const spanHours = (after.timestamp - before.timestamp) / 3600000;
+                    socRate = (after.level - before.level) / spanHours;
+                }
+                const type = classifyChargeLevel(peakPower, socRate);
+
+                return `
+                    <tr>
+                        <td>${formatDate(start)}</td>
+                        <td>${formatDuration(duration)}${!session.is_complete ? ' (ongoing)' : ''}</td>
+                        <td><span class="charge-type charge-type-${type}">${CHARGE_TYPE_LABELS[type]}</span></td>
+                        <td>${startLevel != null ? startLevel + '%' : '--'} → ${endLevel != null ? endLevel + '%' : '--'}</td>
+                        <td>${socGain != null ? (socGain >= 0 ? '+' : '') + socGain + '%' : '--'}</td>
+                        <td>${peakPower > 0 ? peakPower.toFixed(1) + ' kW' : '--'}</td>
+                        <td>${session.is_complete ? 'Complete' : '⚡ Charging'}</td>
+                    </tr>
                 `;
-            });
-            
-            html += '</div>';
-            container.innerHTML = html;
-            
+            }).join('');
+
+            container.innerHTML = `
+                <div class="table-container">
+                    <table id="charging-table" aria-label="Charging session details">
+                        <thead>
+                            <tr>
+                                <th scope="col">Started</th>
+                                <th scope="col">Duration</th>
+                                <th scope="col">Type</th>
+                                <th scope="col">Battery</th>
+                                <th scope="col">Gained</th>
+                                <th scope="col">Peak Power</th>
+                                <th scope="col">Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>${rowsHtml}</tbody>
+                    </table>
+                </div>
+            `;
+
         } catch (error) {
             console.error('Error loading charging sessions:', error);
             const container = document.getElementById('charging-sessions-container');

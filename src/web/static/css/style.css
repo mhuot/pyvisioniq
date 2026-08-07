@@ -405,6 +405,30 @@ h2 {
     margin-bottom: 2rem;
 }
 
+.charge-type {
+    display: inline-block;
+    padding: 2px 10px;
+    border-radius: 12px;
+    font-size: 0.85em;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.charge-type-l1 {
+    background-color: rgba(46, 204, 113, 0.2);
+    color: #1e8449;
+}
+
+.charge-type-l2 {
+    background-color: rgba(22, 160, 87, 0.3);
+    color: #14663c;
+}
+
+.charge-type-dcfc {
+    background-color: rgba(155, 89, 182, 0.25);
+    color: #6f3483;
+}
+
 .sessions-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
