@@ -2282,11 +2282,20 @@ document.addEventListener('DOMContentLoaded', function() {
                 chargeDetailsById[String(detail.session.session_id)] = detail;
             });
 
+            const formatEndTime = (detail) => {
+                if (!detail.session.is_complete) return '—';
+                const sameDay = detail.start.toDateString() === detail.end.toDateString();
+                return sameDay ?
+                    detail.end.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) :
+                    formatDate(detail.end);
+            };
+
             const rowsHtml = sessionDetails.map(detail => {
                 const { session, type, startLevel, endLevel, socGain, energyDisplay, peakPower } = detail;
                 return `
                     <tr class="charge-row" data-session="${session.session_id}">
                         <td>${formatDate(detail.start)}</td>
+                        <td>${formatEndTime(detail)}</td>
                         <td>${formatDuration(detail.duration)}${!session.is_complete ? ' (ongoing)' : ''}</td>
                         <td><span class="charge-type charge-type-${type}">${CHARGE_TYPE_LABELS[type]}</span></td>
                         <td>${startLevel != null ? startLevel + '%' : '--'} → ${endLevel != null ? endLevel + '%' : '--'}</td>
@@ -2305,6 +2314,7 @@ document.addEventListener('DOMContentLoaded', function() {
                         <thead>
                             <tr>
                                 <th scope="col">Started</th>
+                                <th scope="col">Ended</th>
                                 <th scope="col">Duration</th>
                                 <th scope="col">Type</th>
                                 <th scope="col">Battery</th>
