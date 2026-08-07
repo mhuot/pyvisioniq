@@ -165,6 +165,7 @@ Flask app provides endpoints at `http://localhost:{PORT}/api/`:
 - `/charging-temperature-impact` - Charging power/speed by temperature
 - `/collection-status` - Data collection status (calls_today, next_collection)
 - `/polling-status` - Polling observability: mode, recent scheduling decisions from data/polling_log.csv, budget usage
+- `/plug-sample` (POST) - Token-authenticated webhook for Home Assistant smart-plug power samples (appends to data/plug_power.csv; collector refines sessions from it)
 - `/force-update` - Force cache refresh (respects rate limits)
 - `/clear-cache` - Clear non-history cache files
 - `/refresh` - Refresh data with timeout handling
@@ -186,6 +187,7 @@ Critical settings that must be configured:
 - `API_DAILY_LIMIT`: Default 30, used to calculate cache validity
 - `ADAPTIVE_POLLING`: Default false. When true, the collector polls faster around charging/trip transitions (15-20 min) and slower when idle (60-150 min), with a budget clamp that keeps daily calls within API_DAILY_LIMIT
 - `BATTERY_USABLE_KWH`: Default 74.0 (Ioniq 5 long-range: 77.4 kWh total). Usable pack capacity used to estimate charging energy from SOC deltas
+- `PLUG_WEBHOOK_TOKEN`: Shared secret for POST /api/plug-sample; when set, Home Assistant can push smart-plug power samples that refine L1 session data
 - `CACHE_DURATION_HOURS`: How long to retain cache files (default 48)
 - `DEBUG_MODE`: Enables verbose logging and debug routes
 - `TZ`: Timezone for data collection (default: America/Chicago)

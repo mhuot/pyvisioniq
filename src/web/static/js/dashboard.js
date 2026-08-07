@@ -2000,7 +2000,8 @@ document.addEventListener('DOMContentLoaded', function() {
             </div>
             <div class="stat-card">
                 <h3>Source</h3>
-                <p>${detail.isImported ? 'Charger network log' : 'Vehicle polling'}</p>
+                <p>${String(session.session_id || '').startsWith('ea_') ? 'Charger network log' :
+                    (String(session.session_id || '').startsWith('ha_') ? 'Home plug meter' : 'Vehicle polling')}</p>
             </div>
         `;
 
@@ -2204,17 +2205,46 @@ document.addEventListener('DOMContentLoaded', function() {
 
                 // Imported charger-network sessions (ea_*) carry authoritative
                 // metered values; prefer them over reading-derived estimates
-                const isImported = String(session.session_id || '').startsWith('ea_');
+                const sessionId = String(session.session_id || '');
+                const isImported = sessionId.startsWith('ea_') || sessionId.startsWith('ha_');
 
                 let peakPower = Math.max(0, Number(session.max_power) || 0);
                 inSpan.forEach(r => {
                     peakPower = Math.max(peakPower, r.power);
                 });
 
-                const startLevel = (isImported && Number.isFinite(session.start_battery)) ?
-                    session.start_battery : (before ? before.level : session.start_battery);
-                const endLevel = (isImported && Number.isFinite(session.end_battery)) ?
-                    session.end_battery : (after ? after.level : session.end_battery);
+                // A reading counts as the boundary level only if it is fresh
+                // relative to the boundary; a stale pre-span reading can be
+                // from before a drive and wildly wrong
+                const STALE_MS = 90 * 60000;
+                let startLevel = null;
+                if (isImported && Number.isFinite(session.start_battery)) {
+                    startLevel = session.start_battery;
+                } else if (
+                    before &&
+                    start.valueOf() - before.timestamp.valueOf() <= STALE_MS &&
+                    // SOC cannot fall while charging: a "before" reading above
+                    // the first in-span reading is a stale mid-drive value
+                    (inSpan.length === 0 || before.level <= inSpan[0].level)
+                ) {
+                    startLevel = before.level;
+                } else if (inSpan.length > 0) {
+                    startLevel = inSpan[0].level;
+                } else if (Number.isFinite(session.start_battery)) {
+                    startLevel = session.start_battery;
+                }
+                let endLevel = null;
+                if (isImported && Number.isFinite(session.end_battery)) {
+                    endLevel = session.end_battery;
+                } else if (after && !session.is_complete) {
+                    endLevel = after.level;
+                } else if (after && after.timestamp.valueOf() - end.valueOf() <= STALE_MS) {
+                    endLevel = after.level;
+                } else if (inSpan.length > 0) {
+                    endLevel = inSpan[inSpan.length - 1].level;
+                } else if (Number.isFinite(session.end_battery)) {
+                    endLevel = session.end_battery;
+                }
                 let socGain = (Number.isFinite(startLevel) && Number.isFinite(endLevel)) ?
                     Math.round(endLevel - startLevel) : null;
                 // A session with real charging power can't lose charge; small

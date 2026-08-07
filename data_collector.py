@@ -16,6 +16,7 @@ from dotenv import load_dotenv
 
 from src.api.client import CachedVehicleClient
 from src.storage.csv_store import CSVStorage
+from src.utils.plug_sessions import detect_charging_spans, load_plug_log, refine_sessions
 
 sys.path.append(str(Path(__file__).parent))
 
@@ -227,6 +228,7 @@ class DataCollector:
                 self.last_call_time = datetime.now()
                 self._update_adaptive_state(data)
                 self.save_call_history()
+                self._refine_sessions_from_plug()
 
                 logger.info(
                     "Data collected successfully (call %d/%d)",
@@ -270,6 +272,19 @@ class DataCollector:
             else:
                 logger.error("Error collecting data: %s", e)
                 return False
+
+    def _refine_sessions_from_plug(self):
+        """Refine charging sessions from webhook-fed smart-plug samples"""
+        try:
+            samples = load_plug_log()
+            if samples.empty:
+                return
+            spans = detect_charging_spans(samples)
+            refine_sessions(
+                spans, Path("data/charging_sessions.csv"), write=True, make_backup=False
+            )
+        except Exception as e:
+            logger.error("Plug session refinement failed: %s", e)
 
     def _update_adaptive_state(self, data):
         """Track charging/trip state used to pick the next adaptive interval"""

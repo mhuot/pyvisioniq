@@ -1,3 +1,4 @@
+import hmac
 import json
 import os
 import sys
@@ -16,6 +17,7 @@ sys.path.append(str(Path(__file__).parent.parent.parent))
 
 from src.api.client import APIError, CachedVehicleClient
 from src.storage.csv_store import CSVStorage
+from src.utils.plug_sessions import append_plug_sample
 from src.web.auth import admin_required, api_login_required, init_auth, login_required
 from src.web.auth_routes import auth_bp
 from src.web.cache_routes import cache_bp
@@ -1166,10 +1168,10 @@ def get_charging_sessions():
                     else 0
                 ),
                 "start_battery": (
-                    int(session["start_battery"]) if pd.notna(session["start_battery"]) else 0
+                    int(session["start_battery"]) if pd.notna(session["start_battery"]) else None
                 ),
                 "end_battery": (
-                    int(session["end_battery"]) if pd.notna(session["end_battery"]) else 0
+                    int(session["end_battery"]) if pd.notna(session["end_battery"]) else None
                 ),
                 "energy_added": (
                     float(session["energy_added"]) if pd.notna(session["energy_added"]) else 0
@@ -1283,6 +1285,30 @@ def get_collection_status():
             )
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/plug-sample", methods=["POST"])
+def receive_plug_sample():
+    """Receive a smart-plug power sample from a Home Assistant automation.
+
+    Authenticated by a shared token (X-Plug-Token header) instead of the
+    interactive login, since it is called machine-to-machine.
+    """
+    expected_token = os.getenv("PLUG_WEBHOOK_TOKEN")
+    if not expected_token:
+        return jsonify({"error": "PLUG_WEBHOOK_TOKEN not configured"}), 503
+    provided_token = request.headers.get("X-Plug-Token", "")
+    if not hmac.compare_digest(provided_token, expected_token):
+        return jsonify({"error": "unauthorized"}), 403
+
+    payload = request.get_json(silent=True) or {}
+    try:
+        watts = float(payload.get("watts"))
+    except (TypeError, ValueError):
+        return jsonify({"error": "numeric 'watts' field required"}), 400
+
+    append_plug_sample(watts)
+    return jsonify({"status": "ok"})
 
 
 @app.route("/api/polling-status")
