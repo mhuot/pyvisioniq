@@ -18,6 +18,7 @@ sys.path.append(str(Path(__file__).parent.parent.parent))
 from src.api.client import APIError, CachedVehicleClient
 from src.storage.csv_store import CSVStorage
 from src.utils.plug_sessions import append_plug_sample
+from src.utils.receipts import upsert_receipts
 from src.web.auth import admin_required, api_login_required, init_auth, login_required
 from src.web.auth_routes import auth_bp
 from src.web.cache_routes import cache_bp
@@ -1323,6 +1324,44 @@ def receive_plug_sample():
 
     append_plug_sample(watts)
     return jsonify({"status": "ok"})
+
+
+@app.route("/api/charge-receipt", methods=["POST"])
+def receive_charge_receipts():
+    """Receive parsed charging-network receipts from an automation.
+
+    Body is a JSON array of normalized receipt records (see
+    src/utils/receipts.py). Authenticated by the same shared token as the
+    plug webhook, since both are machine-to-machine.
+    """
+    expected_token = os.getenv("PLUG_WEBHOOK_TOKEN")
+    if not expected_token:
+        return jsonify({"error": "PLUG_WEBHOOK_TOKEN not configured"}), 503
+    provided_token = request.headers.get("X-Plug-Token", "")
+    if not hmac.compare_digest(provided_token, expected_token):
+        return jsonify({"error": "unauthorized"}), 403
+
+    receipts = request.get_json(silent=True)
+    if not isinstance(receipts, list) or not receipts:
+        return jsonify({"error": "JSON array of receipt records required"}), 400
+    for record in receipts:
+        if not isinstance(record, dict) or not record.get("external_id"):
+            return jsonify({"error": "each record needs an external_id"}), 400
+
+    try:
+        updated, inserted, skipped, messages = upsert_receipts(
+            receipts, Path("data/charging_sessions.csv"), write=True, make_backup=False
+        )
+        return jsonify(
+            {
+                "corrected": updated,
+                "inserted": inserted,
+                "skipped": skipped,
+                "detail": messages,
+            }
+        )
+    except (KeyError, ValueError, TypeError) as e:
+        return jsonify({"error": f"invalid receipt record: {e}"}), 400
 
 
 @app.route("/api/polling-status")
