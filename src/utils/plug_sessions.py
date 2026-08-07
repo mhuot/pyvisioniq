@@ -153,6 +153,9 @@ def refine_sessions(spans, sessions_path, write=False, make_backup=True):
     sessions = pd.read_csv(sessions_path)
     sessions["_start"] = pd.to_datetime(sessions["start_time"], format="mixed", errors="coerce")
     sessions["_end"] = pd.to_datetime(sessions["end_time"], format="mixed", errors="coerce")
+    # Freshly opened tracker sessions have no end_time yet; treat their start
+    # as the end so overlap matching can still see them
+    sessions["_end_filled"] = sessions["_end"].fillna(sessions["_start"])
 
     updated = inserted = 0
     dropped_rows = set()
@@ -170,9 +173,22 @@ def refine_sessions(spans, sessions_path, write=False, make_backup=True):
             "network": "Home",
         }
 
+        # Poll-derived tracker sessions this span covers; the plug data is
+        # authoritative for them
+        subsumable = sessions.index[
+            (sessions["_start"] <= span["end"] + MATCH_PAD)
+            & (sessions["_end_filled"] >= span["start"] - MATCH_PAD)
+            & (sessions["session_id"].astype(str).str.startswith("charge_"))
+            & (~sessions.index.isin(dropped_rows))
+        ]
+
         existing = sessions.index[sessions["session_id"] == ha_id]
         if len(existing) > 0:
             idx = existing[0]
+            # Tracker sessions that appeared after this ha_ row was created
+            # (e.g. opened once the poller finally saw the charge) still get
+            # subsumed on later refinements
+            dropped_rows.update(subsumable)
             changed = (
                 str(sessions.loc[idx, "end_time"]) != values["end_time"]
                 or bool(sessions.loc[idx, "is_complete"]) != values["is_complete"]
@@ -185,14 +201,8 @@ def refine_sessions(spans, sessions_path, write=False, make_backup=True):
                 updated += 1
             continue
 
-        overlap = sessions.index[
-            (sessions["_start"] <= span["end"] + MATCH_PAD)
-            & (sessions["_end"] >= span["start"] - MATCH_PAD)
-            & (~sessions["session_id"].astype(str).str.startswith("ea_"))
-            & (~sessions.index.isin(dropped_rows))
-        ]
-        if len(overlap) > 0:
-            idx = overlap[0]
+        if len(subsumable) > 0:
+            idx = subsumable[0]
             sessions.loc[idx, "session_id"] = ha_id
             for key, val in values.items():
                 sessions.loc[idx, key] = val
@@ -203,7 +213,7 @@ def refine_sessions(spans, sessions_path, write=False, make_backup=True):
             sessions.loc[idx, "end_battery"] = None
             updated += 1
             # A plug span covering several poll-derived sessions subsumes them
-            dropped_rows.update(overlap[1:])
+            dropped_rows.update(subsumable[1:])
         else:
             new_rows.append(
                 {
@@ -220,7 +230,7 @@ def refine_sessions(spans, sessions_path, write=False, make_backup=True):
     if write and (updated or inserted or dropped_rows):
         if dropped_rows:
             sessions = sessions.drop(index=list(dropped_rows))
-        sessions = sessions.drop(columns=["_start", "_end"])
+        sessions = sessions.drop(columns=["_start", "_end", "_end_filled"])
         if new_rows:
             sessions = pd.concat([sessions, pd.DataFrame(new_rows)], ignore_index=True)
         sessions["_sort"] = pd.to_datetime(sessions["start_time"], format="mixed", errors="coerce")
