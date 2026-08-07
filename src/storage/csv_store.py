@@ -47,6 +47,8 @@ CHARGING_SESSION_FIELDS = [
     "location_lat",
     "location_lon",
     "is_complete",
+    "network",
+    "location_name",
 ]
 
 sys.path.append(str(Path(__file__).parent.parent.parent))
@@ -467,6 +469,19 @@ class CSVStorage(StorageBackend):
 
         return df
 
+    def _append_session_row(self, row):
+        """Append a session row using the file's existing header so schema
+        migrations cannot misalign columns."""
+        fieldnames = CHARGING_SESSION_FIELDS
+        if self.charging_sessions_file.exists():
+            with open(self.charging_sessions_file, "r", encoding="utf-8") as f:
+                header = f.readline().strip()
+            if header:
+                fieldnames = header.split(",")
+        with open(self.charging_sessions_file, "a", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
+            writer.writerow(row)
+
     def _track_charging_session(self, timestamp, battery, location):
         """Track charging sessions - detect start/stop and update session data"""
         debug_logger.push_context("_track_charging_session")
@@ -543,14 +558,11 @@ class CSVStorage(StorageBackend):
                         "location_lat": location.get("latitude") if location else None,
                         "location_lon": location.get("longitude") if location else None,
                         "is_complete": False,
+                        "network": "",
+                        "location_name": "",
                     }
 
-                    with open(self.charging_sessions_file, "a", newline="", encoding="utf-8") as f:
-                        writer = csv.DictWriter(
-                            f,
-                            fieldnames=CHARGING_SESSION_FIELDS,
-                        )
-                        writer.writerow(new_session)
+                    self._append_session_row(new_session)
                 else:
                     # Check if this is truly the same session or a new one
                     threshold = getattr(self, "charging_gap_threshold_minutes", 45.0)
@@ -582,32 +594,11 @@ class CSVStorage(StorageBackend):
                                 "location_lat": (location.get("latitude") if location else None),
                                 "location_lon": (location.get("longitude") if location else None),
                                 "is_complete": False,
+                                "network": "",
+                                "location_name": "",
                             }
 
-                            with open(
-                                self.charging_sessions_file,
-                                "a",
-                                newline="",
-                                encoding="utf-8",
-                            ) as f:
-                                writer = csv.DictWriter(
-                                    f,
-                                    fieldnames=[
-                                        "session_id",
-                                        "start_time",
-                                        "end_time",
-                                        "duration_minutes",
-                                        "start_battery",
-                                        "end_battery",
-                                        "energy_added",
-                                        "avg_power",
-                                        "max_power",
-                                        "location_lat",
-                                        "location_lon",
-                                        "is_complete",
-                                    ],
-                                )
-                                writer.writerow(new_session)
+                            self._append_session_row(new_session)
                         else:
                             # Update existing session
                             self._update_charging_session(

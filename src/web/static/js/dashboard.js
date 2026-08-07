@@ -1999,10 +1999,19 @@ document.addEventListener('DOMContentLoaded', function() {
                     (usableKwh / avgPower).toFixed(1) + ' h at this rate' : '--'}</p>
             </div>
             <div class="stat-card">
+                <h3>Network</h3>
+                <p>${session.network || (detail.type === 'l1' ? 'Home' : '—')}</p>
+            </div>
+            <div class="stat-card">
                 <h3>Source</h3>
                 <p>${String(session.session_id || '').startsWith('ea_') ? 'Charger network log' :
                     (String(session.session_id || '').startsWith('ha_') ? 'Home plug meter' : 'Vehicle polling')}</p>
             </div>
+            ${session.location_name ? `
+            <div class="stat-card">
+                <h3>Location</h3>
+                <p>${session.location_name}</p>
+            </div>` : ''}
         `;
 
         chargeModal.style.display = 'block';
@@ -2121,7 +2130,8 @@ document.addEventListener('DOMContentLoaded', function() {
                     attribution: '© OpenStreetMap contributors'
                 }).addTo(chargeModalMap);
                 L.marker([lat, lon]).addTo(chargeModalMap)
-                    .bindPopup(`Charged here (${CHARGE_TYPE_LABELS[detail.type]})`);
+                    .bindPopup(session.location_name ||
+                        `Charged here (${CHARGE_TYPE_LABELS[detail.type]})`);
             }, 100);
         } else {
             mapContainer.style.display = 'none';

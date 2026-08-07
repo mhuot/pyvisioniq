@@ -1184,6 +1184,17 @@ def get_charging_sessions():
                 "location_lon": (
                     float(session["location_lon"]) if pd.notna(session["location_lon"]) else None
                 ),
+                "network": (
+                    str(session["network"])
+                    if pd.notna(session.get("network")) and str(session.get("network")).strip()
+                    else None
+                ),
+                "location_name": (
+                    str(session["location_name"])
+                    if pd.notna(session.get("location_name"))
+                    and str(session.get("location_name")).strip()
+                    else None
+                ),
                 "is_complete": (
                     str(session["is_complete"]).lower() == "true"
                     if isinstance(session["is_complete"], str)

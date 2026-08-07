@@ -72,10 +72,19 @@ def main():
     )
 
     updated, inserted, skipped = [], [], []
+    backfilled = 0
     claimed_rows = set()
     for ea_row in ea.itertuples():
         ea_id = f"ea_{ea_row.ea_session_id}"
+        location_name = str(ea_row.Location) if pd.notna(ea_row.Location) else ""
         if ea_id in existing_ea_ids or (sessions["session_id"] == ea_id).any():
+            # Backfill network metadata on rows imported before those columns existed
+            idx = sessions.index[sessions["session_id"] == ea_id]
+            existing_network = sessions.loc[idx[0]].get("network", "") if len(idx) > 0 else None
+            if len(idx) > 0 and (pd.isna(existing_network) or not str(existing_network).strip()):
+                sessions.loc[idx[0], "network"] = "Electrify America"
+                sessions.loc[idx[0], "location_name"] = location_name
+                backfilled += 1
             skipped.append(ea_id)
             continue
 
@@ -106,6 +115,8 @@ def main():
             sessions.loc[idx, "avg_power"] = avg_power
             sessions.loc[idx, "max_power"] = ea_row.max_kw
             sessions.loc[idx, "is_complete"] = True
+            sessions.loc[idx, "network"] = "Electrify America"
+            sessions.loc[idx, "location_name"] = location_name
             updated.append(
                 (str(sessions.loc[idx, "session_id"]), str(old_start)[:16], str(ea_row.start)[:16])
             )
@@ -124,6 +135,8 @@ def main():
                     "location_lat": None,
                     "location_lon": None,
                     "is_complete": True,
+                    "network": "Electrify America",
+                    "location_name": location_name,
                 }
             )
 
@@ -138,9 +151,14 @@ def main():
         )
     if skipped:
         print(f"already imported (skipped): {len(skipped)}")
+    if backfilled:
+        print(f"network metadata backfilled: {backfilled}")
 
     if not args.write:
         print("\nDry run - re-run with --write to apply")
+        return 0
+    if not (updated or inserted or backfilled):
+        print("\nNothing to write")
         return 0
 
     sessions = sessions.drop(columns=["_start", "_end"])

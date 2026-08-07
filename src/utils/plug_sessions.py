@@ -167,6 +167,7 @@ def refine_sessions(spans, sessions_path, write=False, make_backup=True):
             "avg_power": span["avg_kw"],
             "max_power": span["max_kw"],
             "is_complete": not span["ongoing"],
+            "network": "Home",
         }
 
         existing = sessions.index[sessions["session_id"] == ha_id]
@@ -175,6 +176,8 @@ def refine_sessions(spans, sessions_path, write=False, make_backup=True):
             changed = (
                 str(sessions.loc[idx, "end_time"]) != values["end_time"]
                 or bool(sessions.loc[idx, "is_complete"]) != values["is_complete"]
+                or pd.isna(sessions.loc[idx].get("network"))
+                or not str(sessions.loc[idx].get("network", "")).strip()
             )
             if changed:
                 for key, val in values.items():
