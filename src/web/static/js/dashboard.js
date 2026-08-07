@@ -425,6 +425,7 @@ document.addEventListener('DOMContentLoaded', function() {
     loadCurrentStatus();
     loadBatteryHistory(24); // Default to 24 hours
     loadCollectionStatus();
+    loadPollingStatus();
     loadEfficiencyStats(24);
     loadChargingSessions(24);
     loadTemperatureEfficiency(24);
@@ -662,6 +663,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     loadTemperatureEfficiency(currentTimeRange);
                 }
                 loadCollectionStatus(); // Update API usage display
+                loadPollingStatus();
             } else {
                 // Show specific error message with appropriate styling
                 const errorType = data.error_type || 'error';
@@ -1260,7 +1262,75 @@ document.addEventListener('DOMContentLoaded', function() {
             console.error('Error loading collection status:', error);
         }
     }
-    
+
+    const POLLING_REASON_LABELS = {
+        dcfc: 'DC fast charging',
+        ac_charge_start: 'AC charge starting',
+        ac_charge_steady: 'AC charge steady',
+        post_trip: 'Post-trip watch',
+        idle_day: 'Idle (day)',
+        idle_night: 'Idle (night)',
+        budget_clamp: 'Budget rationing',
+        budget_exhausted: 'Budget exhausted',
+        fixed: 'Fixed interval'
+    };
+
+    async function loadPollingStatus() {
+        try {
+            const response = await fetch('/api/polling-status');
+            const status = await response.json();
+
+            const modeElement = document.getElementById('polling-mode');
+            if (modeElement) {
+                modeElement.textContent = status.adaptive_enabled ? 'Adaptive' : 'Fixed';
+            }
+
+            const container = document.getElementById('polling-decisions');
+            if (!container) return;
+
+            const decisions = status.recent_decisions || [];
+            if (decisions.length === 0) {
+                container.innerHTML =
+                    '<p class="no-data">No polling decisions recorded yet</p>';
+                return;
+            }
+
+            const rowsHtml = decisions.slice().reverse().map(decision => {
+                const when = new Date(decision.timestamp);
+                const reasonLabel = POLLING_REASON_LABELS[decision.reason] || decision.reason;
+                const backoffNote = Number(decision.backoff) > 1 ?
+                    ` (${Number(decision.backoff).toFixed(1)}x backoff)` : '';
+                return `
+                    <tr>
+                        <td>${formatDate(when)}</td>
+                        <td>${reasonLabel}</td>
+                        <td>${Math.round(decision.interval_minutes)} min${backoffNote}</td>
+                        <td>${decision.calls_today}/${decision.daily_limit}</td>
+                    </tr>
+                `;
+            }).join('');
+
+            container.innerHTML = `
+                <h3>Recent Polling Decisions</h3>
+                <div class="table-container">
+                    <table id="polling-table" aria-label="Recent polling decisions">
+                        <thead>
+                            <tr>
+                                <th scope="col">Decided At</th>
+                                <th scope="col">Reason</th>
+                                <th scope="col">Next Poll</th>
+                                <th scope="col">Budget Used</th>
+                            </tr>
+                        </thead>
+                        <tbody>${rowsHtml}</tbody>
+                    </table>
+                </div>
+            `;
+        } catch (error) {
+            console.error('Error loading polling status:', error);
+        }
+    }
+
     function showNotification(message, type = 'info') {
         const notification = document.createElement('div');
         notification.className = `notification ${type}`;
@@ -2201,6 +2271,7 @@ document.addEventListener('DOMContentLoaded', function() {
     // Reduce update frequency and stagger the calls
     setInterval(() => {
         loadCollectionStatus();
+        loadPollingStatus();
     }, 60000);
     
     setInterval(() => {

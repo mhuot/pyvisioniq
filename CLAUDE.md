@@ -164,6 +164,7 @@ Flask app provides endpoints at `http://localhost:{PORT}/api/`:
 - `/temperature-efficiency` - Trip efficiency correlated with temperature
 - `/charging-temperature-impact` - Charging power/speed by temperature
 - `/collection-status` - Data collection status (calls_today, next_collection)
+- `/polling-status` - Polling observability: mode, recent scheduling decisions from data/polling_log.csv, budget usage
 - `/force-update` - Force cache refresh (respects rate limits)
 - `/clear-cache` - Clear non-history cache files
 - `/refresh` - Refresh data with timeout handling

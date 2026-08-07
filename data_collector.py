@@ -56,24 +56,27 @@ MINIMUM_INTERVAL_MINUTES = 10
 
 
 def adaptive_interval_minutes(is_charging, charging_power, charging_since, last_trip_end, now):
-    """Pick the next polling interval in minutes from the last observed vehicle state."""
+    """Pick the next polling interval from the last observed vehicle state.
+
+    Returns (interval_minutes, reason) so scheduling decisions can be reported.
+    """
     if is_charging:
         power = charging_power or 0
         if power >= DCFC_POWER_THRESHOLD_KW:
-            return ADAPTIVE_INTERVALS_MINUTES["dcfc"]
+            return ADAPTIVE_INTERVALS_MINUTES["dcfc"], "dcfc"
         elapsed_minutes = (now - charging_since).total_seconds() / 60 if charging_since else 0
         if elapsed_minutes < AC_CHARGE_START_WINDOW_MINUTES:
-            return ADAPTIVE_INTERVALS_MINUTES["ac_charge_start"]
-        return ADAPTIVE_INTERVALS_MINUTES["ac_charge_steady"]
+            return ADAPTIVE_INTERVALS_MINUTES["ac_charge_start"], "ac_charge_start"
+        return ADAPTIVE_INTERVALS_MINUTES["ac_charge_steady"], "ac_charge_steady"
 
     if last_trip_end is not None:
         minutes_since_trip = (now - last_trip_end).total_seconds() / 60
         if 0 <= minutes_since_trip <= POST_TRIP_WINDOW_MINUTES:
-            return ADAPTIVE_INTERVALS_MINUTES["post_trip"]
+            return ADAPTIVE_INTERVALS_MINUTES["post_trip"], "post_trip"
 
     if now.hour >= NIGHT_START_HOUR or now.hour < NIGHT_END_HOUR:
-        return ADAPTIVE_INTERVALS_MINUTES["idle_night"]
-    return ADAPTIVE_INTERVALS_MINUTES["idle_day"]
+        return ADAPTIVE_INTERVALS_MINUTES["idle_night"], "idle_night"
+    return ADAPTIVE_INTERVALS_MINUTES["idle_day"], "idle_day"
 
 
 class DataCollector:
@@ -125,6 +128,7 @@ class DataCollector:
 
         # Load call history
         self.call_history_file = Path("data/api_call_history.json")
+        self.polling_log_file = Path("data/polling_log.csv")
         self.load_call_history()
 
     def load_call_history(self):
@@ -289,8 +293,11 @@ class DataCollector:
                 pass
 
     def _adaptive_interval_with_budget(self, now):
-        """Adaptive interval, floored so the remaining daily budget cannot be exceeded"""
-        interval = adaptive_interval_minutes(
+        """Adaptive interval, floored so the remaining daily budget cannot be exceeded.
+
+        Returns (interval_minutes, reason).
+        """
+        interval, reason = adaptive_interval_minutes(
             self.last_battery_state.get("is_charging", False),
             self.last_battery_state.get("charging_power"),
             self.charging_since,
@@ -306,12 +313,40 @@ class DataCollector:
         midnight = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
         minutes_left_today = (midnight - now).total_seconds() / 60
         if remaining_calls <= 0:
-            return minutes_left_today + 1  # next call after the daily reset
+            return minutes_left_today + 1, "budget_exhausted"  # next call after the daily reset
         budget_floor = minutes_left_today / remaining_calls
-        if budget_floor > ADAPTIVE_INTERVALS_MINUTES["idle_day"]:
-            interval = max(interval, budget_floor)
+        if budget_floor > ADAPTIVE_INTERVALS_MINUTES["idle_day"] and budget_floor > interval:
+            return max(budget_floor, MINIMUM_INTERVAL_MINUTES), "budget_clamp"
 
-        return max(interval, MINIMUM_INTERVAL_MINUTES)
+        return max(interval, MINIMUM_INTERVAL_MINUTES), reason
+
+    def _record_polling_decision(self, reason, interval_minutes, backoff_multiplier):
+        """Append a scheduling decision to data/polling_log.csv for reporting"""
+        try:
+            is_new_file = not self.polling_log_file.exists()
+            self.polling_log_file.parent.mkdir(exist_ok=True)
+            with open(self.polling_log_file, "a", encoding="utf-8") as f:
+                if is_new_file:
+                    f.write(
+                        "timestamp,mode,reason,interval_minutes,"
+                        "calls_today,daily_limit,backoff\n"
+                    )
+                f.write(
+                    f"{datetime.now().isoformat()},"
+                    f"{'adaptive' if self.adaptive_enabled else 'fixed'},"
+                    f"{reason},{round(interval_minutes, 1)},"
+                    f"{self.calls_today},{self.daily_limit},{backoff_multiplier}\n"
+                )
+        except IOError as e:
+            logger.error("Error writing polling log: %s", e)
+
+        logger.info(
+            "Next poll in %.0f min (reason=%s, calls %d/%d)",
+            interval_minutes,
+            reason,
+            self.calls_today,
+            self.daily_limit,
+        )
 
     def calculate_next_collection_time(self):
         """Calculate optimal collection times based on last call and interval"""
@@ -322,9 +357,9 @@ class DataCollector:
             # Apply rate limit backoff if active
             backoff_multiplier = getattr(self, "_rate_limit_backoff", 1.0)
             if self.adaptive_enabled:
-                base_interval = self._adaptive_interval_with_budget(now)
+                base_interval, reason = self._adaptive_interval_with_budget(now)
             else:
-                base_interval = self.collection_interval_minutes
+                base_interval, reason = self.collection_interval_minutes, "fixed"
             adjusted_interval = base_interval * backoff_multiplier
 
             next_time = self.last_call_time + timedelta(minutes=adjusted_interval)
@@ -335,6 +370,7 @@ class DataCollector:
                     logger.info(
                         f"Next collection delayed by {backoff_multiplier:.1f}x due to rate limits"
                     )
+                self._record_polling_decision(reason, adjusted_interval, backoff_multiplier)
                 return next_time
 
         # Otherwise, use the scheduled times for today

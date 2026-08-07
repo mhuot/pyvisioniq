@@ -1193,7 +1193,23 @@ def get_collection_status():
             calls_today = history.get("calls_today", 0)
             daily_limit = int(os.getenv("API_DAILY_LIMIT", 30))
 
-            if calls_today < daily_limit:
+            # Prefer the collector's own recorded decision (accurate under
+            # adaptive polling); fall back to the fixed-interval estimate
+            next_collection = None
+            log_file = Path("data/polling_log.csv")
+            if log_file.exists():
+                try:
+                    log_df = pd.read_csv(log_file)
+                    last_row = log_df.iloc[-1]
+                    estimate = pd.to_datetime(last_row["timestamp"]) + pd.Timedelta(
+                        minutes=float(last_row["interval_minutes"])
+                    )
+                    if estimate > pd.Timestamp.now():
+                        next_collection = estimate.to_pydatetime()
+                except (ValueError, KeyError, IndexError) as e:
+                    app.logger.warning("Could not read polling log: %s", e)
+
+            if next_collection is None and calls_today < daily_limit:
                 # Calculate based on evenly distributed collections
                 last_call_str = history.get("last_call")
                 interval_minutes = (24 * 60) // daily_limit
@@ -1221,8 +1237,8 @@ def get_collection_status():
                 else:
                     # No last call, schedule for next available slot
                     next_collection = now + timedelta(minutes=1)
-            else:
-                # Next collection tomorrow at midnight
+            elif next_collection is None:
+                # Budget exhausted: next collection tomorrow at midnight
                 tomorrow = datetime.now().replace(
                     hour=0, minute=0, second=0, microsecond=0
                 ) + timedelta(days=1)
@@ -1247,6 +1263,64 @@ def get_collection_status():
                 }
             )
     except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/polling-status")
+@api_login_required
+def get_polling_status():
+    """Report the collector's polling decisions for observability"""
+    try:
+        adaptive_enabled = os.getenv("ADAPTIVE_POLLING", "false").lower() == "true"
+
+        calls_today = None
+        daily_limit = int(os.getenv("API_DAILY_LIMIT", 30))
+        last_call = None
+        charging_since = None
+        history_file = Path("data/api_call_history.json")
+        if history_file.exists():
+            with open(history_file, "r", encoding="utf-8") as f:
+                history = json.load(f)
+            calls_today = history.get("calls_today")
+            last_call = history.get("last_call")
+            charging_since = history.get("charging_since")
+
+        decisions = []
+        reason_counts_today = {}
+        next_collection_estimate = None
+        log_file = Path("data/polling_log.csv")
+        if log_file.exists():
+            log_df = pd.read_csv(log_file)
+            log_df["timestamp"] = pd.to_datetime(log_df["timestamp"], format="mixed")
+            log_df = log_df.sort_values("timestamp")
+
+            today = pd.Timestamp.now().normalize()
+            today_df = log_df[log_df["timestamp"] >= today]
+            reason_counts_today = today_df["reason"].value_counts().to_dict()
+
+            last_row = log_df.iloc[-1]
+            next_collection_estimate = (
+                last_row["timestamp"] + pd.Timedelta(minutes=float(last_row["interval_minutes"]))
+            ).isoformat()
+
+            recent = log_df.tail(20).copy()
+            recent["timestamp"] = recent["timestamp"].dt.strftime("%Y-%m-%dT%H:%M:%S")
+            decisions = recent.to_dict(orient="records")
+
+        return jsonify(
+            {
+                "adaptive_enabled": adaptive_enabled,
+                "calls_today": calls_today,
+                "daily_limit": daily_limit,
+                "last_call": last_call,
+                "charging_since": charging_since,
+                "next_collection_estimate": next_collection_estimate,
+                "reason_counts_today": reason_counts_today,
+                "recent_decisions": decisions,
+            }
+        )
+    except Exception as e:
+        app.logger.error("Error building polling status: %s", e)
         return jsonify({"error": str(e)}), 500
 
 
