@@ -185,6 +185,7 @@ Critical settings that must be configured:
 - `BLUELINKBRAND`: 1=Kia, 2=Hyundai, 3=Genesis
 - `API_DAILY_LIMIT`: Default 30, used to calculate cache validity
 - `ADAPTIVE_POLLING`: Default false. When true, the collector polls faster around charging/trip transitions (15-20 min) and slower when idle (60-150 min), with a budget clamp that keeps daily calls within API_DAILY_LIMIT
+- `BATTERY_USABLE_KWH`: Default 74.0 (Ioniq 5 long-range: 77.4 kWh total). Usable pack capacity used to estimate charging energy from SOC deltas
 - `CACHE_DURATION_HOURS`: How long to retain cache files (default 48)
 - `DEBUG_MODE`: Enables verbose logging and debug routes
 - `TZ`: Timezone for data collection (default: America/Chicago)

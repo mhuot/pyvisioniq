@@ -1958,6 +1958,13 @@ document.addEventListener('DOMContentLoaded', function() {
                 const socGain = (Number.isFinite(startLevel) && Number.isFinite(endLevel)) ?
                     Math.round(endLevel - startLevel) : null;
 
+                // Energy estimated from SOC delta x usable pack capacity; the
+                // session records' stored energy_added values are unreliable
+                const usableKwh = (window.PYVISIONIC_CONFIG &&
+                    window.PYVISIONIC_CONFIG.batteryUsableKwh) || 74.0;
+                const energyKwh = (socGain != null && socGain > 0) ?
+                    (socGain / 100) * usableKwh : null;
+
                 let socRate = 0;
                 if (peakPower === 0 && before && after && after.timestamp > before.timestamp) {
                     const spanHours = (after.timestamp - before.timestamp) / 3600000;
@@ -1972,6 +1979,7 @@ document.addEventListener('DOMContentLoaded', function() {
                         <td><span class="charge-type charge-type-${type}">${CHARGE_TYPE_LABELS[type]}</span></td>
                         <td>${startLevel != null ? startLevel + '%' : '--'} → ${endLevel != null ? endLevel + '%' : '--'}</td>
                         <td>${socGain != null ? (socGain >= 0 ? '+' : '') + socGain + '%' : '--'}</td>
+                        <td>${energyKwh != null ? '≈ ' + energyKwh.toFixed(1) + ' kWh' : '--'}</td>
                         <td>${peakPower > 0 ? peakPower.toFixed(1) + ' kW' : '--'}</td>
                         <td>${session.is_complete ? 'Complete' : '⚡ Charging'}</td>
                     </tr>
@@ -1988,6 +1996,7 @@ document.addEventListener('DOMContentLoaded', function() {
                                 <th scope="col">Type</th>
                                 <th scope="col">Battery</th>
                                 <th scope="col">Gained</th>
+                                <th scope="col">Energy Added</th>
                                 <th scope="col">Peak Power</th>
                                 <th scope="col">Status</th>
                             </tr>

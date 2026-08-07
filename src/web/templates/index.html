@@ -252,6 +252,11 @@
         </div>
     </div>
 
+    <script>
+        window.PYVISIONIC_CONFIG = {
+            batteryUsableKwh: {{ battery_usable_kwh }}
+        };
+    </script>
     <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
 </body>
 </html>

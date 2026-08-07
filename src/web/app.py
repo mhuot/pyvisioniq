@@ -68,7 +68,10 @@ def clean_nan_values(data):
 @app.route("/")
 @login_required
 def index():
-    return render_template("index.html")
+    return render_template(
+        "index.html",
+        battery_usable_kwh=float(os.getenv("BATTERY_USABLE_KWH", "74.0")),
+    )
 
 
 @app.route("/favicon.ico")
