@@ -366,15 +366,19 @@ class CachedVehicleClient:
                     getattr(vehicle, "ev_battery_remain", None),
                 )
 
-            # Get charging power from raw data
+            # Get charging power from raw data. Standard (AC) and fast (DC) power
+            # are reported in separate fields; only one is nonzero at a time.
             charging_power = None
             vehicle_data = getattr(vehicle, "data", {})
             ev_status = vehicle_data.get("vehicleStatus", {}).get("evStatus", {})
             if ev_status:
-                charging_power = ev_status.get("batteryStndChrgPower")
-                if charging_power is None:
+                standard_power = ev_status.get("batteryStndChrgPower")
+                fast_power = ev_status.get("batteryFstChrgPower")
+                if standard_power is None and fast_power is None:
                     # Try the attribute if available
                     charging_power = getattr(vehicle, "ev_charging_current", None)
+                else:
+                    charging_power = max(standard_power or 0, fast_power or 0)
 
             # Get odometer value - it's in miles for US region
             odometer_value = getattr(vehicle, "odometer", None)
