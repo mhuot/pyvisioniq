@@ -62,6 +62,27 @@ logger = logging.getLogger(__name__)
 debug_logger = DebugLogger(__name__)
 
 
+def normalize_airtemp_fahrenheit(value):
+    """Normalize the API's airTemp value to a float in Fahrenheit.
+
+    The climate dial reports "LO" below 62F and "HI" above 82F, and numeric
+    settings intermittently arrive as strings (e.g. "72"). Returns None for
+    missing or unrecognizable values.
+    """
+    if value is None:
+        return None
+    if isinstance(value, str):
+        dial_extremes = {"LO": 0.0, "HI": 100.0}
+        normalized = value.strip().upper()
+        if normalized in dial_extremes:
+            return dial_extremes[normalized]
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        logger.warning("Non-numeric vehicle airTemp value: %r", value)
+        return None
+
+
 class CSVStorage(StorageBackend):
     """CSVStorage class for storing and retrieving vehicle data in CSV files.
     This class manages three types of data: trips, battery status, and locations,
@@ -266,15 +287,14 @@ class CSVStorage(StorageBackend):
             meteo_temp = None
             vehicle_temp = None
 
-            # Get vehicle sensor temperature. The API sometimes returns the
-            # value as a string (e.g. "67"), so coerce before converting.
-            temp_f_vehicle = data.get("raw_data", {}).get("airTemp", {}).get("value")
-            try:
-                temp_f_vehicle = float(temp_f_vehicle) if temp_f_vehicle is not None else None
-            except (TypeError, ValueError):
-                logger.warning("Non-numeric vehicle airTemp value: %r", temp_f_vehicle)
-                temp_f_vehicle = None
-            vehicle_temp = round((temp_f_vehicle - 32) * 5 / 9, 1) if temp_f_vehicle else None
+            # Get vehicle temperature (climate setting; "LO"/"HI" at the dial
+            # extremes, and numeric values intermittently arrive as strings)
+            temp_f_vehicle = normalize_airtemp_fahrenheit(
+                data.get("raw_data", {}).get("airTemp", {}).get("value")
+            )
+            vehicle_temp = (
+                round((temp_f_vehicle - 32) * 5 / 9, 1) if temp_f_vehicle is not None else None
+            )
 
             # Get Meteo weather temperature
             location = data.get("location", {})
