@@ -424,8 +424,23 @@ def get_battery_history():
         # Normalize mixed timestamp formats so filtering and sorting work
         battery_df["timestamp"] = pd.to_datetime(battery_df["timestamp"], format="mixed")
 
+        # Explicit window (used by the charge detail modal) takes precedence
+        window_start = request.args.get("start")
+        window_end = request.args.get("end")
+        if window_start and window_end:
+            try:
+                start_ts = pd.to_datetime(window_start)
+                end_ts = pd.to_datetime(window_end)
+                battery_df = battery_df[
+                    (battery_df["timestamp"] >= start_ts) & (battery_df["timestamp"] <= end_ts)
+                ]
+            except (ValueError, TypeError):
+                pass
+            hours = None
+        else:
+            hours = request.args.get("hours")
+
         # Filter by hours if requested
-        hours = request.args.get("hours")
         if hours:
             try:
                 hours_int = int(hours)

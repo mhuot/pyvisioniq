@@ -414,6 +414,21 @@ h2 {
     white-space: nowrap;
 }
 
+#charging-table tbody tr.charge-row {
+    cursor: pointer;
+}
+
+#charging-table tbody tr.charge-row:hover {
+    background-color: var(--bg-color);
+}
+
+#charging-subheading {
+    font-size: 0.9rem;
+    font-weight: 400;
+    color: var(--text-secondary, #7f8c8d);
+    margin-bottom: 1rem;
+}
+
 .charge-type-l1 {
     background-color: rgba(46, 204, 113, 0.2);
     color: #1e8449;

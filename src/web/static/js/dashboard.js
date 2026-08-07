@@ -121,6 +121,34 @@ function classifyChargeLevel(peakPowerKw, socRatePerHour) {
 
 const CHARGE_TYPE_LABELS = { l1: 'L1', l2: 'L2', dcfc: 'DC Fast' };
 
+// Shades a session's time span behind the charge detail modal's SOC chart
+const chargeSpanShadePlugin = {
+    id: 'chargeSpanShade',
+    beforeDatasetsDraw(chart, args, opts) {
+        const { ctx, chartArea, scales } = chart;
+        if (!chartArea || !scales.x || !opts || !opts.start) return;
+        let left = scales.x.getPixelForValue(opts.start);
+        let right = scales.x.getPixelForValue(opts.end);
+        left = Math.max(left, chartArea.left);
+        right = Math.min(right, chartArea.right);
+        if (right - left < 2) {
+            left -= 1;
+            right = left + 2;
+        }
+        ctx.save();
+        ctx.fillStyle = opts.color || 'rgba(46, 204, 113, 0.15)';
+        ctx.fillRect(left, chartArea.top, right - left, chartArea.bottom - chartArea.top);
+        ctx.restore();
+    }
+};
+
+// Naive local ISO string (the backend stores naive local timestamps)
+function toLocalIso(dateValue) {
+    const pad = n => String(n).padStart(2, '0');
+    return `${dateValue.getFullYear()}-${pad(dateValue.getMonth() + 1)}-${pad(dateValue.getDate())}` +
+        `T${pad(dateValue.getHours())}:${pad(dateValue.getMinutes())}:${pad(dateValue.getSeconds())}`;
+}
+
 // Group consecutive is_charging readings into contiguous time spans
 function computeChargingSpans(rows) {
     const spans = [];
@@ -1899,6 +1927,206 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
     
+    let chargeDetailsById = {};
+    let chargeModalChart = null;
+    let chargeModalMap = null;
+
+    function closeChargeModal() {
+        const chargeModal = document.getElementById('chargeModal');
+        if (chargeModal) chargeModal.style.display = 'none';
+        if (chargeModalMap) {
+            chargeModalMap.remove();
+            chargeModalMap = null;
+        }
+    }
+
+    async function showChargeModal(detail) {
+        const { session } = detail;
+        const chargeModal = document.getElementById('chargeModal');
+        if (!chargeModal) return;
+
+        document.getElementById('charge-modal-title').textContent =
+            `Charging Session - ${formatDate(detail.start)}`;
+
+        const usableKwh = (window.PYVISIONIC_CONFIG &&
+            window.PYVISIONIC_CONFIG.batteryUsableKwh) || 74.0;
+        const durationHours = detail.duration > 0 ? detail.duration / 60 : null;
+        const storedAvgPower = Number(session.avg_power);
+        const avgPower = storedAvgPower > 0 ? storedAvgPower : null;
+        const chargeRate = (detail.socGain != null && durationHours) ?
+            detail.socGain / durationHours : null;
+        const socSpan = (detail.startLevel != null && detail.endLevel != null) ?
+            `${detail.startLevel}% → ${detail.endLevel}%` : '--';
+
+        document.getElementById('charge-stats').innerHTML = `
+            <div class="stat-card">
+                <h3>Type</h3>
+                <p><span class="charge-type charge-type-${detail.type}">${CHARGE_TYPE_LABELS[detail.type]}</span></p>
+            </div>
+            <div class="stat-card">
+                <h3>Battery</h3>
+                <p>${socSpan}</p>
+            </div>
+            <div class="stat-card">
+                <h3>Gained</h3>
+                <p>${detail.socGain != null ? (detail.socGain >= 0 ? '+' : '') + detail.socGain + '%' : '--'}</p>
+            </div>
+            <div class="stat-card">
+                <h3>Energy Added</h3>
+                <p>${detail.energyDisplay}</p>
+            </div>
+            <div class="stat-card">
+                <h3>Duration</h3>
+                <p>${detail.duration >= 60 ?
+                    Math.floor(detail.duration / 60) + 'h ' + Math.round(detail.duration % 60) + 'm' :
+                    Math.round(detail.duration) + 'm'}${!session.is_complete ? ' (ongoing)' : ''}</p>
+            </div>
+            <div class="stat-card">
+                <h3>Peak Power</h3>
+                <p>${detail.peakPower > 0 ? detail.peakPower.toFixed(1) + ' kW' : '--'}</p>
+            </div>
+            <div class="stat-card">
+                <h3>Avg Power</h3>
+                <p>${avgPower ? avgPower.toFixed(1) + ' kW' : '--'}</p>
+            </div>
+            <div class="stat-card">
+                <h3>Charge Rate</h3>
+                <p>${chargeRate != null ? chargeRate.toFixed(1) + ' %/hr' : '--'}</p>
+            </div>
+            <div class="stat-card">
+                <h3>Full Pack Time</h3>
+                <p>${(avgPower && avgPower > 0) ?
+                    (usableKwh / avgPower).toFixed(1) + ' h at this rate' : '--'}</p>
+            </div>
+            <div class="stat-card">
+                <h3>Source</h3>
+                <p>${detail.isImported ? 'Charger network log' : 'Vehicle polling'}</p>
+            </div>
+        `;
+
+        chargeModal.style.display = 'block';
+
+        // SOC chart from readings around the session
+        const padMs = 45 * 60000;
+        const windowStart = new Date(detail.start.valueOf() - padMs);
+        const windowEnd = new Date(Math.min(detail.end.valueOf() + padMs, Date.now()));
+        const chartContainer = document.getElementById('charge-chart-container');
+        const noReadings = document.getElementById('charge-no-readings');
+
+        let readings = [];
+        try {
+            const rows = await fetch(
+                `/api/battery/history?start=${encodeURIComponent(toLocalIso(windowStart))}` +
+                `&end=${encodeURIComponent(toLocalIso(windowEnd))}`
+            ).then(r => r.json());
+            readings = (Array.isArray(rows) ? rows : [])
+                .map(row => ({
+                    x: new Date(row.timestamp).valueOf(),
+                    y: row.battery_level,
+                    power: Number(row.charging_power) || 0
+                }))
+                .filter(point => Number.isFinite(point.y));
+        } catch (error) {
+            console.error('Error loading session readings:', error);
+        }
+
+        if (chargeModalChart) {
+            chargeModalChart.destroy();
+            chargeModalChart = null;
+        }
+
+        if (readings.length >= 2) {
+            chartContainer.style.display = 'block';
+            noReadings.style.display = 'none';
+            const levels = readings.map(point => point.y);
+            const fillsByType = {
+                dcfc: OVERLAY_COLORS.dcfcFill,
+                l2: OVERLAY_COLORS.l2Fill,
+                l1: OVERLAY_COLORS.l1Fill
+            };
+            const ctx = document.getElementById('charge-soc-chart').getContext('2d');
+            chargeModalChart = new Chart(ctx, {
+                type: 'line',
+                plugins: [chargeSpanShadePlugin],
+                data: {
+                    datasets: [{
+                        label: 'Battery (%)',
+                        data: readings,
+                        borderColor: '#3498db',
+                        backgroundColor: 'rgba(52, 152, 219, 0.1)',
+                        tension: 0.2,
+                        pointRadius: 4,
+                        pointHoverRadius: 6
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false },
+                        title: {
+                            display: true,
+                            text: 'State of charge around this session (shaded = charging)'
+                        },
+                        chargeSpanShade: {
+                            start: detail.start.valueOf(),
+                            end: detail.end.valueOf(),
+                            color: fillsByType[detail.type]
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: context => {
+                                    const point = readings[context.dataIndex];
+                                    let label = `${context.parsed.y}%`;
+                                    if (point && point.power > 0) {
+                                        label += ` - charging at ${point.power.toFixed(1)} kW`;
+                                    }
+                                    return label;
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            type: 'time',
+                            time: { tooltipFormat: 'MMM dd, HH:mm' }
+                        },
+                        y: {
+                            suggestedMin: Math.max(0, Math.min(...levels) - 5),
+                            suggestedMax: Math.min(100, Math.max(...levels) + 5),
+                            title: { display: true, text: 'Battery (%)' }
+                        }
+                    }
+                }
+            });
+        } else {
+            chartContainer.style.display = 'none';
+            noReadings.style.display = 'block';
+        }
+
+        // Location mini-map when the session has coordinates
+        const mapContainer = document.getElementById('charge-map');
+        if (chargeModalMap) {
+            chargeModalMap.remove();
+            chargeModalMap = null;
+        }
+        const lat = Number(session.location_lat);
+        const lon = Number(session.location_lon);
+        if (Number.isFinite(lat) && Number.isFinite(lon) && lat !== 0) {
+            mapContainer.style.display = 'block';
+            setTimeout(() => {
+                chargeModalMap = L.map('charge-map').setView([lat, lon], 14);
+                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                    attribution: '© OpenStreetMap contributors'
+                }).addTo(chargeModalMap);
+                L.marker([lat, lon]).addTo(chargeModalMap)
+                    .bindPopup(`Charged here (${CHARGE_TYPE_LABELS[detail.type]})`);
+            }, 100);
+        } else {
+            mapContainer.style.display = 'none';
+        }
+    }
+
     async function loadChargingSessions(hours = 'all', startDate = null, endDate = null) {
         try {
             const params = new URLSearchParams({ hours });
@@ -1940,7 +2168,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 return wholeHours > 0 ? `${wholeHours}h ${mins}m` : `${mins}m`;
             };
 
-            const rowsHtml = sessions.map(session => {
+            const sessionDetails = sessions.map(session => {
                 const start = new Date(String(session.start_time).replace(' ', 'T'));
                 const end = session.end_time ?
                     new Date(String(session.end_time).replace(' ', 'T')) : new Date();
@@ -2013,10 +2241,23 @@ document.addEventListener('DOMContentLoaded', function() {
                 }
                 const type = classifyChargeLevel(peakPower, socRate);
 
+                return {
+                    session, start, end, duration, type, isImported,
+                    startLevel, endLevel, socGain, energyDisplay, peakPower
+                };
+            });
+
+            chargeDetailsById = {};
+            sessionDetails.forEach(detail => {
+                chargeDetailsById[String(detail.session.session_id)] = detail;
+            });
+
+            const rowsHtml = sessionDetails.map(detail => {
+                const { session, type, startLevel, endLevel, socGain, energyDisplay, peakPower } = detail;
                 return `
-                    <tr>
-                        <td>${formatDate(start)}</td>
-                        <td>${formatDuration(duration)}${!session.is_complete ? ' (ongoing)' : ''}</td>
+                    <tr class="charge-row" data-session="${session.session_id}">
+                        <td>${formatDate(detail.start)}</td>
+                        <td>${formatDuration(detail.duration)}${!session.is_complete ? ' (ongoing)' : ''}</td>
                         <td><span class="charge-type charge-type-${type}">${CHARGE_TYPE_LABELS[type]}</span></td>
                         <td>${startLevel != null ? startLevel + '%' : '--'} → ${endLevel != null ? endLevel + '%' : '--'}</td>
                         <td>${socGain != null ? (socGain >= 0 ? '+' : '') + socGain + '%' : '--'}</td>
@@ -2028,6 +2269,7 @@ document.addEventListener('DOMContentLoaded', function() {
             }).join('');
 
             container.innerHTML = `
+                <h3 id="charging-subheading">Click on rows below to see details</h3>
                 <div class="table-container">
                     <table id="charging-table" aria-label="Charging session details">
                         <thead>
@@ -2046,6 +2288,13 @@ document.addEventListener('DOMContentLoaded', function() {
                     </table>
                 </div>
             `;
+
+            container.querySelectorAll('.charge-row').forEach(row => {
+                row.addEventListener('click', () => {
+                    const detail = chargeDetailsById[row.dataset.session];
+                    if (detail) showChargeModal(detail);
+                });
+            });
 
         } catch (error) {
             console.error('Error loading charging sessions:', error);
@@ -2183,7 +2432,15 @@ document.addEventListener('DOMContentLoaded', function() {
                 tripMap = null;
             }
         }
+        if (event.target === document.getElementById('chargeModal')) {
+            closeChargeModal();
+        }
     });
+
+    const chargeModalCloseBtn = document.getElementById('charge-modal-close');
+    if (chargeModalCloseBtn) {
+        chargeModalCloseBtn.addEventListener('click', closeChargeModal);
+    }
     
     async function showTripModal(tripId) {
         try {

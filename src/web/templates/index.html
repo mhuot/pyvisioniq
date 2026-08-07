@@ -252,6 +252,24 @@
         </div>
     </div>
 
+    <!-- Charging Session Detail Modal -->
+    <div id="chargeModal" class="modal">
+        <div class="modal-content">
+            <span class="modal-close" id="charge-modal-close">&times;</span>
+            <h2 id="charge-modal-title">Charging Session</h2>
+            <div id="charge-modal-body">
+                <div class="trip-stats-grid" id="charge-stats"></div>
+                <div class="chart-container" id="charge-chart-container" style="height: 300px; margin-top: 20px;">
+                    <canvas id="charge-soc-chart"></canvas>
+                </div>
+                <p id="charge-no-readings" class="no-data" style="display: none;">
+                    No battery readings during this session &mdash; it completed between polls.
+                </p>
+                <div id="charge-map" style="height: 250px; margin-top: 20px;"></div>
+            </div>
+        </div>
+    </div>
+
     <script>
         window.PYVISIONIC_CONFIG = {
             batteryUsableKwh: {{ battery_usable_kwh }}
