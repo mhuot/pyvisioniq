@@ -83,7 +83,9 @@ function classifyChargingSpans(spans, rows) {
 
     const TOLERANCE_MS = 60000;
     return spans.map(span => {
-        let peakPower = 0;
+        // Stored session max_power (e.g. imported charger-network data) counts
+        // alongside whatever the polled readings caught
+        let peakPower = span.maxPower || 0;
         readings.forEach(reading => {
             if (
                 reading.timestamp.valueOf() >= span.start.valueOf() - TOLERANCE_MS &&
@@ -148,7 +150,8 @@ function computeSessionSpans(sessions) {
         .filter(session => session.start_time && session.end_time)
         .map(session => ({
             start: new Date(String(session.start_time).replace(' ', 'T')),
-            end: new Date(String(session.end_time).replace(' ', 'T'))
+            end: new Date(String(session.end_time).replace(' ', 'T')),
+            maxPower: Number(session.max_power) || 0
         }))
         .filter(span =>
             !Number.isNaN(span.start.valueOf()) &&
@@ -165,8 +168,9 @@ function mergeSpans(spans) {
         const last = merged[merged.length - 1];
         if (last && span.start <= last.end) {
             if (span.end > last.end) last.end = span.end;
+            last.maxPower = Math.max(last.maxPower || 0, span.maxPower || 0);
         } else {
-            merged.push({ start: span.start, end: span.end });
+            merged.push({ start: span.start, end: span.end, maxPower: span.maxPower || 0 });
         }
     });
     return merged;
@@ -1970,13 +1974,19 @@ document.addEventListener('DOMContentLoaded', function() {
                     after = readings.find(r => r.timestamp.valueOf() >= spanEnd);
                 }
 
-                let peakPower = 0;
+                // Imported charger-network sessions (ea_*) carry authoritative
+                // metered values; prefer them over reading-derived estimates
+                const isImported = String(session.session_id || '').startsWith('ea_');
+
+                let peakPower = Math.max(0, Number(session.max_power) || 0);
                 inSpan.forEach(r => {
                     peakPower = Math.max(peakPower, r.power);
                 });
 
-                const startLevel = before ? before.level : session.start_battery;
-                const endLevel = after ? after.level : session.end_battery;
+                const startLevel = (isImported && Number.isFinite(session.start_battery)) ?
+                    session.start_battery : (before ? before.level : session.start_battery);
+                const endLevel = (isImported && Number.isFinite(session.end_battery)) ?
+                    session.end_battery : (after ? after.level : session.end_battery);
                 let socGain = (Number.isFinite(startLevel) && Number.isFinite(endLevel)) ?
                     Math.round(endLevel - startLevel) : null;
                 // A session with real charging power can't lose charge; small
@@ -1985,12 +1995,16 @@ document.addEventListener('DOMContentLoaded', function() {
                     socGain = 0;
                 }
 
-                // Energy estimated from SOC delta x usable pack capacity; the
-                // session records' stored energy_added values are unreliable
+                // Energy: metered value for imported sessions (no approximation
+                // marker), SOC delta x usable pack capacity otherwise
                 const usableKwh = (window.PYVISIONIC_CONFIG &&
                     window.PYVISIONIC_CONFIG.batteryUsableKwh) || 74.0;
-                const energyKwh = (socGain != null && socGain > 0) ?
-                    (socGain / 100) * usableKwh : null;
+                let energyDisplay = '--';
+                if (isImported && Number(session.energy_added) > 0) {
+                    energyDisplay = `${Number(session.energy_added).toFixed(1)} kWh`;
+                } else if (socGain != null && socGain > 0) {
+                    energyDisplay = `≈ ${((socGain / 100) * usableKwh).toFixed(1)} kWh`;
+                }
 
                 let socRate = 0;
                 if (peakPower === 0 && before && after && after.timestamp > before.timestamp) {
@@ -2006,7 +2020,7 @@ document.addEventListener('DOMContentLoaded', function() {
                         <td><span class="charge-type charge-type-${type}">${CHARGE_TYPE_LABELS[type]}</span></td>
                         <td>${startLevel != null ? startLevel + '%' : '--'} → ${endLevel != null ? endLevel + '%' : '--'}</td>
                         <td>${socGain != null ? (socGain >= 0 ? '+' : '') + socGain + '%' : '--'}</td>
-                        <td>${energyKwh != null ? '≈ ' + energyKwh.toFixed(1) + ' kWh' : '--'}</td>
+                        <td>${energyDisplay}</td>
                         <td>${peakPower > 0 ? peakPower.toFixed(1) + ' kW' : '--'}</td>
                         <td>${session.is_complete ? 'Complete' : '⚡ Charging'}</td>
                     </tr>

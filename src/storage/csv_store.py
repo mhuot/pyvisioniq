@@ -389,9 +389,9 @@ class CSVStorage(StorageBackend):
         if df.empty:
             return df
 
-        # Normalize start and end timestamps
+        # Normalize start and end timestamps (formats vary across writers)
         if "start_time" in df.columns:
-            df["start_time"] = pd.to_datetime(df["start_time"], errors="coerce")
+            df["start_time"] = pd.to_datetime(df["start_time"], format="mixed", errors="coerce")
             missing_start = df["start_time"].isna()
 
             if missing_start.any() and "session_id" in df.columns:
@@ -408,7 +408,7 @@ class CSVStorage(StorageBackend):
                                 logger.debug(f"Could not reconstruct start_time for {session_id}")
 
         if "end_time" in df.columns:
-            df["end_time"] = pd.to_datetime(df["end_time"], errors="coerce")
+            df["end_time"] = pd.to_datetime(df["end_time"], format="mixed", errors="coerce")
 
         # Normalize numeric columns
         for column in [
