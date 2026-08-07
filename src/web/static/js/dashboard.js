@@ -81,10 +81,14 @@ function classifyChargingSpans(spans, rows) {
         .filter(reading => !Number.isNaN(reading.timestamp.valueOf()))
         .sort((a, b) => a.timestamp - b.timestamp);
 
+    const TOLERANCE_MS = 60000;
     return spans.map(span => {
         let peakPower = 0;
         readings.forEach(reading => {
-            if (reading.timestamp >= span.start && reading.timestamp <= span.end) {
+            if (
+                reading.timestamp.valueOf() >= span.start.valueOf() - TOLERANCE_MS &&
+                reading.timestamp.valueOf() <= span.end.valueOf() + TOLERANCE_MS
+            ) {
                 peakPower = Math.max(peakPower, reading.power);
             }
         });
@@ -1942,21 +1946,44 @@ document.addEventListener('DOMContentLoaded', function() {
                     duration = Math.floor((Date.now() - start) / 60000);
                 }
 
-                // Derive SOC and peak power from the battery readings around the session
-                const before = readings.filter(r => r.timestamp <= start).pop();
-                const after = session.is_complete ?
-                    readings.find(r => r.timestamp >= end) : readings[readings.length - 1];
+                // Derive SOC and peak power from the battery readings around the
+                // session, with a tolerance so precision differences between the
+                // session boundaries and reading timestamps can't exclude the
+                // boundary readings themselves
+                const TOLERANCE_MS = 60000;
+                const spanStart = start.valueOf() - TOLERANCE_MS;
+                const spanEnd = end.valueOf() + TOLERANCE_MS;
+
+                const before = readings.filter(r => r.timestamp.valueOf() <= spanStart + 2 * TOLERANCE_MS).pop();
+                // Prefer the last reading inside the session over the first one
+                // after it - the latter can be post-drive and lower, producing
+                // phantom negative gains
+                const inSpan = readings.filter(r =>
+                    r.timestamp.valueOf() >= spanStart && r.timestamp.valueOf() <= spanEnd
+                );
+                let after;
+                if (!session.is_complete) {
+                    after = readings[readings.length - 1];
+                } else if (inSpan.length > 0) {
+                    after = inSpan[inSpan.length - 1];
+                } else {
+                    after = readings.find(r => r.timestamp.valueOf() >= spanEnd);
+                }
+
                 let peakPower = 0;
-                readings.forEach(r => {
-                    if (r.timestamp >= start && r.timestamp <= end) {
-                        peakPower = Math.max(peakPower, r.power);
-                    }
+                inSpan.forEach(r => {
+                    peakPower = Math.max(peakPower, r.power);
                 });
 
                 const startLevel = before ? before.level : session.start_battery;
                 const endLevel = after ? after.level : session.end_battery;
-                const socGain = (Number.isFinite(startLevel) && Number.isFinite(endLevel)) ?
+                let socGain = (Number.isFinite(startLevel) && Number.isFinite(endLevel)) ?
                     Math.round(endLevel - startLevel) : null;
+                // A session with real charging power can't lose charge; small
+                // negatives are SOC quantization jitter
+                if (socGain != null && socGain < 0 && peakPower > 0) {
+                    socGain = 0;
+                }
 
                 // Energy estimated from SOC delta x usable pack capacity; the
                 // session records' stored energy_added values are unreliable

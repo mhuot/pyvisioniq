@@ -437,8 +437,9 @@ def get_battery_history():
         # Sort by timestamp
         battery_df = battery_df.sort_values("timestamp")
 
-        # ISO timestamps (naive local time) so the browser parses them consistently
-        battery_df["timestamp"] = battery_df["timestamp"].dt.strftime("%Y-%m-%dT%H:%M:%S")
+        # ISO timestamps (naive local time, full precision) so the browser parses
+        # them consistently and boundary comparisons against session times work
+        battery_df["timestamp"] = battery_df["timestamp"].apply(lambda t: t.isoformat())
 
         # Convert to JSON friendly format, replacing NaN with null
         result = clean_nan_values(battery_df.to_dict(orient="records"))
