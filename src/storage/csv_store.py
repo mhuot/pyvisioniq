@@ -49,6 +49,7 @@ CHARGING_SESSION_FIELDS = [
     "is_complete",
     "network",
     "location_name",
+    "cost_usd",
 ]
 
 sys.path.append(str(Path(__file__).parent.parent.parent))

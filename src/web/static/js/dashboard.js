@@ -2004,13 +2004,18 @@ document.addEventListener('DOMContentLoaded', function() {
             </div>
             <div class="stat-card">
                 <h3>Source</h3>
-                <p>${String(session.session_id || '').startsWith('ea_') ? 'Charger network log' :
+                <p>${/^(ea|rc)_/.test(String(session.session_id || '')) ? 'Charger network log' :
                     (String(session.session_id || '').startsWith('ha_') ? 'Home plug meter' : 'Vehicle polling')}</p>
             </div>
             ${session.location_name ? `
             <div class="stat-card">
                 <h3>Location</h3>
                 <p>${session.location_name}</p>
+            </div>` : ''}
+            ${Number(session.cost_usd) > 0 ? `
+            <div class="stat-card">
+                <h3>Cost</h3>
+                <p>$${Number(session.cost_usd).toFixed(2)}</p>
             </div>` : ''}
         `;
 
@@ -2216,7 +2221,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 // Imported charger-network sessions (ea_*) carry authoritative
                 // metered values; prefer them over reading-derived estimates
                 const sessionId = String(session.session_id || '');
-                const isImported = sessionId.startsWith('ea_') || sessionId.startsWith('ha_');
+                const isImported = /^(ea|ha|rc)_/.test(sessionId);
 
                 let peakPower = Math.max(0, Number(session.max_power) || 0);
                 inSpan.forEach(r => {

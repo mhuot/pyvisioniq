@@ -1195,6 +1195,9 @@ def get_charging_sessions():
                     and str(session.get("location_name")).strip()
                     else None
                 ),
+                "cost_usd": (
+                    float(session["cost_usd"]) if pd.notna(session.get("cost_usd")) else None
+                ),
                 "is_complete": (
                     str(session["is_complete"]).lower() == "true"
                     if isinstance(session["is_complete"], str)
