@@ -71,6 +71,38 @@ function computeChargingSpans(rows) {
     return spans;
 }
 
+// Convert charging sessions (real start/end times) into time spans.
+// Sessions catch fast charges that start and finish between polling samples,
+// where no reading ever reports is_charging.
+function computeSessionSpans(sessions) {
+    return sessions
+        .filter(session => session.start_time && session.end_time)
+        .map(session => ({
+            start: new Date(String(session.start_time).replace(' ', 'T')),
+            end: new Date(String(session.end_time).replace(' ', 'T'))
+        }))
+        .filter(span =>
+            !Number.isNaN(span.start.valueOf()) &&
+            !Number.isNaN(span.end.valueOf()) &&
+            span.end > span.start
+        );
+}
+
+// Merge overlapping spans so unioned sources don't double-paint
+function mergeSpans(spans) {
+    const sorted = [...spans].sort((a, b) => a.start - b.start);
+    const merged = [];
+    sorted.forEach(span => {
+        const last = merged[merged.length - 1];
+        if (last && span.start <= last.end) {
+            if (span.end > last.end) last.end = span.end;
+        } else {
+            merged.push({ start: span.start, end: span.end });
+        }
+    });
+    return merged;
+}
+
 // Convert trips (start date + duration in minutes) into time spans
 function computeTripSpans(trips) {
     return trips
@@ -605,9 +637,10 @@ document.addEventListener('DOMContentLoaded', function() {
             tripParams.append('page', '1');
             tripParams.append('per_page', '500');
 
-            const [batteryRows, tripsData] = await Promise.all([
+            const [batteryRows, tripsData, sessionsData] = await Promise.all([
                 fetch(`/api/battery/history?${params}`).then(r => r.json()),
-                fetch(`/api/trips?${tripParams}`).then(r => r.json()).catch(() => null)
+                fetch(`/api/trips?${tripParams}`).then(r => r.json()).catch(() => null),
+                fetch(`/api/charging-sessions?${params}`).then(r => r.json()).catch(() => null)
             ]);
 
             // The endpoint returns a bare array; filter custom date ranges client-side
@@ -623,7 +656,13 @@ document.addEventListener('DOMContentLoaded', function() {
             const data = { data: rows };
             currentData.batteryHistory = data;
 
-            batteryOverlays.charging = computeChargingSpans(rows);
+            // Union point-derived spans with session records: sessions supply real
+            // start/end times and catch fast charges shorter than one polling interval
+            batteryOverlays.charging = mergeSpans(
+                computeChargingSpans(rows).concat(
+                    computeSessionSpans(Array.isArray(sessionsData) ? sessionsData : [])
+                )
+            );
             batteryOverlays.trips = computeTripSpans(
                 tripsData && Array.isArray(tripsData.trips) ? tripsData.trips : []
             );
