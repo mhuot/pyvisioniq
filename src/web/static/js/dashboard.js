@@ -2238,12 +2238,27 @@ document.addEventListener('DOMContentLoaded', function() {
                     endLevel = session.end_battery;
                 } else if (after && !session.is_complete) {
                     endLevel = after.level;
-                } else if (after && after.timestamp.valueOf() - end.valueOf() <= STALE_MS) {
-                    endLevel = after.level;
-                } else if (inSpan.length > 0) {
-                    endLevel = inSpan[inSpan.length - 1].level;
-                } else if (Number.isFinite(session.end_battery)) {
-                    endLevel = session.end_battery;
+                } else {
+                    // Closest reading to the session end wins (within freshness):
+                    // the last in-span reading can be hours old if collections
+                    // failed late in the session, while a reading shortly after
+                    // the end reflects the final level accurately
+                    const lastInSpan = inSpan.length > 0 ? inSpan[inSpan.length - 1] : null;
+                    const firstAfter = readings.find(r => r.timestamp.valueOf() >= end.valueOf());
+                    const candidates = [lastInSpan, firstAfter].filter(r =>
+                        r && Math.abs(r.timestamp.valueOf() - end.valueOf()) <= STALE_MS
+                    );
+                    if (candidates.length > 0) {
+                        candidates.sort((a, b) =>
+                            Math.abs(a.timestamp.valueOf() - end.valueOf()) -
+                            Math.abs(b.timestamp.valueOf() - end.valueOf())
+                        );
+                        endLevel = candidates[0].level;
+                    } else if (lastInSpan) {
+                        endLevel = lastInSpan.level;
+                    } else if (Number.isFinite(session.end_battery)) {
+                        endLevel = session.end_battery;
+                    }
                 }
                 let socGain = (Number.isFinite(startLevel) && Number.isFinite(endLevel)) ?
                     Math.round(endLevel - startLevel) : null;
