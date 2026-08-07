@@ -9,6 +9,81 @@ let energyChart = null;
 let tempEfficiencyChart = null;
 let chargingTempChart = null;
 
+// Time spans painted behind the battery chart (charging periods and trips)
+let batteryOverlays = { charging: [], trips: [] };
+
+const OVERLAY_COLORS = {
+    chargingFill: 'rgba(46, 204, 113, 0.15)',
+    chargingLegend: 'rgba(46, 204, 113, 0.45)',
+    tripFill: 'rgba(243, 156, 18, 0.2)',
+    tripLegend: 'rgba(243, 156, 18, 0.55)'
+};
+
+// Chart.js plugin that shades charging and trip time spans behind the datasets
+const batteryOverlayPlugin = {
+    id: 'batteryOverlayBands',
+    beforeDatasetsDraw(chart) {
+        const { ctx, chartArea, scales } = chart;
+        if (!chartArea || !scales.x) return;
+
+        const drawSpans = (spans, fillStyle) => {
+            ctx.save();
+            ctx.fillStyle = fillStyle;
+            spans.forEach(span => {
+                let left = scales.x.getPixelForValue(span.start.valueOf());
+                let right = scales.x.getPixelForValue(span.end.valueOf());
+                if (right < chartArea.left || left > chartArea.right) return;
+                left = Math.max(left, chartArea.left);
+                right = Math.min(right, chartArea.right);
+                // Keep very short spans visible
+                if (right - left < 3) {
+                    left -= 1.5;
+                    right = left + 3;
+                }
+                ctx.fillRect(left, chartArea.top, right - left, chartArea.bottom - chartArea.top);
+            });
+            ctx.restore();
+        };
+
+        drawSpans(batteryOverlays.charging, OVERLAY_COLORS.chargingFill);
+        drawSpans(batteryOverlays.trips, OVERLAY_COLORS.tripFill);
+    }
+};
+
+// Group consecutive is_charging readings into contiguous time spans
+function computeChargingSpans(rows) {
+    const spans = [];
+    let spanStart = null;
+    let spanEnd = null;
+    rows.forEach(row => {
+        const isCharging = row.is_charging === true || row.is_charging === 'True';
+        const timestamp = new Date(row.timestamp);
+        if (isCharging) {
+            if (!spanStart) spanStart = timestamp;
+            spanEnd = timestamp;
+        } else if (spanStart) {
+            spans.push({ start: spanStart, end: spanEnd });
+            spanStart = null;
+            spanEnd = null;
+        }
+    });
+    if (spanStart) spans.push({ start: spanStart, end: spanEnd });
+    return spans;
+}
+
+// Convert trips (start date + duration in minutes) into time spans
+function computeTripSpans(trips) {
+    return trips
+        .filter(trip => trip.date)
+        .map(trip => {
+            // Normalize "YYYY-MM-DD HH:mm:ss" to ISO so Safari can parse it
+            const start = new Date(String(trip.date).replace(' ', 'T'));
+            const durationMinutes = Math.max(Number(trip.duration) || 0, 1);
+            return { start, end: new Date(start.valueOf() + durationMinutes * 60000) };
+        })
+        .filter(span => !Number.isNaN(span.start.valueOf()));
+}
+
 document.addEventListener('DOMContentLoaded', function() {
     const refreshBtn = document.getElementById('refresh-btn');
     const unitsToggle = document.getElementById('units-toggle');
@@ -524,16 +599,40 @@ document.addEventListener('DOMContentLoaded', function() {
             const params = new URLSearchParams({ hours });
             if (startDate) params.append('start_date', startDate);
             if (endDate) params.append('end_date', endDate);
-            
-            const response = await fetch(`/api/battery-history?${params}`);
-            const data = await response.json();
+
+            // Fetch trips for the same range so they can be shaded on the chart
+            const tripParams = new URLSearchParams(params);
+            tripParams.append('page', '1');
+            tripParams.append('per_page', '500');
+
+            const [batteryRows, tripsData] = await Promise.all([
+                fetch(`/api/battery/history?${params}`).then(r => r.json()),
+                fetch(`/api/trips?${tripParams}`).then(r => r.json()).catch(() => null)
+            ]);
+
+            // The endpoint returns a bare array; filter custom date ranges client-side
+            let rows = Array.isArray(batteryRows) ? batteryRows : (batteryRows.data || []);
+            if (hours === 'custom' && startDate && endDate) {
+                const rangeStart = new Date(`${startDate}T00:00:00`);
+                const rangeEnd = new Date(`${endDate}T23:59:59.999`);
+                rows = rows.filter(row => {
+                    const ts = new Date(row.timestamp);
+                    return ts >= rangeStart && ts <= rangeEnd;
+                });
+            }
+            const data = { data: rows };
             currentData.batteryHistory = data;
-            
+
+            batteryOverlays.charging = computeChargingSpans(rows);
+            batteryOverlays.trips = computeTripSpans(
+                tripsData && Array.isArray(tripsData.trips) ? tripsData.trips : []
+            );
+
             // Remove loading overlay
             if (loadingOverlay.parentElement) {
                 loadingOverlay.remove();
             }
-            
+
             updateBatteryChart(data);
         } catch (error) {
             console.error('Error loading battery history:', error);
@@ -556,14 +655,16 @@ document.addEventListener('DOMContentLoaded', function() {
         const chartData = data.data.map(d => ({
             x: new Date(d.timestamp),
             battery: d.battery_level,
-            temperature: d.temperature !== null && units === 'imperial' ? 
+            temperature: d.temperature !== null && units === 'imperial' ?
                 conversions.celsiusToFahrenheit(d.temperature) : d.temperature,
-            is_cached: d.is_cached
+            is_cached: d.is_cached,
+            is_charging: d.is_charging === true || d.is_charging === 'True'
         }));
         
         // Update existing chart or create new one
         if (batteryChart) {
             // Update existing chart data
+            batteryChart.$pointMeta = chartData;
             batteryChart.data.datasets[0].data = chartData.map(d => ({x: d.x, y: d.battery}));
             batteryChart.data.datasets[1].data = chartData.map(d => ({x: d.x, y: d.temperature}));
             
@@ -583,6 +684,7 @@ document.addEventListener('DOMContentLoaded', function() {
         // Create new chart only if it doesn't exist
         batteryChart = new Chart(ctx, {
             type: 'line',
+            plugins: [batteryOverlayPlugin],
             data: {
                 datasets: [{
                     label: 'Battery Level (%)',
@@ -651,6 +753,22 @@ document.addEventListener('DOMContentLoaded', function() {
                                     hidden: false,
                                     index: original.length + 1
                                 });
+                                original.push({
+                                    text: 'Charging',
+                                    fillStyle: OVERLAY_COLORS.chargingLegend,
+                                    strokeStyle: OVERLAY_COLORS.chargingLegend,
+                                    lineWidth: 0,
+                                    hidden: false,
+                                    index: original.length + 2
+                                });
+                                original.push({
+                                    text: 'Trip',
+                                    fillStyle: OVERLAY_COLORS.tripLegend,
+                                    strokeStyle: OVERLAY_COLORS.tripLegend,
+                                    lineWidth: 0,
+                                    hidden: false,
+                                    index: original.length + 3
+                                });
                                 return original;
                             }
                         }
@@ -670,11 +788,16 @@ document.addEventListener('DOMContentLoaded', function() {
                                 return label;
                             },
                             afterLabel: function(context) {
-                                // Add cache status for battery level dataset
+                                // Add cache and charging status for battery level dataset
                                 if (context.datasetIndex === 0) {
-                                    const dataIndex = context.dataIndex;
-                                    const isCached = chartData[dataIndex].is_cached;
-                                    return isCached ? '(Cached data)' : '(Fresh data)';
+                                    const points = context.chart.$pointMeta || chartData;
+                                    const point = points[context.dataIndex];
+                                    if (!point) return '';
+                                    let status = point.is_cached ? '(Cached data)' : '(Fresh data)';
+                                    if (point.is_charging) {
+                                        status += ' ⚡ Charging';
+                                    }
+                                    return status;
                                 }
                                 return '';
                             }
@@ -732,6 +855,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 }
             }
         });
+        batteryChart.$pointMeta = chartData;
     }
 
     function updateEnergyChart(trips) {
