@@ -418,13 +418,15 @@ def get_battery_history():
         if battery_df.empty:
             return jsonify([])
 
+        # Normalize mixed timestamp formats so filtering and sorting work
+        battery_df["timestamp"] = pd.to_datetime(battery_df["timestamp"], format="mixed")
+
         # Filter by hours if requested
         hours = request.args.get("hours")
         if hours:
             try:
                 hours_int = int(hours)
                 cutoff = datetime.now() - timedelta(hours=hours_int)
-                battery_df["timestamp"] = pd.to_datetime(battery_df["timestamp"])
                 battery_df = battery_df[battery_df["timestamp"] >= cutoff]
             except ValueError:
                 pass
@@ -432,8 +434,11 @@ def get_battery_history():
         # Sort by timestamp
         battery_df = battery_df.sort_values("timestamp")
 
-        # Convert to JSON friendly format
-        result = battery_df.to_dict(orient="records")
+        # ISO timestamps (naive local time) so the browser parses them consistently
+        battery_df["timestamp"] = battery_df["timestamp"].dt.strftime("%Y-%m-%dT%H:%M:%S")
+
+        # Convert to JSON friendly format, replacing NaN with null
+        result = clean_nan_values(battery_df.to_dict(orient="records"))
         return jsonify(result)
 
     except Exception as e:
