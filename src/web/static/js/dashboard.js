@@ -13,11 +13,20 @@ let chargingTempChart = null;
 let batteryOverlays = { charging: [], trips: [] };
 
 const OVERLAY_COLORS = {
-    chargingFill: 'rgba(46, 204, 113, 0.15)',
-    chargingLegend: 'rgba(46, 204, 113, 0.45)',
+    l1Fill: 'rgba(46, 204, 113, 0.15)',
+    l1Legend: 'rgba(46, 204, 113, 0.45)',
+    l2Fill: 'rgba(22, 160, 87, 0.3)',
+    l2Legend: 'rgba(22, 160, 87, 0.65)',
+    dcfcFill: 'rgba(155, 89, 182, 0.3)',
+    dcfcLegend: 'rgba(155, 89, 182, 0.65)',
     tripFill: 'rgba(243, 156, 18, 0.2)',
     tripLegend: 'rgba(243, 156, 18, 0.55)'
 };
+
+// kW thresholds separating charge levels (L1 ~1.4, L2 ~3-11, DCFC 50+)
+const CHARGE_LEVEL_KW = { dcfc: 20, l2: 2.5 };
+// %-SOC-per-hour fallback when no power reading landed inside the span
+const CHARGE_RATE_PCT_PER_HOUR = { dcfc: 30, l2: 5 };
 
 // Chart.js plugin that shades charging and trip time spans behind the datasets
 const batteryOverlayPlugin = {
@@ -45,10 +54,63 @@ const batteryOverlayPlugin = {
             ctx.restore();
         };
 
-        drawSpans(batteryOverlays.charging, OVERLAY_COLORS.chargingFill);
+        const fillsByType = {
+            dcfc: OVERLAY_COLORS.dcfcFill,
+            l2: OVERLAY_COLORS.l2Fill,
+            l1: OVERLAY_COLORS.l1Fill
+        };
+        ['l1', 'l2', 'dcfc'].forEach(type => {
+            drawSpans(
+                batteryOverlays.charging.filter(span => (span.type || 'l1') === type),
+                fillsByType[type]
+            );
+        });
         drawSpans(batteryOverlays.trips, OVERLAY_COLORS.tripFill);
     }
 };
+
+// Tag each charging span as l1/l2/dcfc using the peak charging power reported
+// inside it, falling back to SOC gain rate when no power reading landed there
+function classifyChargingSpans(spans, rows) {
+    const readings = rows
+        .map(row => ({
+            timestamp: new Date(row.timestamp),
+            power: Number(row.charging_power) || 0,
+            level: row.battery_level
+        }))
+        .filter(reading => !Number.isNaN(reading.timestamp.valueOf()))
+        .sort((a, b) => a.timestamp - b.timestamp);
+
+    return spans.map(span => {
+        let peakPower = 0;
+        readings.forEach(reading => {
+            if (reading.timestamp >= span.start && reading.timestamp <= span.end) {
+                peakPower = Math.max(peakPower, reading.power);
+            }
+        });
+
+        let type;
+        if (peakPower >= CHARGE_LEVEL_KW.dcfc) {
+            type = 'dcfc';
+        } else if (peakPower >= CHARGE_LEVEL_KW.l2) {
+            type = 'l2';
+        } else if (peakPower > 0) {
+            type = 'l1';
+        } else {
+            // No power reading inside the span: estimate from SOC gain rate
+            const before = readings.filter(r => r.timestamp <= span.start).pop();
+            const after = readings.find(r => r.timestamp >= span.end);
+            type = 'l1';
+            if (before && after && after.timestamp > before.timestamp) {
+                const hours = (after.timestamp - before.timestamp) / 3600000;
+                const socRate = (after.level - before.level) / hours;
+                if (socRate >= CHARGE_RATE_PCT_PER_HOUR.dcfc) type = 'dcfc';
+                else if (socRate >= CHARGE_RATE_PCT_PER_HOUR.l2) type = 'l2';
+            }
+        }
+        return { ...span, type };
+    });
+}
 
 // Group consecutive is_charging readings into contiguous time spans
 function computeChargingSpans(rows) {
@@ -658,10 +720,13 @@ document.addEventListener('DOMContentLoaded', function() {
 
             // Union point-derived spans with session records: sessions supply real
             // start/end times and catch fast charges shorter than one polling interval
-            batteryOverlays.charging = mergeSpans(
-                computeChargingSpans(rows).concat(
-                    computeSessionSpans(Array.isArray(sessionsData) ? sessionsData : [])
-                )
+            batteryOverlays.charging = classifyChargingSpans(
+                mergeSpans(
+                    computeChargingSpans(rows).concat(
+                        computeSessionSpans(Array.isArray(sessionsData) ? sessionsData : [])
+                    )
+                ),
+                rows
             );
             batteryOverlays.trips = computeTripSpans(
                 tripsData && Array.isArray(tripsData.trips) ? tripsData.trips : []
@@ -697,7 +762,8 @@ document.addEventListener('DOMContentLoaded', function() {
             temperature: d.temperature !== null && units === 'imperial' ?
                 conversions.celsiusToFahrenheit(d.temperature) : d.temperature,
             is_cached: d.is_cached,
-            is_charging: d.is_charging === true || d.is_charging === 'True'
+            is_charging: d.is_charging === true || d.is_charging === 'True',
+            charging_power: d.charging_power
         }));
         
         // Update existing chart or create new one
@@ -792,21 +858,21 @@ document.addEventListener('DOMContentLoaded', function() {
                                     hidden: false,
                                     index: original.length + 1
                                 });
-                                original.push({
-                                    text: 'Charging',
-                                    fillStyle: OVERLAY_COLORS.chargingLegend,
-                                    strokeStyle: OVERLAY_COLORS.chargingLegend,
-                                    lineWidth: 0,
-                                    hidden: false,
-                                    index: original.length + 2
-                                });
-                                original.push({
-                                    text: 'Trip',
-                                    fillStyle: OVERLAY_COLORS.tripLegend,
-                                    strokeStyle: OVERLAY_COLORS.tripLegend,
-                                    lineWidth: 0,
-                                    hidden: false,
-                                    index: original.length + 3
+                                const overlayLegendEntries = [
+                                    ['L1 charging', OVERLAY_COLORS.l1Legend],
+                                    ['L2 charging', OVERLAY_COLORS.l2Legend],
+                                    ['DC fast charge', OVERLAY_COLORS.dcfcLegend],
+                                    ['Trip', OVERLAY_COLORS.tripLegend]
+                                ];
+                                overlayLegendEntries.forEach(([text, color]) => {
+                                    original.push({
+                                        text: text,
+                                        fillStyle: color,
+                                        strokeStyle: color,
+                                        lineWidth: 0,
+                                        hidden: false,
+                                        index: original.length
+                                    });
                                 });
                                 return original;
                             }
@@ -834,7 +900,9 @@ document.addEventListener('DOMContentLoaded', function() {
                                     if (!point) return '';
                                     let status = point.is_cached ? '(Cached data)' : '(Fresh data)';
                                     if (point.is_charging) {
-                                        status += ' ⚡ Charging';
+                                        const power = Number(point.charging_power);
+                                        status += power > 0 ?
+                                            ` ⚡ Charging (${power.toFixed(1)} kW)` : ' ⚡ Charging';
                                     }
                                     return status;
                                 }
