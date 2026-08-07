@@ -266,8 +266,14 @@ class CSVStorage(StorageBackend):
             meteo_temp = None
             vehicle_temp = None
 
-            # Get vehicle sensor temperature
+            # Get vehicle sensor temperature. The API sometimes returns the
+            # value as a string (e.g. "67"), so coerce before converting.
             temp_f_vehicle = data.get("raw_data", {}).get("airTemp", {}).get("value")
+            try:
+                temp_f_vehicle = float(temp_f_vehicle) if temp_f_vehicle is not None else None
+            except (TypeError, ValueError):
+                logger.warning("Non-numeric vehicle airTemp value: %r", temp_f_vehicle)
+                temp_f_vehicle = None
             vehicle_temp = round((temp_f_vehicle - 32) * 5 / 9, 1) if temp_f_vehicle else None
 
             # Get Meteo weather temperature
