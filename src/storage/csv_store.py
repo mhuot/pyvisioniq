@@ -53,6 +53,7 @@ sys.path.append(str(Path(__file__).parent.parent.parent))
 # pylint: disable=wrong-import-position
 from src.storage.base import StorageBackend
 from src.utils.debug import DataValidator, DebugLogger
+from src.utils.temperature import normalize_airtemp_fahrenheit
 from src.utils.weather import WeatherService
 
 # pylint: enable=wrong-import-position
@@ -60,27 +61,6 @@ from src.utils.weather import WeatherService
 # Set up logging
 logger = logging.getLogger(__name__)
 debug_logger = DebugLogger(__name__)
-
-
-def normalize_airtemp_fahrenheit(value):
-    """Normalize the API's airTemp value to a float in Fahrenheit.
-
-    The climate dial reports "LO" below 62F and "HI" above 82F, and numeric
-    settings intermittently arrive as strings (e.g. "72"). Returns None for
-    missing or unrecognizable values.
-    """
-    if value is None:
-        return None
-    if isinstance(value, str):
-        dial_extremes = {"LO": 0.0, "HI": 100.0}
-        normalized = value.strip().upper()
-        if normalized in dial_extremes:
-            return dial_extremes[normalized]
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        logger.warning("Non-numeric vehicle airTemp value: %r", value)
-        return None
 
 
 class CSVStorage(StorageBackend):

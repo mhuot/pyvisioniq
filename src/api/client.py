@@ -10,6 +10,8 @@ from pathlib import Path
 from dotenv import load_dotenv
 from hyundai_kia_connect_api import VehicleManager
 
+from src.utils.temperature import normalize_airtemp_fahrenheit
+
 load_dotenv()
 
 # Set up logging
@@ -782,22 +784,13 @@ class CachedVehicleClient:
             "longitude": getattr(vehicle, "location_longitude", None),
         }
 
-        # Get current temperature (in Fahrenheit)
+        # Get the current HVAC set temperature in Fahrenheit. This is the
+        # desired (dial) temperature, never a measured cabin temperature.
         current_temp = None
         if hasattr(vehicle, "data"):
-            # Temperature is at the top level: data.airTemp.value
-            air_temp_data = vehicle.data.get("airTemp", {})
-            air_temp = air_temp_data.get("value")
-            if air_temp is not None:
-                # Handle "LO" or other string values
-                if isinstance(air_temp, str) and air_temp.upper() == "LO":
-                    current_temp = None
-                else:
-                    try:
-                        # Keep temperature in Fahrenheit as requested
-                        current_temp = float(air_temp) if isinstance(air_temp, str) else air_temp
-                    except (ValueError, TypeError):
-                        logger.warning("Could not convert temperature value: %s", air_temp)
+            current_temp = normalize_airtemp_fahrenheit(
+                vehicle.data.get("airTemp", {}).get("value")
+            )
 
         # First check for detailed evTripDetails in raw data
         if hasattr(vehicle, "data") and "evTripDetails" in vehicle.data:

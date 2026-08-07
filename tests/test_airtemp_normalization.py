@@ -1,6 +1,6 @@
 """Tests for airTemp value normalization."""
 
-from src.storage.csv_store import normalize_airtemp_fahrenheit
+from src.utils.temperature import normalize_airtemp_fahrenheit
 
 
 class TestNormalizeAirtempFahrenheit:
@@ -22,6 +22,10 @@ class TestNormalizeAirtempFahrenheit:
 
     def test_none_returns_none(self):
         assert normalize_airtemp_fahrenheit(None) is None
+
+    def test_off_returns_none(self):
+        assert normalize_airtemp_fahrenheit("OFF") is None
+        assert normalize_airtemp_fahrenheit("off") is None
 
     def test_garbage_returns_none(self):
         assert normalize_airtemp_fahrenheit("unknown") is None
