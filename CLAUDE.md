@@ -183,6 +183,7 @@ Critical settings that must be configured:
 - `BLUELINKREGION`: 1=Europe, 2=Canada, 3=USA, 4=China, 5=Australia
 - `BLUELINKBRAND`: 1=Kia, 2=Hyundai, 3=Genesis
 - `API_DAILY_LIMIT`: Default 30, used to calculate cache validity
+- `ADAPTIVE_POLLING`: Default false. When true, the collector polls faster around charging/trip transitions (15-20 min) and slower when idle (60-150 min), with a budget clamp that keeps daily calls within API_DAILY_LIMIT
 - `CACHE_DURATION_HOURS`: How long to retain cache files (default 48)
 - `DEBUG_MODE`: Enables verbose logging and debug routes
 - `TZ`: Timezone for data collection (default: America/Chicago)
