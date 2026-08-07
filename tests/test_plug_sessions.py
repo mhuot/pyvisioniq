@@ -62,3 +62,11 @@ class TestDetectChargingSpans:
         spans = detect_charging_spans(samples)
         assert len(spans) == 1
         assert spans[0]["ongoing"] is False
+
+    def test_recent_idle_samples_prove_completion(self):
+        # A single high sample followed by idle samples is complete, even if
+        # the idle samples arrived within the gap-bridging window
+        samples = make_samples([(0, 1234.5)] + [(m, 2) for m in range(11, 40, 5)])
+        spans = detect_charging_spans(samples)
+        assert len(spans) == 1
+        assert spans[0]["ongoing"] is False

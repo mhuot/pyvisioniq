@@ -119,10 +119,10 @@ def detect_charging_spans(samples, threshold_watts=CHARGING_THRESHOLD_WATTS):
         avg_kw = kwh / duration_hours if duration_hours > 0 else max_kw
         if kwh < 0.1:
             continue
-        # A span still drawing power at the newest sample is likely ongoing
-        ongoing = (last_sample_time - end).total_seconds() / 60 < MAX_GAP_MINUTES and rows[-1][
-            1
-        ] >= threshold_watts
+        # Ongoing only if the span's last sample is the newest sample we have:
+        # any later sample was below threshold (else it would be in the span),
+        # which proves charging stopped
+        ongoing = rows[-1][0] >= last_sample_time
         results.append(
             {
                 "start": span["start"],
