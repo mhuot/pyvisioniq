@@ -142,6 +142,39 @@ const chargeSpanShadePlugin = {
     }
 };
 
+// Estimate when charging reaches 80% and 100% at the current power
+function buildChargingEta(batteryLevel, powerKw) {
+    if (!Number.isFinite(batteryLevel) || !(powerKw > 0) || batteryLevel >= 100) {
+        return '';
+    }
+    const usableKwh = (window.PYVISIONIC_CONFIG &&
+        window.PYVISIONIC_CONFIG.batteryUsableKwh) || 74.0;
+    const now = new Date();
+
+    const formatHours = hours => {
+        const totalMinutes = Math.round(hours * 60);
+        if (totalMinutes < 60) return `${totalMinutes}m`;
+        return `${Math.floor(totalMinutes / 60)}h ${totalMinutes % 60}m`;
+    };
+
+    return [80, 100]
+        .filter(target => batteryLevel < target)
+        .map(target => {
+            const hours = ((target - batteryLevel) / 100) * usableKwh / powerKw;
+            const eta = new Date(now.valueOf() + hours * 3600000);
+            const timeText = eta.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+            let dayNote = '';
+            if (eta.toDateString() !== now.toDateString()) {
+                const tomorrow = new Date(now.valueOf() + 86400000);
+                dayNote = eta.toDateString() === tomorrow.toDateString() ?
+                    ' tomorrow' :
+                    ` ${eta.toLocaleDateString([], { weekday: 'short' })}`;
+            }
+            return `${target}% in ≈ ${formatHours(hours)} (${timeText}${dayNote})`;
+        })
+        .join(' · ');
+}
+
 // Naive local ISO string (the backend stores naive local timestamps)
 function toLocalIso(dateValue) {
     const pad = n => String(n).padStart(2, '0');
@@ -295,9 +328,10 @@ document.addEventListener('DOMContentLoaded', function() {
                 }
             }
             
-            // Handle charging indicator and rate
+            // Handle charging indicator, rate, and time-to-target estimates
             const chargingIndicator = document.getElementById('charging-indicator');
             const chargingRate = document.getElementById('charging-rate');
+            const chargingEta = document.getElementById('charging-eta');
             if (chargingIndicator && chargingRate) {
                 if (data.is_charging) {
                     chargingIndicator.style.display = 'inline';
@@ -310,9 +344,17 @@ document.addEventListener('DOMContentLoaded', function() {
                         chargingRate.textContent = 'Charging';
                         currentData.chargingPower = null;
                     }
+                    if (chargingEta) {
+                        const etaText = buildChargingEta(
+                            Number(data.battery_level), Number(data.charging_power)
+                        );
+                        chargingEta.textContent = etaText;
+                        chargingEta.style.display = etaText ? 'block' : 'none';
+                    }
                 } else {
                     chargingIndicator.style.display = 'none';
                     chargingRate.style.display = 'none';
+                    if (chargingEta) chargingEta.style.display = 'none';
                     currentData.chargingPower = null;
                 }
             }
