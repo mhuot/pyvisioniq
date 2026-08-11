@@ -1835,6 +1835,62 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
 
+    // A band needs a few sessions before "best" or "worst" means anything; with
+    // one or two, the label just names wherever a single session landed.
+    const MIN_BAND_SESSIONS = 3;
+
+    function summarizeChargingPoints(points, apiSummary) {
+        if (!points || !points.length) { return null; }
+
+        const mean = (list, pick) => list.reduce((sum, p) => sum + pick(p), 0) / list.length;
+        const powers = points.map(p => p.avg_power);
+        const temps = points.map(p => p.temperature);
+
+        // Bands stay on a 5°C grid and are relabelled for display, so switching
+        // units cannot silently change which sessions group together.
+        const bands = new Map();
+        points.forEach(point => {
+            const low = Math.floor(point.temperature / 5) * 5;
+            if (!bands.has(low)) { bands.set(low, []); }
+            bands.get(low).push(point);
+        });
+
+        const banded = Array.from(bands.entries())
+            .map(([low, group]) => ({
+                low,
+                range: `${displayTemp(low).toFixed(0)} to ${displayTemp(low + 5).toFixed(0)}` +
+                    tempUnitLabel(),
+                avg_power: mean(group, p => p.avg_power),
+                avg_duration_minutes: mean(group, p => p.duration_minutes),
+                session_count: group.length
+            }))
+            .sort((a, b) => a.low - b.low);
+
+        // Ranking bands by average power is only meaningful within a single
+        // charge type. Across a mixture the ranking tracks where fast charges
+        // happened to fall, not temperature, so it is withheld entirely rather
+        // than shown with a caveat nobody reads.
+        const mixedTypes = new Set(points.map(p => p.charge_type)).size > 1;
+        const ranked = mixedTypes
+            ? []
+            : banded.filter(b => b.session_count >= MIN_BAND_SESSIONS);
+        const byPower = [...ranked].sort((a, b) => b.avg_power - a.avg_power);
+
+        return {
+            bands: banded,
+            total_sessions: points.length,
+            temperature_range: { min: Math.min(...temps), max: Math.max(...temps) },
+            avg_power_range: { min: Math.min(...powers), max: Math.max(...powers) },
+            average_power: mean(points, p => p.avg_power),
+            average_duration_minutes: mean(points, p => p.duration_minutes),
+            total_energy_kwh: points.reduce((sum, p) => sum + (p.energy_added || 0), 0),
+            mixed_types: mixedTypes,
+            best_temperature_band: byPower.length ? byPower[0] : null,
+            worst_temperature_band: byPower.length > 1 ? byPower[byPower.length - 1] : null,
+            api_total_sessions: apiSummary ? apiSummary.total_sessions : null
+        };
+    }
+
     async function loadChargingTemperatureImpact(hours = 'all', startDate = null, endDate = null) {
         try {
             const params = new URLSearchParams({ hours });
@@ -1871,16 +1927,26 @@ document.addEventListener('DOMContentLoaded', function() {
             const selected = activeType === 'all' ? data.raw_data :
                 data.raw_data.filter(point => point.charge_type === activeType);
 
+            const summary = summarizeChargingPoints(selected, data.summary);
+            if (!summary) {
+                if (chargingTempChart) { chargingTempChart.destroy(); chargingTempChart = null; }
+                const statsHost = document.getElementById('charging-temperature-stats');
+                if (statsHost) {
+                    statsHost.innerHTML =
+                        '<div class="no-data">No charging sessions of this type in range.</div>';
+                }
+                return;
+            }
+
             const scatterData = selected.map(point => ({
                 x: displayTemp(point.temperature),
                 y: point.avg_power
             }));
 
-            // The binned averages mix charge types, so they are only meaningful
-            // against the unfiltered view.
-            const showBins = activeType === 'all';
-            const barLabels = showBins ? data.temperature_bins.map(bin => bin.temperature_range) : [];
-            const barData = showBins ? data.temperature_bins.map(bin => bin.avg_power) : [];
+            // Bands are recomputed from the filtered set, so they describe one
+            // charge type rather than a mixture of all of them.
+            const barLabels = summary.bands.map(band => band.range);
+            const barData = summary.bands.map(band => band.avg_power);
 
             if (chargingTempChart) {
                 chargingTempChart.data.datasets[0].data = scatterData;
@@ -1973,34 +2039,41 @@ document.addEventListener('DOMContentLoaded', function() {
                 });
             }
 
-            const summary = data.summary;
+            // Summary is computed from whatever the filter is showing, not taken
+            // from the API. The API figures cover every charge type at once, and
+            // because DC fast charging is ~100x the power of Level 1, a single
+            // fast charge landing in a 5°C band lifted that band's average from
+            // 0.84 kW to 5.73 kW. That made -20 to -15°C read as the best
+            // charging temperature, which is backwards: Level 1 power is
+            // charger-limited and flat at 0.77-0.94 kW across the whole range,
+            // so band ranking was tracking where fast charges happened to occur.
             const best = summary.best_temperature_band;
             const worst = summary.worst_temperature_band;
             const statsHtml = `
                 <div class="stats-grid">
                     <div class="stat-item">
                         <span class="stat-label">Sessions Analyzed</span>
-                        <span class="stat-value">${summary.total_sessions}</span>
+                        <span class="stat-value">${summary.total_sessions}${summary.api_total_sessions && summary.total_sessions !== summary.api_total_sessions ? ` of ${summary.api_total_sessions}` : ''}</span>
                     </div>
                     <div class="stat-item">
                         <span class="stat-label">Temperature Range</span>
-                        <span class="stat-value">${summary.temperature_range.min}°C → ${summary.temperature_range.max}°C</span>
+                        <span class="stat-value">${displayTemp(summary.temperature_range.min).toFixed(1)}${tempUnitLabel()} → ${displayTemp(summary.temperature_range.max).toFixed(1)}${tempUnitLabel()}</span>
                     </div>
                     <div class="stat-item">
                         <span class="stat-label">Average Power Range</span>
-                        <span class="stat-value">${summary.avg_power_range.min} - ${summary.avg_power_range.max} kW</span>
+                        <span class="stat-value">${summary.avg_power_range.min.toFixed(2)} - ${summary.avg_power_range.max.toFixed(2)} kW</span>
                     </div>
                     <div class="stat-item">
                         <span class="stat-label">Mean Power</span>
-                        <span class="stat-value">${summary.average_power} kW</span>
+                        <span class="stat-value">${summary.average_power.toFixed(2)} kW</span>
                     </div>
                     <div class="stat-item">
                         <span class="stat-label">Average Session Length</span>
-                        <span class="stat-value">${summary.average_duration_minutes} min</span>
+                        <span class="stat-value">${summary.average_duration_minutes.toFixed(0)} min</span>
                     </div>
                     <div class="stat-item">
                         <span class="stat-label">Total Energy Added</span>
-                        <span class="stat-value">${summary.total_energy_kwh} kWh</span>
+                        <span class="stat-value">${summary.total_energy_kwh.toFixed(1)} kWh</span>
                     </div>
                     ${best ? `
                     <div class="stat-item">
@@ -2013,6 +2086,13 @@ document.addEventListener('DOMContentLoaded', function() {
                         <span class="stat-label">Challenging Band</span>
                         <span class="stat-value">${worst.range} (${worst.avg_power.toFixed(2)} kW)</span>
                         <span class="stat-detail">${worst.session_count} sessions · ${worst.avg_duration_minutes.toFixed(1)} min avg</span>
+                    </div>` : ''}
+                    ${summary.mixed_types ? `
+                    <div class="stat-item stat-item-wide">
+                        <span class="stat-label">Best / Challenging Band</span>
+                        <span class="stat-detail">Not shown while charge types are combined: ranking
+                        bands by average power would track where DC fast charges happened to occur,
+                        not temperature. Pick a single charge type to compare bands.</span>
                     </div>` : ''}
                 </div>
             `;

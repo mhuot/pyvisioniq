@@ -1782,3 +1782,14 @@ canvas {
     outline: 3px solid var(--primary-color);
     outline-offset: 2px;
 }
+
+/* A stat cell carrying an explanation rather than a figure. */
+.stat-item-wide {
+    grid-column: 1 / -1;
+}
+
+.stat-item-wide .stat-detail {
+    max-width: 60ch;
+    line-height: 1.5;
+    color: var(--text-muted-aaa);
+}
