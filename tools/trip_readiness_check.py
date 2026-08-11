@@ -22,7 +22,6 @@ import pandas as pd
 
 DEFAULT_PLAN = os.path.join(os.path.dirname(__file__), "trip_plan.json")
 BATTERY_CSV = "data/battery_status.csv"
-TRIPS_CSV = "data/trips.csv"
 
 # A day realistically offers 13-18 h plugged in (55-75% duty) based on the
 # logged home sessions. Beyond that the plan depends on charging essentially
@@ -31,9 +30,6 @@ DUTY_ON_TRACK = 0.55
 DUTY_TIGHT = 0.75
 
 NATS_BIN = os.environ.get("NATS_BIN", "/usr/local/bin/nats")
-
-# battery_status.csv records the odometer in km; trip distances are in miles.
-KM_PER_MILE = 1.609344
 
 
 def load_plan(path):
@@ -61,73 +57,67 @@ def latest_battery(repo_root):
     return row["timestamp"], float(row["battery_level"]), bool(row["is_charging"])
 
 
-def _odometer_miles_on(repo_root, day):
-    """Miles for a day from the odometer spread, or None if not derivable.
+def energy_consumed_on(repo_root, day, pack_kwh):
+    """Energy drawn from the pack on a calendar day, from SOC deltas.
 
-    The odometer lands in the same row as the SOC reading, so it can never lag
-    behind the battery level. That matters: if a trip is recorded late, the SOC
-    already reflects it while the trip row does not, and the trip would be
-    counted as still pending on top of a battery that has already paid for it.
+    Derived from the battery readings themselves rather than from trip logs or
+    the odometer. Both of those lag: after a round trip the SOC had already
+    fallen 52 points while trips.csv still showed only the outbound leg and the
+    odometer had not moved for two polls. Prorating planned energy against
+    mileage therefore counted a trip as half-pending on top of a battery that
+    had already paid for all of it.
+
+    The SOC reading cannot lag itself, so this is accurate the moment the poll
+    lands, including partway through a trip.
     """
     frame = pd.read_csv(os.path.join(repo_root, BATTERY_CSV))
     frame["timestamp"] = pd.to_datetime(frame["timestamp"], errors="coerce", format="mixed")
-    frame = frame.dropna(subset=["timestamp", "odometer"])
-    readings = frame[frame["timestamp"].dt.date == day]["odometer"]
-    if len(readings) < 2:
-        return None
-    spread_km = float(readings.max() - readings.min())
-    return spread_km / KM_PER_MILE if spread_km >= 0 else None
+    frame = frame.dropna(subset=["timestamp", "battery_level"])
+    rows = frame[frame["timestamp"].dt.date == day].sort_values("timestamp")
+    if len(rows) < 2:
+        return 0.0
 
-
-def _trip_miles_on(repo_root, day):
-    """Miles for a day from the trip log; truncated to whole miles per trip."""
-    frame = pd.read_csv(os.path.join(repo_root, TRIPS_CSV))
-    frame["date"] = pd.to_datetime(frame["date"], errors="coerce")
-    frame = frame.dropna(subset=["date"])
-    return float(frame[frame["date"].dt.date == day]["distance"].sum())
-
-
-def miles_driven_on(repo_root, day):
-    """Best available estimate of miles driven on a calendar day.
-
-    Takes the larger of the odometer- and trip-derived figures so that a lag in
-    either source cannot make the day look less driven than it was, which is
-    the direction that produces false alarms.
-    """
-    candidates = [_trip_miles_on(repo_root, day), _odometer_miles_on(repo_root, day)]
-    return max(value for value in candidates if value is not None)
+    # Sum the drops only. Rises are charging, and netting them off would let an
+    # afternoon on the charger mask the morning's driving.
+    deltas = rows["battery_level"].astype(float).diff()
+    drop_points = -deltas[deltas < 0].sum()
+    return float(drop_points) / 100.0 * pack_kwh
 
 
 def remaining_load(plan, repo_root, now):
-    """Sum planned energy still ahead of us, discounting driving already done.
+    """Sum planned energy still ahead of us, discounting what today already used.
 
-    Today's driving is prorated against the miles already logged rather than
-    treated as all-or-nothing. The current SOC reading already reflects those
-    miles, so counting the full trip again would double-charge the budget and
-    raise a false alarm partway through a trip day.
+    Energy actually consumed today is charged against today's planned events in
+    order, so a trip that has happened stops counting even if the trip log has
+    not caught up yet.
     """
     total = 0.0
     detail = []
+    consumed = energy_consumed_on(repo_root, now.date(), plan["pack_kwh"])
+    budget = consumed
+
     for event in plan["planned_driving"]:
         day = datetime.strptime(event["date"], "%Y-%m-%d").date()
         if day < now.date():
             continue
-        share = 1.0
-        if day == now.date() and event.get("miles"):
-            done = miles_driven_on(repo_root, day)
-            share = max(0.0, 1.0 - done / event["miles"])
-            if share < 0.05:
-                detail.append(f"{event['label']}: done ({done:.0f} mi logged)")
+
+        if day == now.date() and budget > 0:
+            used = min(budget, event["kwh"])
+            budget -= used
+            left = event["kwh"] - used
+            if left <= 0.05 * event["kwh"]:
+                detail.append(f"{event['label']}: done ({consumed:.1f} kWh used today)")
                 continue
-            if done > 0:
-                detail.append(
-                    f"{event['label']}: {event['kwh'] * share:.1f} kWh left "
-                    f"({done:.0f}/{event['miles']} mi logged)"
-                )
-                total += event["kwh"] * share
-                continue
-        total += event["kwh"] * share
-        detail.append(f"{event['label']}: {event['kwh'] * share:.1f} kWh pending")
+            total += left
+            detail.append(
+                f"{event['label']}: {left:.1f} kWh left "
+                f"({used:.1f} of {event['kwh']:.1f} kWh used)"
+            )
+            continue
+
+        total += event["kwh"]
+        detail.append(f"{event['label']}: {event['kwh']:.1f} kWh pending")
+
     return total, detail
 
 
