@@ -40,3 +40,8 @@ Thumbs.db
 nginx/ssl/
 nginx/logs/
 certbot/
+# Local trip plan may contain personal locations and schedules
+tools/trip_plan.json
+
+# Coverage output
+.coverage

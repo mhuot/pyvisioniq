@@ -1,0 +1,20 @@
+{
+  "trip_name": "Example trip",
+  "departure": "2026-01-01 07:00",
+  "pack_kwh": 74.0,
+  "charger_kw": 0.95,
+  "dcfc_kw": 100.0,
+  "trip_soc_pct": 72,
+  "arrival_buffer_pct": 10,
+  "max_reading_age_hours": 3.0,
+  "_notes": {
+    "charger_kw": "Energy reaching the pack, NOT the figure the plug reports. On 120V L1 these differ by about 30%. Derive it from SOC gain over a long session in data/battery_status.csv rather than from charging_sessions.csv power columns, which are wall-side.",
+    "trip_soc_pct": "Share of the pack the one-way trip consumes. Measure it from a past run of the same route: departure SOC minus arrival SOC.",
+    "planned_driving": "Energy for each day between now and departure. Measure typical days from trips.csv rather than guessing; days with a recurring errand often run noticeably higher than the weekday median."
+  },
+  "planned_driving": [
+    { "date": "2025-12-29", "label": "Weekday usage", "miles": 32, "kwh": 8.1 },
+    { "date": "2025-12-30", "label": "Longer round trip", "miles": 150, "kwh": 43.0 },
+    { "date": "2025-12-31", "label": "Weekday usage", "miles": 32, "kwh": 8.1 }
+  ]
+}
