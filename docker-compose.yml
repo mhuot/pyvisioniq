@@ -1,37 +1,48 @@
+# Web and collector run as separate services sharing one image and the data
+# volumes. Rebuilding the frontend no longer restarts data collection, and the
+# collector is PID 1 in its own container so `restart: unless-stopped` actually
+# supervises it -- previously it was a backgrounded child of the web container's
+# shell and could die silently while the container still looked healthy.
+
+x-vehicle-env: &vehicle-env
+  BLUELINKUSER: ${BLUELINKUSER}
+  BLUELINKPASS: ${BLUELINKPASS}
+  BLUELINKPIN: ${BLUELINKPIN}
+  BLUELINKVID: ${BLUELINKVID}
+  BLUELINKREGION: ${BLUELINKREGION:-3}
+  BLUELINKBRAND: ${BLUELINKBRAND:-2}
+  API_DAILY_LIMIT: ${API_DAILY_LIMIT:-30}
+  ADAPTIVE_POLLING: ${ADAPTIVE_POLLING:-false}
+  BATTERY_USABLE_KWH: ${BATTERY_USABLE_KWH:-74.0}
+  API_CACHE_ENABLED: ${API_CACHE_ENABLED:-true}
+  CACHE_DURATION_HOURS: ${CACHE_DURATION_HOURS:-48}
+  WEATHER_SOURCE: ${WEATHER_SOURCE:-meteo}
+  TZ: ${TZ:-UTC}
+
 services:
   pyvisionic:
     container_name: pyvisionic
     build: .
+    image: pyvisionic:latest
     expose:
       - "${PORT:-5000}"
     environment:
-      - BLUELINKUSER=${BLUELINKUSER}
-      - BLUELINKPASS=${BLUELINKPASS}
-      - BLUELINKPIN=${BLUELINKPIN}
-      - BLUELINKVID=${BLUELINKVID}
-      - BLUELINKREGION=${BLUELINKREGION:-3}
-      - BLUELINKBRAND=${BLUELINKBRAND:-2}
-      - FLASK_ENV=${FLASK_ENV:-production}
-      - PORT=${PORT:-5000}
-      - API_DAILY_LIMIT=${API_DAILY_LIMIT:-30}
-      - ADAPTIVE_POLLING=${ADAPTIVE_POLLING:-false}
-      - BATTERY_USABLE_KWH=${BATTERY_USABLE_KWH:-74.0}
-      - PLUG_WEBHOOK_TOKEN=${PLUG_WEBHOOK_TOKEN:-}
-      - API_CACHE_ENABLED=${API_CACHE_ENABLED:-true}
-      - CACHE_DURATION_HOURS=${CACHE_DURATION_HOURS:-48}
-      - AUTH_ENABLED=${AUTH_ENABLED:-false}
-      - AZURE_CLIENT_ID=${AZURE_CLIENT_ID:-}
-      - AZURE_CLIENT_SECRET=${AZURE_CLIENT_SECRET:-}
-      - AZURE_TENANT_ID=${AZURE_TENANT_ID:-}
-      - AZURE_REDIRECT_URI=${AZURE_REDIRECT_URI:-}
-      - FLASK_SECRET_KEY=${FLASK_SECRET_KEY:-}
-      - ADMIN_USERS=${ADMIN_USERS:-}
-      - SESSION_FILE_DIR=${SESSION_FILE_DIR:-/app/sessions}
-      - TZ=${TZ:-UTC}
-      - VIRTUAL_HOST=${VIRTUAL_HOST:-pyvisionic.local}
-      - VIRTUAL_PORT=${PORT:-5000}
-      - LETSENCRYPT_HOST=${LETSENCRYPT_HOST:-}
-      - LETSENCRYPT_EMAIL=${LETSENCRYPT_EMAIL:-}
+      <<: *vehicle-env
+      FLASK_ENV: ${FLASK_ENV:-production}
+      PORT: ${PORT:-5000}
+      PLUG_WEBHOOK_TOKEN: ${PLUG_WEBHOOK_TOKEN:-}
+      AUTH_ENABLED: ${AUTH_ENABLED:-false}
+      AZURE_CLIENT_ID: ${AZURE_CLIENT_ID:-}
+      AZURE_CLIENT_SECRET: ${AZURE_CLIENT_SECRET:-}
+      AZURE_TENANT_ID: ${AZURE_TENANT_ID:-}
+      AZURE_REDIRECT_URI: ${AZURE_REDIRECT_URI:-}
+      FLASK_SECRET_KEY: ${FLASK_SECRET_KEY:-}
+      ADMIN_USERS: ${ADMIN_USERS:-}
+      SESSION_FILE_DIR: ${SESSION_FILE_DIR:-/app/sessions}
+      VIRTUAL_HOST: ${VIRTUAL_HOST:-pyvisionic.local}
+      VIRTUAL_PORT: ${PORT:-5000}
+      LETSENCRYPT_HOST: ${LETSENCRYPT_HOST:-}
+      LETSENCRYPT_EMAIL: ${LETSENCRYPT_EMAIL:-}
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs
@@ -39,10 +50,25 @@ services:
       - ./sessions:/app/sessions
     restart: unless-stopped
     command: >
-      sh -c "nohup python data_collector.py > /app/logs/collector.log 2>&1 &
-             python -m gunicorn --bind 0.0.0.0:${PORT:-5000} --workers 4 --threads 2 --timeout 120 src.web.app:app"
+      python -m gunicorn --bind 0.0.0.0:${PORT:-5000}
+      --workers 4 --threads 2 --timeout 120 src.web.app:app
     networks:
       - nginx-proxy-network
+
+  pyvisionic-collector:
+    container_name: pyvisionic-collector
+    build: .
+    image: pyvisionic:latest
+    depends_on:
+      - pyvisionic
+    environment:
+      <<: *vehicle-env
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./cache:/app/cache
+    restart: unless-stopped
+    command: python data_collector.py
 
 networks:
   nginx-proxy-network:

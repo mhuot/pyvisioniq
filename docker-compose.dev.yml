@@ -1,0 +1,28 @@
+# Frontend development overlay. Bind-mounts templates and static assets over the
+# copies baked into the image, so HTML/CSS/JS edits take effect on a browser
+# refresh with no rebuild and no container restart -- meaning no interruption to
+# data collection at all.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d pyvisionic
+#
+# Python changes still need a rebuild of the web service; only that service, and
+# only when the server-side code actually changed:
+#
+#   docker compose up -d --build pyvisionic
+#
+# Not auto-applied: keeping this out of docker-compose.override.yml means the
+# production stack always serves exactly what is in the image, with no drift
+# between the built artifact and what is running.
+
+services:
+  pyvisionic:
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./cache:/app/cache
+      - ./sessions:/app/sessions
+      - ./src/web/templates:/app/src/web/templates:ro
+      - ./src/web/static:/app/src/web/static:ro
+    environment:
+      FLASK_ENV: development
+      DEBUG_MODE: "true"
