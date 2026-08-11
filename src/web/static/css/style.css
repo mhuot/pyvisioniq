@@ -1585,3 +1585,162 @@ canvas {
     background-color: rgba(243, 156, 18, 0.1);
     border: 1px solid rgba(243, 156, 18, 0.3);
 }
+
+/* ---------------------------------------------------------------------------
+   Tabbed navigation
+   Groups the dashboard by the question being asked instead of one long scroll.
+   The active tab is marked by weight plus a border, never by hue alone, so it
+   survives greyscale, forced-colors and colour-vision deficiency.
+   --------------------------------------------------------------------------- */
+
+:root {
+    /* #7f8c8d (--text-light) is only ~3.5:1 on white and fails AAA for body
+       text. This is the muted ink for anything that must stay readable. */
+    --text-muted-aaa: #455063;
+    --chart-accent: #2471a3;
+}
+
+.tab-nav {
+    background: var(--card-bg);
+    border-bottom: 1px solid #d5dbdb;
+    position: sticky;
+    top: 0;
+    z-index: 20;
+}
+
+.tab-list {
+    display: flex;
+    max-width: 1400px;
+    margin: 0 auto;
+    overflow-x: auto;
+    scrollbar-width: none;
+}
+
+.tab-list::-webkit-scrollbar {
+    display: none;
+}
+
+.tab-button {
+    flex: 0 0 auto;
+    padding: 0.85rem 1.25rem;
+    border: none;
+    border-bottom: 3px solid transparent;
+    background: none;
+    color: var(--text-color);
+    font-size: 1rem;
+    font-weight: 500;
+    cursor: pointer;
+    white-space: nowrap;
+    min-height: 44px; /* touch target */
+}
+
+.tab-button:hover {
+    background: var(--bg-color);
+}
+
+.tab-button.active {
+    font-weight: 700;
+    border-bottom-color: var(--primary-color);
+    background: var(--bg-color);
+}
+
+.tab-button:focus-visible {
+    outline: 3px solid var(--primary-color);
+    outline-offset: -3px;
+}
+
+.tab-panel[hidden] {
+    display: none;
+}
+
+/* Stat tiles: the headline number carries the finding, the label explains it. */
+.stat-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+}
+
+.stat-tile {
+    background: var(--bg-color);
+    border-radius: 8px;
+    padding: 1rem;
+    text-align: center;
+}
+
+.stat-value {
+    font-size: 2rem;
+    font-weight: 700;
+    color: var(--primary-color);
+    margin: 0 0 0.25rem;
+    line-height: 1.1;
+}
+
+.stat-label {
+    font-size: 0.85rem;
+    color: var(--text-muted-aaa);
+    margin: 0;
+}
+
+.chart-note {
+    font-size: 0.85rem;
+    color: var(--text-muted-aaa);
+    margin-top: 0.75rem;
+    line-height: 1.5;
+}
+
+.chart-table-view {
+    margin-top: 0.75rem;
+}
+
+.chart-table-view summary {
+    cursor: pointer;
+    font-size: 0.9rem;
+    color: var(--text-muted-aaa);
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+}
+
+.chart-table-view table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+}
+
+.chart-table-view th,
+.chart-table-view td {
+    padding: 0.4rem 0.5rem;
+    border-bottom: 1px solid #d5dbdb;
+    text-align: right;
+}
+
+.chart-table-view th:first-child,
+.chart-table-view td:first-child {
+    text-align: left;
+}
+
+@media (max-width: 480px) {
+    .tab-button {
+        padding: 0.85rem 0.9rem;
+        font-size: 0.95rem;
+    }
+
+    .stat-value {
+        font-size: 1.6rem;
+    }
+}
+
+@media (prefers-contrast: high) {
+    .tab-button.active {
+        border-bottom-width: 4px;
+    }
+}
+
+/* Measurement tolerance beside a charging-efficiency figure. Recessive, since
+   the percentage is the value and this only qualifies it. */
+.efficiency-tolerance {
+    color: var(--text-muted-aaa);
+    font-size: 0.8em;
+    white-space: nowrap;
+}

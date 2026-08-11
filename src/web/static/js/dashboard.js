@@ -2362,8 +2362,21 @@ document.addEventListener('DOMContentLoaded', function() {
                     formatDate(detail.end);
             };
 
+            // Wall-to-battery efficiency exists only where the smart plug metered
+            // the session and the SOC gain was big enough to measure, so most
+            // rows legitimately show "--".
+            const efficiencyPoints = window.PYVISIONIC_EFFICIENCY ?
+                await window.PYVISIONIC_EFFICIENCY.load() : [];
+
             const rowsHtml = sessionDetails.map(detail => {
                 const { session, type, startLevel, endLevel, socGain, energyDisplay, peakPower } = detail;
+                const measured = window.PYVISIONIC_EFFICIENCY ?
+                    window.PYVISIONIC_EFFICIENCY.match(efficiencyPoints, detail.start, 120) : null;
+                const efficiencyCell = measured ?
+                    `<span title="${measured.ac_kwh} kWh drawn, ${measured.pack_kwh} kWh delivered">` +
+                        `${measured.efficiency_pct.toFixed(0)}%` +
+                        `<span class="efficiency-tolerance"> ±${measured.uncertainty_pct.toFixed(0)}</span>` +
+                    `</span>` : '--';
                 return `
                     <tr class="charge-row" data-session="${session.session_id}">
                         <td>${formatDate(detail.start)}</td>
@@ -2373,6 +2386,7 @@ document.addEventListener('DOMContentLoaded', function() {
                         <td>${startLevel != null ? startLevel + '%' : '--'} → ${endLevel != null ? endLevel + '%' : '--'}</td>
                         <td>${socGain != null ? (socGain >= 0 ? '+' : '') + socGain + '%' : '--'}</td>
                         <td>${energyDisplay}</td>
+                        <td>${efficiencyCell}</td>
                         <td>${peakPower > 0 ? peakPower.toFixed(1) + ' kW' : '--'}</td>
                         <td>${session.is_complete ? 'Complete' : '⚡ Charging'}</td>
                     </tr>
@@ -2392,6 +2406,7 @@ document.addEventListener('DOMContentLoaded', function() {
                                 <th scope="col">Battery</th>
                                 <th scope="col">Gained</th>
                                 <th scope="col">Energy Added</th>
+                                <th scope="col" title="Share of metered wall energy that reached the battery">Efficiency</th>
                                 <th scope="col">Peak Power</th>
                                 <th scope="col">Status</th>
                             </tr>
@@ -2760,3 +2775,328 @@ style.textContent = `
     }
 `;
 document.head.appendChild(style);
+
+/* ===========================================================================
+   Tabbed navigation + charging efficiency chart
+   =========================================================================== */
+
+(function () {
+    'use strict';
+
+    const TAB_STORAGE_KEY = 'pyvisionic.activeTab';
+    let chargeEfficiencyChart = null;
+    let efficiencyLoaded = false;
+
+    function activeHours() {
+        const active = document.querySelector('.master-time-range-controls .time-range-btn.active');
+        return active ? active.getAttribute('data-hours') : '24';
+    }
+
+    /* --- tabs ------------------------------------------------------------ */
+
+    function tabs() {
+        return Array.from(document.querySelectorAll('[role="tab"]'));
+    }
+
+    function selectTab(tab, setFocus) {
+        tabs().forEach(other => {
+            const selected = other === tab;
+            other.setAttribute('aria-selected', String(selected));
+            other.setAttribute('tabindex', selected ? '0' : '-1');
+            other.classList.toggle('active', selected);
+            const panel = document.getElementById(other.getAttribute('aria-controls'));
+            if (panel) { panel.hidden = !selected; }
+        });
+        if (setFocus) { tab.focus(); }
+
+        try { localStorage.setItem(TAB_STORAGE_KEY, tab.id); } catch (e) { /* private mode */ }
+
+        // Chart.js sizes a canvas from its container; one that was hidden at
+        // creation time measures zero and renders squashed. Nudge every chart
+        // in the newly visible panel to remeasure.
+        if (window.Chart) {
+            Object.values(Chart.instances || {}).forEach(instance => {
+                if (instance && typeof instance.resize === 'function') { instance.resize(); }
+            });
+        }
+        if (tab.id === 'tab-weather') {
+            if (!efficiencyLoaded) { loadChargingEfficiency(); }
+            if (!monthlyLoaded) { loadMonthlyEfficiency(); }
+        }
+    }
+
+    function onTabKeydown(event) {
+        const all = tabs();
+        const index = all.indexOf(event.currentTarget);
+        let next = null;
+        if (event.key === 'ArrowRight') { next = all[(index + 1) % all.length]; }
+        else if (event.key === 'ArrowLeft') { next = all[(index - 1 + all.length) % all.length]; }
+        else if (event.key === 'Home') { next = all[0]; }
+        else if (event.key === 'End') { next = all[all.length - 1]; }
+        if (next) { event.preventDefault(); selectTab(next, true); }
+    }
+
+    function initTabs() {
+        const all = tabs();
+        if (!all.length) { return; }
+        all.forEach(tab => {
+            tab.addEventListener('click', () => selectTab(tab, false));
+            tab.addEventListener('keydown', onTabKeydown);
+        });
+        let restore = null;
+        try { restore = localStorage.getItem(TAB_STORAGE_KEY); } catch (e) { /* ignore */ }
+        const initial = (restore && document.getElementById(restore)) || all[0];
+        selectTab(initial, false);
+    }
+
+    /* --- charging efficiency --------------------------------------------- */
+
+    function renderEfficiencyTable(points) {
+        const host = document.getElementById('charge-efficiency-table');
+        if (!host) { return; }
+        if (!points.length) { host.innerHTML = '<p class="no-data">No sessions yet.</p>'; return; }
+        const rows = points.map(p => `<tr>
+            <td>${new Date(p.start_time).toLocaleString()}</td>
+            <td>${p.ac_kwh.toFixed(2)}</td>
+            <td>${p.pack_kwh.toFixed(2)}</td>
+            <td>${p.efficiency_pct.toFixed(1)}%</td>
+            <td>${p.temperature === null ? '--' : p.temperature.toFixed(1)}</td>
+        </tr>`).join('');
+        host.innerHTML = `<table><caption class="sr-only">Charging efficiency by session</caption>
+            <thead><tr><th scope="col">Session start</th><th scope="col">Wall kWh</th>
+            <th scope="col">Battery kWh</th><th scope="col">Efficiency</th>
+            <th scope="col">Temp °C</th></tr></thead><tbody>${rows}</tbody></table>`;
+    }
+
+    function loadChargingEfficiency() {
+        const canvas = document.getElementById('charge-efficiency-chart');
+        if (!canvas) { return; }
+        efficiencyLoaded = true;
+
+        fetch(`/api/charging-efficiency?hours=${encodeURIComponent(activeHours())}`)
+            .then(response => response.json())
+            .then(data => {
+                const points = (data && data.points) || [];
+                const summary = (data && data.summary) || {};
+                const note = document.getElementById('charge-efficiency-note');
+
+                const headline = document.getElementById('charge-eff-headline');
+                const lost = document.getElementById('charge-eff-lost');
+                const count = document.getElementById('charge-eff-count');
+                if (headline) {
+                    headline.textContent = summary.efficiency_pct === null ||
+                        summary.efficiency_pct === undefined ? '--' : `${summary.efficiency_pct}%`;
+                }
+                if (lost) { lost.textContent = `${(summary.total_lost_kwh || 0).toFixed(1)} kWh`; }
+                if (count) { count.textContent = String(summary.count || 0); }
+
+                renderEfficiencyTable(points);
+
+                if (!points.length) {
+                    if (note) {
+                        note.textContent = 'No charging sessions in this range were large enough ' +
+                            'to measure. Widen the time range, or wait for a longer session.';
+                    }
+                    if (chargeEfficiencyChart) { chargeEfficiencyChart.destroy(); chargeEfficiencyChart = null; }
+                    return;
+                }
+
+                const series = points.map(p => ({ x: new Date(p.start_time), y: p.efficiency_pct }));
+                if (chargeEfficiencyChart) { chargeEfficiencyChart.destroy(); }
+                chargeEfficiencyChart = new Chart(canvas.getContext('2d'), {
+                    type: 'line',
+                    data: {
+                        datasets: [{
+                            label: 'Wall-to-battery efficiency',
+                            data: series,
+                            borderColor: '#2471a3',
+                            backgroundColor: '#2471a3',
+                            borderWidth: 2,
+                            pointRadius: 5,
+                            pointHoverRadius: 8,
+                            tension: 0.2
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        interaction: { mode: 'nearest', intersect: false },
+                        plugins: {
+                            legend: { display: false },
+                            tooltip: {
+                                callbacks: {
+                                    label: context => {
+                                        const p = points[context.dataIndex];
+                                        return [
+                                            `Efficiency: ${p.efficiency_pct}% (±${p.uncertainty_pct}%)`,
+                                            `Wall: ${p.ac_kwh} kWh over ${p.duration_hours} h`,
+                                            `Battery: ${p.pack_kwh} kWh (+${p.soc_gain}%)`,
+                                            `Lost: ${p.lost_kwh} kWh`,
+                                            p.temperature === null ? '' : `Ambient: ${p.temperature} °C`
+                                        ].filter(Boolean);
+                                    }
+                                }
+                            }
+                        },
+                        scales: {
+                            x: { type: 'time', time: { unit: 'day' }, title: { display: true, text: 'Session start' } },
+                            y: {
+                                title: { display: true, text: 'Efficiency (%)' },
+                                suggestedMin: 40,
+                                suggestedMax: 100,
+                                ticks: { callback: value => `${value}%` }
+                            }
+                        }
+                    }
+                });
+            })
+            .catch(error => {
+                console.error('Failed to load charging efficiency:', error);
+                const note = document.getElementById('charge-efficiency-note');
+                if (note) { note.textContent = 'Could not load charging efficiency data.'; }
+            });
+    }
+
+    /* --- driving efficiency by month ------------------------------------- */
+
+    let monthlyChart = null;
+    let monthlyLoaded = false;
+
+    // Diverging ramp about freezing: temperature has a meaningful midpoint, so
+    // two hues with a neutral middle rather than a rainbow. Endpoints are the
+    // ColorBrewer RdBu poles, which stay separable under colour-vision deficiency.
+    function temperatureColor(celsius) {
+        if (celsius === null || celsius === undefined) { return '#9e9e9e'; }
+        const span = 25;
+        const ratio = Math.max(-1, Math.min(1, celsius / span));
+        const cold = [33, 102, 172];
+        const warm = [178, 24, 43];
+        // #999 reads at only 2.85:1 on the chart surface; this clears the 3:1
+        // floor for graphical objects so near-freezing months stay visible.
+        const mid = [143, 143, 143];
+        const target = ratio < 0 ? cold : warm;
+        const weight = Math.abs(ratio);
+        const channel = i => Math.round(mid[i] + (target[i] - mid[i]) * weight);
+        return `rgb(${channel(0)}, ${channel(1)}, ${channel(2)})`;
+    }
+
+    function renderMonthlyTable(months) {
+        const host = document.getElementById('monthly-efficiency-table');
+        if (!host) { return; }
+        const rows = months.map(m => `<tr>
+            <td>${m.month}</td>
+            <td>${m.wh_per_mile.toFixed(0)}</td>
+            <td>${m.mi_per_kwh.toFixed(2)}</td>
+            <td>${m.temperature === null ? '--' : m.temperature.toFixed(1)}</td>
+            <td>${m.miles.toFixed(0)}</td>
+        </tr>`).join('');
+        host.innerHTML = `<table><caption class="sr-only">Driving efficiency by month</caption>
+            <thead><tr><th scope="col">Month</th><th scope="col">Wh/mi</th>
+            <th scope="col">mi/kWh</th><th scope="col">Avg temp °C</th>
+            <th scope="col">Miles</th></tr></thead><tbody>${rows}</tbody></table>`;
+    }
+
+    function loadMonthlyEfficiency() {
+        const canvas = document.getElementById('monthly-efficiency-chart');
+        if (!canvas) { return; }
+        monthlyLoaded = true;
+
+        fetch('/api/efficiency-by-month')
+            .then(response => response.json())
+            .then(data => {
+                const months = (data && data.months) || [];
+                if (!months.length) { return; }
+                renderMonthlyTable(months);
+
+                if (monthlyChart) { monthlyChart.destroy(); }
+                monthlyChart = new Chart(canvas.getContext('2d'), {
+                    type: 'bar',
+                    data: {
+                        labels: months.map(m => m.month),
+                        datasets: [{
+                            label: 'Wh per mile',
+                            data: months.map(m => m.wh_per_mile),
+                            backgroundColor: months.map(m => temperatureColor(m.temperature)),
+                            borderWidth: 0,
+                            borderRadius: 4
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: { display: false },
+                            tooltip: {
+                                callbacks: {
+                                    label: context => {
+                                        const m = months[context.dataIndex];
+                                        return [
+                                            `${m.wh_per_mile.toFixed(0)} Wh/mi (${m.mi_per_kwh.toFixed(2)} mi/kWh)`,
+                                            m.temperature === null ? '' : `Avg temperature: ${m.temperature} °C`,
+                                            `${m.miles.toFixed(0)} mi over ${m.trips} trips`
+                                        ].filter(Boolean);
+                                    }
+                                }
+                            }
+                        },
+                        scales: {
+                            x: { title: { display: true, text: 'Month' } },
+                            y: {
+                                beginAtZero: true,
+                                title: { display: true, text: 'Energy used (Wh per mile)' }
+                            }
+                        }
+                    }
+                });
+            })
+            .catch(error => console.error('Failed to load monthly efficiency:', error));
+    }
+
+    /* --- shared lookup so other tables can show the same measurement ------ */
+
+    let allPointsPromise = null;
+
+    function loadAllEfficiencyPoints() {
+        if (!allPointsPromise) {
+            allPointsPromise = fetch('/api/charging-efficiency?hours=all')
+                .then(response => (response.ok ? response.json() : { points: [] }))
+                .then(data => (data && data.points) || [])
+                .catch(() => []);
+        }
+        return allPointsPromise;
+    }
+
+    // Efficiency points are timestamped from the SOC-rising window, which starts
+    // a little after the session itself, so match on nearest start within a
+    // tolerance rather than on equality.
+    function matchEfficiency(points, sessionStart, toleranceMinutes) {
+        if (!points || !points.length || !sessionStart) { return null; }
+        const target = sessionStart.getTime();
+        const limit = (toleranceMinutes || 120) * 60000;
+        let best = null;
+        let bestGap = Infinity;
+        points.forEach(point => {
+            const gap = Math.abs(new Date(point.start_time).getTime() - target);
+            if (gap < bestGap && gap <= limit) { best = point; bestGap = gap; }
+        });
+        return best;
+    }
+
+    window.PYVISIONIC_EFFICIENCY = {
+        load: loadAllEfficiencyPoints,
+        match: matchEfficiency
+    };
+
+    document.addEventListener('DOMContentLoaded', initTabs);
+    document.addEventListener('click', event => {
+        // Reload efficiency when the master time range changes and we are on that tab.
+        if (event.target.closest('.master-time-range-controls .time-range-btn')) {
+            const weather = document.getElementById('tab-weather');
+            if (weather && weather.getAttribute('aria-selected') === 'true') {
+                setTimeout(loadChargingEfficiency, 0);
+            } else {
+                efficiencyLoaded = false;
+            }
+        }
+    });
+})();

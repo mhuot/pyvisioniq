@@ -62,7 +62,21 @@
         </div>
     </div>
 
+    <nav class="tab-nav" aria-label="Dashboard sections">
+        <div class="tab-list" role="tablist" aria-label="Dashboard sections">
+            <button class="tab-button active" role="tab" id="tab-now"
+                    aria-controls="panel-now" aria-selected="true" tabindex="0">Now</button>
+            <button class="tab-button" role="tab" id="tab-weather"
+                    aria-controls="panel-weather" aria-selected="false" tabindex="-1">Weather Impact</button>
+            <button class="tab-button" role="tab" id="tab-trips"
+                    aria-controls="panel-trips" aria-selected="false" tabindex="-1">Trips</button>
+            <button class="tab-button" role="tab" id="tab-charging"
+                    aria-controls="panel-charging" aria-selected="false" tabindex="-1">Charging</button>
+        </div>
+    </nav>
+
     <main>
+        <div class="tab-panel" role="tabpanel" id="panel-now" aria-labelledby="tab-now" tabindex="0">
         <section class="status-section" aria-labelledby="status-heading">
             <h2 id="status-heading">Current Status</h2>
             <div class="status-grid" role="list">
@@ -124,6 +138,10 @@
             </div>
         </section>
 
+        </div><!-- /panel-now -->
+
+        <div class="tab-panel" role="tabpanel" id="panel-weather" aria-labelledby="tab-weather"
+             tabindex="0" hidden>
         <section class="chart-section" aria-labelledby="temp-efficiency-heading">
             <h2 id="temp-efficiency-heading">Temperature Impact on Efficiency</h2>
             <div class="chart-container">
@@ -144,6 +162,60 @@
             </div>
         </section>
 
+        <section class="chart-section" aria-labelledby="monthly-efficiency-heading">
+            <h2 id="monthly-efficiency-heading">Driving Efficiency by Month</h2>
+            <div class="chart-container">
+                <canvas id="monthly-efficiency-chart" role="img"
+                        aria-label="Energy consumption per month, coloured by average temperature"></canvas>
+            </div>
+            <p class="chart-note">
+                Energy used per mile, one bar per month. Bars are tinted by that month's
+                average temperature — blue for below freezing, red for warm — so the
+                seasonal cycle is visible directly. Temperature is also in the tooltip
+                and the table, never carried by colour alone.
+            </p>
+            <details class="chart-table-view">
+                <summary>View as table</summary>
+                <div id="monthly-efficiency-table"></div>
+            </details>
+        </section>
+
+        <section class="chart-section" aria-labelledby="charge-efficiency-heading">
+            <h2 id="charge-efficiency-heading">Charging Efficiency: Wall to Battery</h2>
+            <div class="stat-row" id="charge-efficiency-stats">
+                <div class="stat-tile">
+                    <p class="stat-value" id="charge-eff-headline">--</p>
+                    <p class="stat-label">of wall energy reaches the battery</p>
+                </div>
+                <div class="stat-tile">
+                    <p class="stat-value" id="charge-eff-lost">--</p>
+                    <p class="stat-label">lost as heat and conversion</p>
+                </div>
+                <div class="stat-tile">
+                    <p class="stat-value" id="charge-eff-count">--</p>
+                    <p class="stat-label">sessions large enough to measure</p>
+                </div>
+            </div>
+            <div class="chart-container">
+                <canvas id="charge-efficiency-chart" role="img"
+                        aria-label="Charging efficiency per session over time"></canvas>
+            </div>
+            <p class="chart-note" id="charge-efficiency-note">
+                Metered wall energy compared with the energy implied by the battery's
+                state-of-charge gain. Only sessions gaining at least 8 percentage points
+                are shown; smaller ones cannot be measured reliably because state of
+                charge is reported in whole percent.
+            </p>
+            <details class="chart-table-view">
+                <summary>View as table</summary>
+                <div id="charge-efficiency-table"></div>
+            </details>
+        </section>
+
+        </div><!-- /panel-weather -->
+
+        <div class="tab-panel" role="tabpanel" id="panel-trips" aria-labelledby="tab-trips"
+             tabindex="0" hidden>
         <section class="chart-section" aria-labelledby="energy-chart-heading">
             <h2 id="energy-chart-heading">Energy Usage Breakdown</h2>
             <div class="chart-container">
@@ -216,6 +288,10 @@
             </div>
         </section>
 
+        </div><!-- /panel-trips -->
+
+        <div class="tab-panel" role="tabpanel" id="panel-charging" aria-labelledby="tab-charging"
+             tabindex="0" hidden>
         <section class="charging-sessions" aria-labelledby="charging-heading">
             <h2 id="charging-heading">Charging History</h2>
             <div class="sessions-container" id="charging-sessions-container">
@@ -232,6 +308,7 @@
             </div>
             <div id="polling-decisions"></div>
         </section>
+        </div><!-- /panel-charging -->
     </main>
 
     <footer>
