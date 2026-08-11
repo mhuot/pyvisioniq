@@ -332,9 +332,11 @@
     </footer>
 
     <!-- Trip Detail Modal -->
-    <div id="tripModal" class="modal">
+    <div id="tripModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
         <div class="modal-content">
-            <span class="modal-close">&times;</span>
+            <button type="button" class="modal-close" aria-label="Close trip details">
+                <span aria-hidden="true">&times;</span>
+            </button>
             <h2 id="modal-title">Trip Details</h2>
             <div id="modal-body">
                 <div class="trip-stats-grid" id="trip-stats"></div>
@@ -347,9 +349,11 @@
     </div>
 
     <!-- Charging Session Detail Modal -->
-    <div id="chargeModal" class="modal">
+    <div id="chargeModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="charge-modal-title">
         <div class="modal-content">
-            <span class="modal-close" id="charge-modal-close">&times;</span>
+            <button type="button" class="modal-close" id="charge-modal-close" aria-label="Close charging session details">
+                <span aria-hidden="true">&times;</span>
+            </button>
             <h2 id="charge-modal-title">Charging Session</h2>
             <div id="charge-modal-body">
                 <div class="trip-stats-grid" id="charge-stats"></div>

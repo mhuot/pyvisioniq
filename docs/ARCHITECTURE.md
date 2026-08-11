@@ -380,11 +380,19 @@ erDiagram
 
 ## Deployment
 
-The application is containerized using Docker with:
-- Python 3.11 slim base image
-- Gunicorn WSGI server
-- Background data collector process
-- Volume mounts for persistent data
-- Environment-based configuration
+The application runs as two containers built from a single shared image:
+
+- **`pyvisionic`** — Gunicorn serving the Flask dashboard and API, joined to the
+  `nginx-proxy-network` for TLS termination.
+- **`pyvisionic-collector`** — the polling data collector.
+
+They mount the same `data/`, `logs/` and `cache/` volumes. Splitting them means a
+frontend rebuild never restarts collection, and because the collector is PID 1 in
+its own container, `restart: unless-stopped` actually supervises it. Previously
+both ran in one container with the collector backgrounded inside a shell, where a
+collector crash left a healthy-looking container with collection silently dead.
+
+`docker-compose.dev.yml` bind-mounts templates and static assets over the image
+copies, so frontend edits take effect on a browser refresh with no rebuild.
 
 See `docker-compose.yml` for deployment configuration.

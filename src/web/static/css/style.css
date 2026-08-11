@@ -1793,3 +1793,25 @@ canvas {
     line-height: 1.5;
     color: var(--text-muted-aaa);
 }
+
+/* The modal close control is a real button now; keep its previous look while
+   giving it a visible focus ring and an adequate touch target. */
+button.modal-close {
+    border: none;
+    background: none;
+    font-size: 1.75rem;
+    line-height: 1;
+    cursor: pointer;
+    color: var(--text-color);
+    min-width: 44px;
+    min-height: 44px;
+}
+
+button.modal-close:hover {
+    color: var(--danger-color);
+}
+
+button.modal-close:focus-visible {
+    outline: 3px solid var(--primary-color);
+    outline-offset: 2px;
+}

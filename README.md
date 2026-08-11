@@ -84,7 +84,7 @@ The two processes coordinate through the shared `data/` and `cache/` directories
    ```bash
    docker compose up -d
    ```
-   The container starts the data collector in the background and serves the dashboard via Gunicorn on the port specified by `PORT` (default 5000).
+   This starts two containers from one shared image: `pyvisionic` serves the dashboard via Gunicorn on the port given by `PORT` (default 5000), and `pyvisionic-collector` runs the data collector. Keeping them separate means rebuilding the web service does not interrupt data collection, and `restart: unless-stopped` supervises the collector directly.
 
 3. View logs:
    ```bash
@@ -93,7 +93,8 @@ The two processes coordinate through the shared `data/` and `cache/` directories
 
 4. After code changes, rebuild before restarting (the Dockerfile **copies** the source — it is not bind-mounted):
    ```bash
-   docker compose down && docker compose build && docker compose up -d
+   docker compose up -d --build pyvisionic     # web only; collector keeps running
+   docker compose up -d --build                # both services
    ```
 
 The container also exposes `VIRTUAL_HOST`, `VIRTUAL_PORT`, `LETSENCRYPT_HOST`, and `LETSENCRYPT_EMAIL` and joins an external `nginx-proxy-network`, so it can sit behind `nginx-proxy` + `acme-companion` for automatic TLS.
@@ -344,7 +345,7 @@ pyvisionic/
 ├── logs/                      # Application logs
 ├── sessions/                  # Flask-Session storage (not in git)
 ├── data_collector.py          # Background collector (CLI: --once)
-├── run.py                     # Convenience launcher: collector + web server
+├── run.py                     # Convenience launcher for local dev: collector + web server
 ├── Dockerfile                 # Python 3.11 slim base
 ├── docker-compose.yml         # Single-service stack with nginx-proxy network
 ├── Makefile                   # install / format / lint / test / ci targets
@@ -357,7 +358,7 @@ pyvisionic/
 
 | Symptom | Cause / fix |
 |---|---|
-| No data on the dashboard | Confirm `data_collector.py` is running (`docker compose logs` or `ps`) and that `data/api_call_history.json` is being updated |
+| No data on the dashboard | Confirm the collector is running (`docker compose logs -f pyvisionic-collector`) and that `data/api_call_history.json` is being updated |
 | Authentication errors | Re-check `BLUELINKUSER`/`BLUELINKPASS`/region/brand in `.env` |
 | Missing `BLUELINKVID` | Start the app once with `BLUELINKVID` unset; the log will list discovered vehicles |
 | Stale temperature readings | The vehicle's own sensor can lag — set `WEATHER_SOURCE=meteo` |
@@ -366,7 +367,7 @@ pyvisionic/
 | Hitting rate limits | The collector automatically backs off (interval × 1.5, up to ×4); reduce `API_DAILY_LIMIT` to be conservative |
 | `numpy.int64` JSON errors | `DataValidator` in `src/utils/debug.py` handles these; ensure data is written through the storage backend rather than raw pandas |
 | venv crashes after OS migration | Recreate it: `rm -rf venv && python3.11 -m venv venv && pip install -r requirements.txt` |
-| Code changes not reflected in Docker | The image **copies** source, not mounts — rebuild: `docker compose down && docker compose build && docker compose up -d` |
+| Code changes not reflected in Docker | The image **copies** source, not mounts — rebuild with `docker compose up -d --build pyvisionic`. For frontend work, `docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d pyvisionic` bind-mounts templates and static assets so edits need only a browser refresh |
 
 ## Authentication
 

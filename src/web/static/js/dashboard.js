@@ -3251,3 +3251,54 @@ document.head.appendChild(style);
         }
     });
 })();
+
+/* ===========================================================================
+   Modal dialog accessibility
+   The close control was a <span>, so it was unreachable by keyboard and
+   announced as "times". It is now a button; this adds Escape-to-close and
+   returns focus to whatever opened the dialog.
+   =========================================================================== */
+
+(function () {
+    'use strict';
+
+    let lastFocused = null;
+
+    function openModals() {
+        return Array.from(document.querySelectorAll('.modal'))
+            .filter(modal => modal.style.display && modal.style.display !== 'none');
+    }
+
+    function closeModal(modal) {
+        modal.style.display = 'none';
+        if (lastFocused && document.contains(lastFocused)) {
+            lastFocused.focus();
+        }
+        lastFocused = null;
+    }
+
+    document.addEventListener('keydown', function (event) {
+        if (event.key !== 'Escape') { return; }
+        const open = openModals();
+        if (open.length) {
+            event.preventDefault();
+            open.forEach(closeModal);
+        }
+    });
+
+    // Remember the trigger so focus can return to it, and move focus into the
+    // dialog so a keyboard user is not left behind the overlay.
+    document.addEventListener('click', function (event) {
+        const trigger = event.target.closest('.charge-row, .trip-row, tr[data-session]');
+        if (trigger) {
+            lastFocused = document.activeElement;
+            setTimeout(function () {
+                const open = openModals();
+                if (open.length) {
+                    const closer = open[open.length - 1].querySelector('.modal-close');
+                    if (closer) { closer.focus(); }
+                }
+            }, 0);
+        }
+    });
+})();
