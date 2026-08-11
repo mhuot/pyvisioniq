@@ -25,6 +25,30 @@ from src.web.auth_routes import auth_bp
 from src.web.cache_routes import cache_bp
 from src.web.debug_routes import debug_bp
 
+# trips.csv records distance in MILES, not kilometres. Verified against the
+# odometer (which is in km) across 354 driving days: the ratio is ~1.61 before
+# accounting for per-trip truncation to whole miles.
+KM_PER_MILE = 1.60934
+
+# Bounds on believable driving efficiency. Anything outside is a logging fault:
+# the API sometimes records a stub consumption of a few Wh against a long
+# distance, which would otherwise read as thousands of miles per kWh.
+MIN_PLAUSIBLE_MI_PER_KWH = 0.5
+MAX_PLAUSIBLE_MI_PER_KWH = 10.0
+
+
+def efficiency_wh_per_km(total_consumed_wh, distance_miles):
+    """Convert a trip's energy use into Wh per kilometre.
+
+    Dividing consumption by the raw distance yields Wh per MILE. Reporting that
+    as Wh/km overstates consumption by 61%, and converting it onward to mi/kWh
+    divides by 1.60934 a second time, understating range by the same factor.
+    """
+    if not distance_miles or distance_miles <= 0 or not total_consumed_wh:
+        return None
+    return total_consumed_wh / (distance_miles * KM_PER_MILE)
+
+
 app = Flask(__name__)
 app.config["SECRET_KEY"] = os.getenv("SECRET_KEY", "dev-secret-key")  # nosec B105
 
@@ -287,7 +311,9 @@ def get_trip_detail(trip_id):
 
         # Calculate energy efficiency if possible
         if trip["distance"] and trip["total_consumed"]:
-            trip["efficiency_wh_per_km"] = round(trip["total_consumed"] / trip["distance"], 1)
+            trip["efficiency_wh_per_km"] = round(
+                efficiency_wh_per_km(trip["total_consumed"], trip["distance"]), 1
+            )
         else:
             trip["efficiency_wh_per_km"] = None
 
@@ -370,11 +396,9 @@ def get_trips():
                     row.get("total_consumed", 0) if pd.notna(row.get("total_consumed")) else 0
                 )
 
-                # Efficiency in Wh/km
-                efficiency_wh_per_km = (
-                    round(total_consumed / row["distance"], 1) if total_consumed > 0 else 0
-                )
-                page_trips.loc[idx, "efficiency_wh_per_km"] = efficiency_wh_per_km
+                # Efficiency in Wh/km (distance is recorded in miles)
+                per_km = efficiency_wh_per_km(total_consumed, row["distance"])
+                page_trips.loc[idx, "efficiency_wh_per_km"] = round(per_km, 1) if per_km else 0
             else:
                 page_trips.loc[idx, "efficiency_wh_per_km"] = 0
 
@@ -533,8 +557,8 @@ def get_temperature_efficiency():
         for _, trip in trips_df.iterrows():
             if trip["distance"] > 0 and trip["total_consumed"] and trip["total_consumed"] > 0:
                 # Calculate efficiency
-                efficiency_wh_per_km = trip["total_consumed"] / trip["distance"]
-                efficiency_mi_per_kwh = 1000 / (efficiency_wh_per_km * 1.60934)
+                per_km = efficiency_wh_per_km(trip["total_consumed"], trip["distance"])
+                efficiency_mi_per_kwh = 1000 / (per_km * KM_PER_MILE)
 
                 # Find closest battery reading to get temperature
                 trip_time = pd.to_datetime(trip["date"])
@@ -875,7 +899,7 @@ def get_efficiency_by_month():
                     "miles": round(miles, 1),
                     "kwh": round(watt_hours / 1000.0, 1),
                     "wh_per_mile": round(wh_per_mile, 1),
-                    "wh_per_km": round(wh_per_mile / 1.60934, 1),
+                    "wh_per_km": round(wh_per_mile / KM_PER_MILE, 1),
                     "mi_per_kwh": round(1000.0 / wh_per_mile, 2),
                     "temperature": monthly_temp.get(str(period)),
                 }
@@ -971,7 +995,7 @@ def get_efficiency_stats():
 
         # Calculate efficiency in Wh/km for each trip
         trips_df["efficiency_wh_per_km"] = trips_df.apply(
-            lambda row: (row["total_consumed"] / row["distance"] if row["distance"] > 0 else None),
+            lambda row: efficiency_wh_per_km(row["total_consumed"], row["distance"]),
             axis=1,
         )
 
@@ -979,7 +1003,7 @@ def get_efficiency_stats():
         # 1 Wh/km = 1.60934 Wh/mi
         # mi/kWh = 1000 / (Wh/mi) = 1000 / (Wh/km * 1.60934)
         trips_df["efficiency_mi_per_kwh"] = trips_df["efficiency_wh_per_km"].apply(
-            lambda x: 1000 / (x * 1.60934) if x and x > 0 else None
+            lambda x: 1000 / (x * KM_PER_MILE) if x and x > 0 else None
         )
 
         now = datetime.now()
@@ -995,37 +1019,44 @@ def get_efficiency_stats():
 
         stats = {}
 
-        # Calculate stats for each period
+        def summarize_period(period_trips):
+            """Aggregate a period's trips into average, best and worst mi/kWh.
+
+            The average is energy-weighted (total distance over total energy)
+            rather than a mean of per-trip ratios. A mean of ratios lets a single
+            short or mis-logged trip dominate: the API occasionally records a
+            stub consumption of a few Wh against a long distance, which alone
+            produced averages above 15,000 mi/kWh.
+
+            Trips outside a physically plausible band are dropped entirely, since
+            they are data faults rather than unusually efficient driving.
+            """
+            usable = period_trips.dropna(subset=["efficiency_mi_per_kwh"])
+            usable = usable[
+                usable["efficiency_mi_per_kwh"].between(
+                    MIN_PLAUSIBLE_MI_PER_KWH, MAX_PLAUSIBLE_MI_PER_KWH
+                )
+            ]
+            if usable.empty:
+                return None
+
+            total_miles = float(usable["distance"].sum())
+            total_kwh = float(usable["total_consumed"].sum()) / 1000.0
+            if total_kwh <= 0:
+                return None
+
+            return {
+                "average": round(total_miles / total_kwh, 2),
+                "best": round(float(usable["efficiency_mi_per_kwh"].max()), 2),
+                "worst": round(float(usable["efficiency_mi_per_kwh"].min()), 2),
+                "trip_count": int(len(usable)),
+            }
+
         for period_name, start_date in periods.items():
             period_trips = trips_df[trips_df["date"] >= start_date]
+            stats[period_name] = summarize_period(period_trips) if not period_trips.empty else None
 
-            if not period_trips.empty:
-                # Filter out None values
-                valid_efficiencies = period_trips["efficiency_mi_per_kwh"].dropna()
-
-                if not valid_efficiencies.empty:
-                    stats[period_name] = {
-                        "average": round(valid_efficiencies.mean(), 2),
-                        "best": round(valid_efficiencies.max(), 2),
-                        "worst": round(valid_efficiencies.min(), 2),
-                        "trip_count": len(valid_efficiencies),
-                    }
-                else:
-                    stats[period_name] = None
-            else:
-                stats[period_name] = None
-
-        # Overall stats
-        valid_efficiencies_all = trips_df["efficiency_mi_per_kwh"].dropna()
-        if not valid_efficiencies_all.empty:
-            stats["all_time"] = {
-                "average": round(valid_efficiencies_all.mean(), 2),
-                "best": round(valid_efficiencies_all.max(), 2),
-                "worst": round(valid_efficiencies_all.min(), 2),
-                "trip_count": len(valid_efficiencies_all),
-            }
-        else:
-            stats["all_time"] = None
+        stats["all_time"] = summarize_period(trips_df)
 
         # Also calculate total energy and distance for context
         stats["totals"] = {

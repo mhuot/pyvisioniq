@@ -1557,7 +1557,12 @@ document.addEventListener('DOMContentLoaded', function() {
                             popupContent += `<br>Distance: ${loc.distance} km`;
                             popupContent += `<br>Duration: ${loc.duration} min`;
                             if (loc.efficiency) {
-                                popupContent += `<br>Efficiency: ${loc.efficiency} Wh/km`;
+                                // The API sends mi/kWh here; this previously
+                                // printed that value labelled as Wh/km.
+                                const eff = currentUnits === 'metric' ?
+                                    `${Math.round(1000 / (loc.efficiency * 1.60934))} Wh/km` :
+                                    `${loc.efficiency.toFixed(1)} mi/kWh`;
+                                popupContent += `<br>Efficiency: ${eff}`;
                             }
                         }
                         if (loc.temperature !== null && loc.temperature !== undefined) {
