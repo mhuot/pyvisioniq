@@ -154,6 +154,22 @@
 
         <section class="chart-section" aria-labelledby="charging-temp-heading">
             <h2 id="charging-temp-heading">Temperature Impact on Charging</h2>
+            <div class="chart-filter" role="group" aria-label="Charging type to display">
+                <button type="button" class="chart-filter-btn active" data-charge-type="dcfc"
+                        aria-pressed="true">DC Fast</button>
+                <button type="button" class="chart-filter-btn" data-charge-type="l2"
+                        aria-pressed="false">Level 2</button>
+                <button type="button" class="chart-filter-btn" data-charge-type="l1"
+                        aria-pressed="false">Level 1</button>
+                <button type="button" class="chart-filter-btn" data-charge-type="all"
+                        aria-pressed="false">All</button>
+            </div>
+            <p class="chart-note">
+                Charging power spans two orders of magnitude — Level 1 sits near 1.3 kW
+                while DC fast charging reaches 160 kW — so one type is shown at a time.
+                Plotted together, the Level 1 sessions that make up most of the history
+                flatten onto the baseline.
+            </p>
             <div class="chart-container">
                 <canvas id="charging-temperature-chart"></canvas>
             </div>

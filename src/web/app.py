@@ -36,6 +36,22 @@ KM_PER_MILE = 1.60934
 MIN_PLAUSIBLE_MI_PER_KWH = 0.5
 MAX_PLAUSIBLE_MI_PER_KWH = 10.0
 
+# Charging splits into populations two orders of magnitude apart: L1 sits near
+# 1.3 kW while DC fast charging reaches 160 kW. Plotted on one linear axis the
+# AC sessions, which are 97% of the history, collapse onto the baseline. Tagging
+# each session lets the dashboard show one population at a time.
+L2_POWER_FLOOR_KW = 2.5
+DCFC_POWER_FLOOR_KW = 20.0
+
+
+def classify_charge_type(avg_power_kw):
+    """Bucket a session as l1, l2 or dcfc from its average power."""
+    if avg_power_kw is None:
+        return None
+    if avg_power_kw >= DCFC_POWER_FLOOR_KW:
+        return "dcfc"
+    return "l2" if avg_power_kw >= L2_POWER_FLOOR_KW else "l1"
+
 
 def efficiency_wh_per_km(total_consumed_wh, distance_miles):
     """Convert a trip's energy use into Wh per kilometre.
@@ -560,6 +576,16 @@ def get_temperature_efficiency():
                 per_km = efficiency_wh_per_km(trip["total_consumed"], trip["distance"])
                 efficiency_mi_per_kwh = 1000 / (per_km * KM_PER_MILE)
 
+                # Discard logging faults. Six rows in the history pair a long
+                # distance with a stub consumption of a few Wh, the worst
+                # reading 15,300 mi/kWh. Plotted raw they set the y-axis two
+                # orders of magnitude too high and flatten every real point
+                # onto the baseline.
+                if not (
+                    MIN_PLAUSIBLE_MI_PER_KWH <= efficiency_mi_per_kwh <= MAX_PLAUSIBLE_MI_PER_KWH
+                ):
+                    continue
+
                 # Find closest battery reading to get temperature
                 trip_time = pd.to_datetime(trip["date"])
                 battery_df["timestamp"] = pd.to_datetime(battery_df["timestamp"], format="ISO8601")
@@ -731,6 +757,7 @@ def get_charging_temperature_impact():
                 {
                     "temperature": round(float(temperature), 2),
                     "avg_power": round(float(avg_power), 2),
+                    "charge_type": classify_charge_type(avg_power),
                     "energy_added": round(float(energy_added), 2),
                     "duration_minutes": round(float(duration_minutes), 1),
                     "start_time": session["start_time"].isoformat(),

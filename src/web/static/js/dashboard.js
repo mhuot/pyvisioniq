@@ -271,6 +271,26 @@ document.addEventListener('DOMContentLoaded', function() {
         fahrenheitToCelsius: (f) => (f - 32) * 5/9,
         whPerKmToMiPerKwh: (whPerKm) => 1000 / (whPerKm * 1.60934)
     };
+
+    // Weather-tab charts receive mi/kWh and Celsius from the API regardless of
+    // display preference, so they convert at render time.
+    function displayEfficiency(miPerKwh) {
+        if (miPerKwh === null || miPerKwh === undefined) { return miPerKwh; }
+        return currentUnits === 'metric' ? 1000 / (miPerKwh * 1.60934) : miPerKwh;
+    }
+
+    function efficiencyUnitLabel() {
+        return currentUnits === 'metric' ? 'Wh/km' : 'mi/kWh';
+    }
+
+    function displayTemp(celsius) {
+        if (celsius === null || celsius === undefined) { return celsius; }
+        return currentUnits === 'metric' ? celsius : conversions.celsiusToFahrenheit(celsius);
+    }
+
+    function tempUnitLabel() {
+        return currentUnits === 'metric' ? '°C' : '°F';
+    }
     
     let currentUnits = localStorage.getItem('units') || 'metric';
     let currentTrips = [];
@@ -299,6 +319,28 @@ document.addEventListener('DOMContentLoaded', function() {
         if (currentData.batteryHistory) {
             updateBatteryChart(currentData.batteryHistory);
         }
+
+        // Weather-tab charts bake their axis titles in at creation, so they are
+        // destroyed rather than updated; otherwise the labels keep the old unit.
+        if (tempEfficiencyChart) { tempEfficiencyChart.destroy(); tempEfficiencyChart = null; }
+        if (chargingTempChart) { chargingTempChart.destroy(); chargingTempChart = null; }
+        loadTemperatureEfficiency(currentTimeRange, currentStartDate, currentEndDate);
+        loadChargingTemperatureImpact(currentTimeRange, currentStartDate, currentEndDate);
+        if (window.PYVISIONIC_WEATHER_REFRESH) { window.PYVISIONIC_WEATHER_REFRESH(); }
+    });
+
+    // Charge-type filter for the temperature/charging chart.
+    document.addEventListener('click', function (event) {
+        const button = event.target.closest('.chart-filter-btn');
+        if (!button) { return; }
+        window.PYVISIONIC_CHARGE_TYPE = button.dataset.chargeType;
+        document.querySelectorAll('.chart-filter-btn').forEach(other => {
+            const on = other === button;
+            other.classList.toggle('active', on);
+            other.setAttribute('aria-pressed', String(on));
+        });
+        if (chargingTempChart) { chargingTempChart.destroy(); chargingTempChart = null; }
+        loadChargingTemperatureImpact(currentTimeRange, currentStartDate, currentEndDate);
     });
     
     async function loadCurrentStatus() {
@@ -1644,15 +1686,16 @@ document.addEventListener('DOMContentLoaded', function() {
             // Create scatter plot with trend line
             const ctx = document.getElementById('temperature-efficiency-chart').getContext('2d');
             
-            // Prepare data for scatter plot
+            // The API reports efficiency as mi/kWh and temperature in Celsius;
+            // both follow the units toggle here.
             const scatterData = data.raw_data.map(point => ({
-                x: point.temperature,
-                y: point.efficiency
+                x: displayTemp(point.temperature),
+                y: displayEfficiency(point.efficiency)
             }));
-            
+
             // Prepare data for bar chart (binned data)
             const barLabels = data.temperature_bins.map(bin => bin.temperature_range);
-            const barData = data.temperature_bins.map(bin => bin.avg_efficiency);
+            const barData = data.temperature_bins.map(bin => displayEfficiency(bin.avg_efficiency));
             
             // Update or create chart
             if (tempEfficiencyChart) {
@@ -1704,12 +1747,12 @@ document.addEventListener('DOMContentLoaded', function() {
                                 callbacks: {
                                     label: function(context) {
                                         if (context.dataset.type === 'scatter') {
-                                            return `${context.parsed.x.toFixed(1)}°C: ${context.parsed.y.toFixed(2)} mi/kWh`;
+                                            return `${context.parsed.x.toFixed(1)}${tempUnitLabel()}: ${context.parsed.y.toFixed(2)} ${efficiencyUnitLabel()}`;
                                         } else {
                                             const binIndex = context.dataIndex;
                                             const bin = data.temperature_bins[binIndex];
                                             return [
-                                                `Average: ${context.parsed.y.toFixed(2)} mi/kWh`,
+                                                `Average: ${context.parsed.y.toFixed(2)} ${efficiencyUnitLabel()}`,
                                                 `Trips: ${bin.trip_count}`,
                                                 `Distance: ${bin.total_distance} km`
                                             ];
@@ -1724,7 +1767,7 @@ document.addEventListener('DOMContentLoaded', function() {
                                 position: 'bottom',
                                 title: {
                                     display: true,
-                                    text: 'Temperature (°C)'
+                                    text: `Temperature (${tempUnitLabel()})`
                                 },
                                 grid: {
                                     display: true
@@ -1742,7 +1785,7 @@ document.addEventListener('DOMContentLoaded', function() {
                                 type: 'linear',
                                 title: {
                                     display: true,
-                                    text: 'Efficiency (mi/kWh)'
+                                    text: `Efficiency (${efficiencyUnitLabel()})`
                                 },
                                 min: 0
                             }
@@ -1768,12 +1811,12 @@ document.addEventListener('DOMContentLoaded', function() {
                 <div class="stat-item">
                     <span class="stat-label">Best Efficiency Range:</span>
                     <span class="stat-value">${bestBin.temperature_range}</span>
-                    <span class="stat-detail">${bestBin.avg_efficiency} mi/kWh average</span>
+                    <span class="stat-detail">${displayEfficiency(bestBin.avg_efficiency).toFixed(2)} ${efficiencyUnitLabel()} average</span>
                 </div>
                 <div class="stat-item">
                     <span class="stat-label">Worst Efficiency Range:</span>
                     <span class="stat-value">${worstBin.temperature_range}</span>
-                    <span class="stat-detail">${worstBin.avg_efficiency} mi/kWh average</span>
+                    <span class="stat-detail">${displayEfficiency(worstBin.avg_efficiency).toFixed(2)} ${efficiencyUnitLabel()} average</span>
                 </div>
                 <div class="stat-item">
                     <span class="stat-label">Efficiency Loss:</span>
@@ -1821,13 +1864,23 @@ document.addEventListener('DOMContentLoaded', function() {
 
             const ctx = document.getElementById('charging-temperature-chart').getContext('2d');
 
-            const scatterData = data.raw_data.map(point => ({
-                x: point.temperature,
+            // L1 sessions sit near 1.3 kW while DC fast charging reaches 160 kW.
+            // On a shared linear axis the 97% that are AC collapse onto the
+            // baseline, so one population is shown at a time.
+            const activeType = window.PYVISIONIC_CHARGE_TYPE || 'dcfc';
+            const selected = activeType === 'all' ? data.raw_data :
+                data.raw_data.filter(point => point.charge_type === activeType);
+
+            const scatterData = selected.map(point => ({
+                x: displayTemp(point.temperature),
                 y: point.avg_power
             }));
 
-            const barLabels = data.temperature_bins.map(bin => bin.temperature_range);
-            const barData = data.temperature_bins.map(bin => bin.avg_power);
+            // The binned averages mix charge types, so they are only meaningful
+            // against the unfiltered view.
+            const showBins = activeType === 'all';
+            const barLabels = showBins ? data.temperature_bins.map(bin => bin.temperature_range) : [];
+            const barData = showBins ? data.temperature_bins.map(bin => bin.avg_power) : [];
 
             if (chargingTempChart) {
                 chargingTempChart.data.datasets[0].data = scatterData;
@@ -1879,7 +1932,7 @@ document.addEventListener('DOMContentLoaded', function() {
                                 callbacks: {
                                     label: function(context) {
                                         if (context.dataset.type === 'scatter') {
-                                            return `${context.parsed.x.toFixed(1)}°C: ${context.parsed.y.toFixed(2)} kW`;
+                                            return `${context.parsed.x.toFixed(1)}${tempUnitLabel()}: ${context.parsed.y.toFixed(2)} kW`;
                                         } else {
                                             const bin = data.temperature_bins[context.dataIndex];
                                             return [
@@ -1899,7 +1952,7 @@ document.addEventListener('DOMContentLoaded', function() {
                                 position: 'bottom',
                                 title: {
                                     display: true,
-                                    text: 'Temperature (°C)'
+                                    text: `Temperature (${tempUnitLabel()})`
                                 }
                             },
                             x2: {
@@ -3013,15 +3066,23 @@ document.head.appendChild(style);
                 if (!months.length) { return; }
                 renderMonthlyTable(months);
 
+                // This IIFE is outside the scope holding currentUnits, so it
+                // reads the same persisted preference the toggle writes.
+                const metric = (localStorage.getItem('units') || 'metric') === 'metric';
+                const unitLabel = metric ? 'Wh/km' : 'Wh/mi';
+                const value = m => (metric ? m.wh_per_km : m.wh_per_mile);
+                const tempLabel = metric ? '°C' : '°F';
+                const temp = c => (c === null ? null : (metric ? c : c * 9 / 5 + 32));
+
                 if (monthlyChart) { monthlyChart.destroy(); }
                 monthlyChart = new Chart(canvas.getContext('2d'), {
                     type: 'bar',
                     data: {
                         labels: months.map(m => m.month),
                         datasets: [{
-                            label: 'Wh per mile',
-                            data: months.map(m => m.wh_per_mile),
-                            backgroundColor: months.map(m => temperatureColor(m.temperature)),
+                            label: `Energy per distance (${unitLabel})`,
+                            data: months.map(value),
+                            backgroundColor: months.map(m => temperatureColor(m.temperature)),  // ramp stays on Celsius
                             borderWidth: 0,
                             borderRadius: 4
                         }]
@@ -3036,8 +3097,8 @@ document.head.appendChild(style);
                                     label: context => {
                                         const m = months[context.dataIndex];
                                         return [
-                                            `${m.wh_per_mile.toFixed(0)} Wh/mi (${m.mi_per_kwh.toFixed(2)} mi/kWh)`,
-                                            m.temperature === null ? '' : `Avg temperature: ${m.temperature} °C`,
+                                            `${value(m).toFixed(0)} ${unitLabel} (${m.mi_per_kwh.toFixed(2)} mi/kWh)`,
+                                            m.temperature === null ? '' : `Avg temperature: ${temp(m.temperature).toFixed(1)} ${tempLabel}`,
                                             `${m.miles.toFixed(0)} mi over ${m.trips} trips`
                                         ].filter(Boolean);
                                     }
@@ -3048,7 +3109,7 @@ document.head.appendChild(style);
                             x: { title: { display: true, text: 'Month' } },
                             y: {
                                 beginAtZero: true,
-                                title: { display: true, text: 'Energy used (Wh per mile)' }
+                                title: { display: true, text: `Energy used (${unitLabel})` }
                             }
                         }
                     }
@@ -3086,6 +3147,11 @@ document.head.appendChild(style);
         });
         return best;
     }
+
+    window.PYVISIONIC_WEATHER_REFRESH = function () {
+        if (monthlyLoaded) { loadMonthlyEfficiency(); }
+        if (efficiencyLoaded) { loadChargingEfficiency(); }
+    };
 
     window.PYVISIONIC_EFFICIENCY = {
         load: loadAllEfficiencyPoints,

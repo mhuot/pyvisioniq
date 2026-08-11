@@ -1744,3 +1744,41 @@ canvas {
     font-size: 0.8em;
     white-space: nowrap;
 }
+
+/* Chart-scoped filter buttons, e.g. picking a charging type to display.
+   Selection is carried by weight and border as well as fill, so it does not
+   depend on colour alone. */
+.chart-filter {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+}
+
+.chart-filter-btn {
+    padding: 0.5rem 0.9rem;
+    min-height: 44px;
+    /* #b6bfc3 reads 1.87:1 on the card surface; this clears the 3:1 floor
+       for UI component boundaries. */
+    border: 2px solid #828f95;
+    border-radius: var(--border-radius);
+    background: var(--card-bg);
+    color: var(--text-color);
+    font-size: 0.9rem;
+    cursor: pointer;
+}
+
+.chart-filter-btn:hover {
+    background: var(--bg-color);
+}
+
+.chart-filter-btn.active {
+    font-weight: 700;
+    border-color: var(--primary-color);
+    background: var(--bg-color);
+}
+
+.chart-filter-btn:focus-visible {
+    outline: 3px solid var(--primary-color);
+    outline-offset: 2px;
+}
