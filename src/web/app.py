@@ -17,7 +17,8 @@ sys.path.append(str(Path(__file__).parent.parent.parent))
 
 from src.api.client import APIError, CachedVehicleClient
 from src.storage.csv_store import CSVStorage
-from src.utils.plug_sessions import append_plug_sample
+from src.utils.charge_efficiency import MIN_SOC_POINTS, compute_efficiency_points, summarize
+from src.utils.plug_sessions import append_plug_sample, load_ha_export, load_plug_log
 from src.utils.receipts import upsert_receipts
 from src.web.auth import admin_required, api_login_required, init_auth, login_required
 from src.web.auth_routes import auth_bp
@@ -811,6 +812,142 @@ def get_charging_temperature_impact():
 
     except Exception as e:
         app.logger.error(f"Error in charging temperature impact analysis: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/efficiency-by-month")
+@api_login_required
+def get_efficiency_by_month():
+    """Return driving efficiency and ambient temperature for each calendar month.
+
+    Complements the temperature-binned chart: binning by temperature shows the
+    relationship, while binning by month shows the seasonal cycle actually lived
+    through, including how long each part of it lasted.
+
+    Note on units: ``trips.distance`` is recorded in MILES (confirmed against the
+    odometer, which is in km, at a ratio of ~1.61 before per-trip truncation).
+    Efficiency is therefore computed as Wh per mile and converted from there.
+    """
+    try:
+        trips_df = storage.get_trips_df()
+        if trips_df.empty:
+            return jsonify({"error": "No trip data available", "months": []}), 404
+
+        trips_df = trips_df.copy()
+        trips_df["date"] = pd.to_datetime(
+            trips_df["date"].astype(str).str.replace(r"\.0+$", "", regex=True), errors="coerce"
+        )
+        trips_df = trips_df.dropna(subset=["date"])
+        trips_df["distance"] = pd.to_numeric(trips_df["distance"], errors="coerce")
+        trips_df["total_consumed"] = pd.to_numeric(trips_df["total_consumed"], errors="coerce")
+        trips_df = trips_df[(trips_df["distance"] > 0) & (trips_df["total_consumed"] > 0)]
+        if trips_df.empty:
+            return jsonify({"error": "No usable trip data", "months": []}), 404
+
+        battery_df = storage.get_battery_df()
+        monthly_temp = {}
+        if not battery_df.empty:
+            battery_df = battery_df.copy()
+            battery_df["timestamp"] = pd.to_datetime(
+                battery_df["timestamp"], format="mixed", errors="coerce"
+            )
+            battery_df = battery_df.dropna(subset=["timestamp"])
+            temp_column = "meteo_temp" if "meteo_temp" in battery_df.columns else "temperature"
+            battery_df[temp_column] = pd.to_numeric(battery_df[temp_column], errors="coerce")
+            grouped = battery_df.dropna(subset=[temp_column]).groupby(
+                battery_df["timestamp"].dt.to_period("M")
+            )[temp_column]
+            monthly_temp = {
+                str(period): round(float(value), 1) for period, value in grouped.mean().items()
+            }
+
+        months = []
+        for period, group in trips_df.groupby(trips_df["date"].dt.to_period("M")):
+            miles = float(group["distance"].sum())
+            watt_hours = float(group["total_consumed"].sum())
+            if miles <= 0:
+                continue
+            wh_per_mile = watt_hours / miles
+            months.append(
+                {
+                    "month": str(period),
+                    "trips": int(len(group)),
+                    "miles": round(miles, 1),
+                    "kwh": round(watt_hours / 1000.0, 1),
+                    "wh_per_mile": round(wh_per_mile, 1),
+                    "wh_per_km": round(wh_per_mile / 1.60934, 1),
+                    "mi_per_kwh": round(1000.0 / wh_per_mile, 2),
+                    "temperature": monthly_temp.get(str(period)),
+                }
+            )
+
+        months.sort(key=lambda entry: entry["month"])
+        return jsonify({"months": months})
+
+    except Exception as e:  # pylint: disable=broad-except
+        app.logger.error("Error computing efficiency by month: %s", e, exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/charging-efficiency")
+@api_login_required
+def get_charging_efficiency():
+    """Return AC-to-pack charging efficiency per session, plus headline totals.
+
+    Compares metered wall energy from the smart plug against pack energy implied
+    by the SOC gain. Sessions too small for whole-percent SOC to be meaningful
+    are excluded, so the response is sparse by design.
+    """
+    try:
+        ac_frames = []
+        ha_export = Path("data/ha_plug_history.csv")
+        if ha_export.exists():
+            ac_frames.append(load_ha_export(ha_export))
+        ac_frames.append(load_plug_log())
+        ac_samples = pd.concat(ac_frames, ignore_index=True) if ac_frames else pd.DataFrame()
+        if not ac_samples.empty:
+            ac_samples = (
+                ac_samples.sort_values("timestamp")
+                .drop_duplicates("timestamp")
+                .reset_index(drop=True)
+            )
+
+        battery_df = storage.get_battery_df()
+        if battery_df.empty or ac_samples.empty:
+            return (
+                jsonify({"error": "No smart-plug or battery data available", "points": []}),
+                404,
+            )
+
+        battery_df["timestamp"] = pd.to_datetime(
+            battery_df["timestamp"], format="mixed", errors="coerce"
+        )
+
+        # SOC spans the *usable* window, not the 77.4 kWh total pack. Using the
+        # gross figure here would overstate delivered energy, and therefore
+        # efficiency, by about 4.6%.
+        pack_kwh = float(os.getenv("BATTERY_USABLE_KWH", "74.0"))
+        points = compute_efficiency_points(battery_df, ac_samples, pack_kwh)
+
+        hours = request.args.get("hours")
+        if hours and hours != "all" and points:
+            try:
+                cutoff = datetime.now() - timedelta(hours=float(hours))
+                points = [p for p in points if datetime.fromisoformat(p["start_time"]) >= cutoff]
+            except ValueError:
+                pass
+
+        return jsonify(
+            {
+                "points": points,
+                "summary": summarize(points),
+                "pack_kwh": pack_kwh,
+                "min_soc_points": MIN_SOC_POINTS,
+            }
+        )
+
+    except Exception as e:  # pylint: disable=broad-except
+        app.logger.error("Error computing charging efficiency: %s", e, exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 
