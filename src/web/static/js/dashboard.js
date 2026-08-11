@@ -288,6 +288,17 @@ document.addEventListener('DOMContentLoaded', function() {
         return currentUnits === 'metric' ? celsius : conversions.celsiusToFahrenheit(celsius);
     }
 
+    // Temperature bin labels arrive from the API pre-formatted in Celsius,
+    // e.g. "-25 to -20°C". They are category labels on the chart, so without
+    // rewriting them the axis keeps reading Celsius no matter what the units
+    // toggle says.
+    function relabelBand(range) {
+        const bounds = String(range).match(/(-?\d+(?:\.\d+)?)\s*to\s*(-?\d+(?:\.\d+)?)/);
+        if (!bounds) { return range; }
+        return `${displayTemp(parseFloat(bounds[1])).toFixed(0)} to ` +
+            `${displayTemp(parseFloat(bounds[2])).toFixed(0)}${tempUnitLabel()}`;
+    }
+
     function tempUnitLabel() {
         return currentUnits === 'metric' ? '°C' : '°F';
     }
@@ -1694,7 +1705,7 @@ document.addEventListener('DOMContentLoaded', function() {
             }));
 
             // Prepare data for bar chart (binned data)
-            const barLabels = data.temperature_bins.map(bin => bin.temperature_range);
+            const barLabels = data.temperature_bins.map(bin => relabelBand(bin.temperature_range));
             const barData = data.temperature_bins.map(bin => displayEfficiency(bin.avg_efficiency));
             
             // Update or create chart
@@ -1810,12 +1821,12 @@ document.addEventListener('DOMContentLoaded', function() {
             statsHtml += `
                 <div class="stat-item">
                     <span class="stat-label">Best Efficiency Range:</span>
-                    <span class="stat-value">${bestBin.temperature_range}</span>
+                    <span class="stat-value">${relabelBand(bestBin.temperature_range)}</span>
                     <span class="stat-detail">${displayEfficiency(bestBin.avg_efficiency).toFixed(2)} ${efficiencyUnitLabel()} average</span>
                 </div>
                 <div class="stat-item">
                     <span class="stat-label">Worst Efficiency Range:</span>
-                    <span class="stat-value">${worstBin.temperature_range}</span>
+                    <span class="stat-value">${relabelBand(worstBin.temperature_range)}</span>
                     <span class="stat-detail">${displayEfficiency(worstBin.avg_efficiency).toFixed(2)} ${efficiencyUnitLabel()} average</span>
                 </div>
                 <div class="stat-item">
@@ -2922,6 +2933,22 @@ document.head.appendChild(style);
     'use strict';
 
     const TAB_STORAGE_KEY = 'pyvisionic.activeTab';
+
+    // The units helpers in the main dashboard scope live inside its
+    // DOMContentLoaded callback and are not visible here, so this block reads
+    // the same persisted preference directly.
+    function unitsAreMetric() {
+        return (localStorage.getItem('units') || 'metric') === 'metric';
+    }
+
+    function localTempLabel() {
+        return unitsAreMetric() ? '°C' : '°F';
+    }
+
+    function localTemp(celsius) {
+        if (celsius === null || celsius === undefined) { return celsius; }
+        return unitsAreMetric() ? celsius : celsius * 9 / 5 + 32;
+    }
     let chargeEfficiencyChart = null;
     let efficiencyLoaded = false;
 
@@ -2998,12 +3025,12 @@ document.head.appendChild(style);
             <td>${p.ac_kwh.toFixed(2)}</td>
             <td>${p.pack_kwh.toFixed(2)}</td>
             <td>${p.efficiency_pct.toFixed(1)}%</td>
-            <td>${p.temperature === null ? '--' : p.temperature.toFixed(1)}</td>
+            <td>${p.temperature === null ? '--' : localTemp(p.temperature).toFixed(1)}</td>
         </tr>`).join('');
         host.innerHTML = `<table><caption class="sr-only">Charging efficiency by session</caption>
             <thead><tr><th scope="col">Session start</th><th scope="col">Wall kWh</th>
             <th scope="col">Battery kWh</th><th scope="col">Efficiency</th>
-            <th scope="col">Temp °C</th></tr></thead><tbody>${rows}</tbody></table>`;
+            <th scope="col">Temp ${localTempLabel()}</th></tr></thead><tbody>${rows}</tbody></table>`;
     }
 
     function loadChargingEfficiency() {
@@ -3070,7 +3097,7 @@ document.head.appendChild(style);
                                             `Wall: ${p.ac_kwh} kWh over ${p.duration_hours} h`,
                                             `Battery: ${p.pack_kwh} kWh (+${p.soc_gain}%)`,
                                             `Lost: ${p.lost_kwh} kWh`,
-                                            p.temperature === null ? '' : `Ambient: ${p.temperature} °C`
+                                            p.temperature === null ? '' : `Ambient: ${localTemp(p.temperature).toFixed(1)} ${localTempLabel()}`
                                         ].filter(Boolean);
                                     }
                                 }
@@ -3121,17 +3148,23 @@ document.head.appendChild(style);
     function renderMonthlyTable(months) {
         const host = document.getElementById('monthly-efficiency-table');
         if (!host) { return; }
+        const metric = unitsAreMetric();
+        const energyLabel = metric ? 'Wh/km' : 'Wh/mi';
+        const distanceLabel = metric ? 'km' : 'mi';
+        const energy = m => (metric ? m.wh_per_km : m.wh_per_mile);
+        const distance = m => (metric ? m.miles * 1.60934 : m.miles);
+
         const rows = months.map(m => `<tr>
             <td>${m.month}</td>
-            <td>${m.wh_per_mile.toFixed(0)}</td>
+            <td>${energy(m).toFixed(0)}</td>
             <td>${m.mi_per_kwh.toFixed(2)}</td>
-            <td>${m.temperature === null ? '--' : m.temperature.toFixed(1)}</td>
-            <td>${m.miles.toFixed(0)}</td>
+            <td>${m.temperature === null ? '--' : localTemp(m.temperature).toFixed(1)}</td>
+            <td>${distance(m).toFixed(0)}</td>
         </tr>`).join('');
         host.innerHTML = `<table><caption class="sr-only">Driving efficiency by month</caption>
-            <thead><tr><th scope="col">Month</th><th scope="col">Wh/mi</th>
-            <th scope="col">mi/kWh</th><th scope="col">Avg temp °C</th>
-            <th scope="col">Miles</th></tr></thead><tbody>${rows}</tbody></table>`;
+            <thead><tr><th scope="col">Month</th><th scope="col">${energyLabel}</th>
+            <th scope="col">mi/kWh</th><th scope="col">Avg temp ${localTempLabel()}</th>
+            <th scope="col">${distanceLabel}</th></tr></thead><tbody>${rows}</tbody></table>`;
     }
 
     function loadMonthlyEfficiency() {
