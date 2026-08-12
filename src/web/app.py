@@ -33,6 +33,13 @@ KM_PER_MILE = 1.60934
 # Bounds on believable driving efficiency. Anything outside is a logging fault:
 # the API sometimes records a stub consumption of a few Wh against a long
 # distance, which would otherwise read as thousands of miles per kWh.
+# Capacity from a charge session is only as precise as its SOC gain: one
+# whole percent on a 20-point session is 5%. Small sessions are excluded, and
+# a trend is withheld until there is enough history to outrun that noise.
+MIN_CAPACITY_SOC_POINTS = 15
+MIN_CAPACITY_SESSIONS = 20
+MIN_CAPACITY_SPAN_YEARS = 2.0
+
 MIN_PLAUSIBLE_MI_PER_KWH = 0.5
 MAX_PLAUSIBLE_MI_PER_KWH = 10.0
 
@@ -979,6 +986,110 @@ def get_efficiency_by_month():
 
     except Exception as e:  # pylint: disable=broad-except
         app.logger.error("Error computing efficiency by month: %s", e, exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/battery-health")
+@api_login_required
+def get_battery_health():
+    """Return pack capacity measurements over time, with their uncertainty.
+
+    Capacity is inferred from metered charge sessions as energy delivered per
+    SOC point. Sessions whose energy was itself derived from the SOC delta are
+    excluded: for those the ratio equals the configured capacity by
+    construction, so including them measures the constant, not the pack.
+
+    The response states whether a trend is distinguishable from noise rather
+    than leaving a caller to draw a line through scatter. Whole-percent SOC
+    puts roughly +/-2% on a typical session, which is larger than a year of
+    expected degradation, so "not yet" is the honest answer for a while.
+    """
+    try:
+        sessions = storage.get_charging_sessions_df()
+        if sessions.empty:
+            return jsonify({"error": "No charging sessions", "points": []}), 404
+
+        frame = sessions.copy()
+        frame["start_time"] = pd.to_datetime(frame["start_time"], errors="coerce")
+        for column in ("start_battery", "end_battery", "energy_added"):
+            frame[column] = pd.to_numeric(frame.get(column), errors="coerce")
+        frame = frame.dropna(subset=["start_time", "start_battery", "end_battery", "energy_added"])
+
+        if "energy_source" in frame.columns:
+            frame = frame[frame["energy_source"] == "metered"]
+
+        frame["soc_points"] = frame["end_battery"] - frame["start_battery"]
+        frame = frame[frame["soc_points"] >= MIN_CAPACITY_SOC_POINTS]
+        frame = frame.sort_values("start_time")
+
+        points = [
+            {
+                "date": row.start_time.isoformat(),
+                "soc_points": float(row.soc_points),
+                "energy_kwh": float(row.energy_added),
+                "pack_kwh": round(float(row.energy_added) / float(row.soc_points) * 100.0, 2),
+                # Quantisation on this measurement: one SOC point of the gain.
+                "uncertainty_pct": round(100.0 / float(row.soc_points), 1),
+            }
+            for row in frame.itertuples()
+        ]
+
+        if len(points) < MIN_CAPACITY_SESSIONS:
+            return jsonify(
+                {
+                    "points": points,
+                    "verdict": "insufficient_data",
+                    "reason": (
+                        f"{len(points)} metered sessions of at least "
+                        f"{MIN_CAPACITY_SOC_POINTS} SOC points; "
+                        f"{MIN_CAPACITY_SESSIONS} needed before a trend means anything."
+                    ),
+                }
+            )
+
+        stamps = pd.to_datetime([p["date"] for p in points])
+        days = (stamps - stamps[0]).days.to_numpy(dtype=float)
+        packs = np.array([p["pack_kwh"] for p in points], dtype=float)
+
+        slope, intercept = np.polyfit(days, packs, 1)
+        fitted = slope * days + intercept
+        residual_sd = float(np.std(packs - fitted, ddof=2))
+        slope_se = residual_sd / float(np.sqrt(np.sum((days - days.mean()) ** 2)))
+        annual = slope * 365.0
+        annual_ci = 1.96 * slope_se * 365.0
+        span_years = float(days[-1] - days[0]) / 365.0
+
+        significant = abs(annual) > annual_ci and span_years >= MIN_CAPACITY_SPAN_YEARS
+
+        return jsonify(
+            {
+                "points": points,
+                "verdict": "trend_detected" if significant else "below_noise_floor",
+                "annual_change_kwh": round(float(annual), 3),
+                "annual_change_ci_kwh": round(float(annual_ci), 3),
+                "annual_change_pct": round(float(annual / intercept * 100.0), 2),
+                "current_estimate_kwh": round(float(fitted[-1]), 1),
+                "span_years": round(span_years, 2),
+                "session_count": len(points),
+                "median_uncertainty_pct": round(
+                    float(np.median([p["uncertainty_pct"] for p in points])), 1
+                ),
+                "reason": (
+                    None
+                    if significant
+                    else (
+                        f"Change of {annual:+.2f} kWh/year sits inside its own "
+                        f"+/-{annual_ci:.2f} confidence interval over "
+                        f"{span_years:.1f} years. Whole-percent SOC puts about "
+                        f"+/-2% on each session, which is more than a year of "
+                        f"expected degradation."
+                    )
+                ),
+            }
+        )
+
+    except Exception as e:  # pylint: disable=broad-except
+        app.logger.error("Error computing battery health: %s", e, exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 

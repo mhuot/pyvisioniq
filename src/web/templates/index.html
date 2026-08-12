@@ -313,6 +313,34 @@
 
         <div class="tab-panel" role="tabpanel" id="panel-charging" aria-labelledby="tab-charging"
              tabindex="0" hidden>
+        <section class="chart-section" aria-labelledby="battery-health-heading">
+            <h2 id="battery-health-heading">Battery Health</h2>
+            <div class="stat-row" id="battery-health-stats">
+                <div class="stat-tile">
+                    <p class="stat-value" id="pack-estimate">--</p>
+                    <p class="stat-label">estimated usable capacity</p>
+                </div>
+                <div class="stat-tile">
+                    <p class="stat-value" id="pack-sessions">--</p>
+                    <p class="stat-label">metered sessions large enough to measure</p>
+                </div>
+                <div class="stat-tile">
+                    <p class="stat-value" id="pack-span">--</p>
+                    <p class="stat-label">years of history</p>
+                </div>
+            </div>
+            <div class="chart-container">
+                <canvas id="battery-health-chart" role="img"
+                        aria-label="Estimated pack capacity per charging session over time"></canvas>
+            </div>
+            <p class="chart-note" id="battery-health-note">
+                Capacity is inferred from metered charging sessions as energy delivered per
+                percent of charge gained. Sessions whose energy was itself estimated from the
+                battery percentage are excluded — for those the answer would be the configured
+                capacity by definition, not a measurement.
+            </p>
+        </section>
+
         <section class="charging-sessions" aria-labelledby="charging-heading">
             <h2 id="charging-heading">Charging History</h2>
             <div class="sessions-container" id="charging-sessions-container">

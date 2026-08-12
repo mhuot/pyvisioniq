@@ -42,6 +42,11 @@ CHARGING_SESSION_FIELDS = [
     "start_battery",
     "end_battery",
     "energy_added",
+    # Whether energy_added was metered or inferred from the SOC delta. Without
+    # it the two are indistinguishable downstream, and an inferred value is
+    # circular for anything trying to measure pack capacity: it equals the SOC
+    # delta times the configured capacity by construction.
+    "energy_source",
     "avg_power",
     "max_power",
     "location_lat",
@@ -453,6 +458,11 @@ class CSVStorage(StorageBackend):
                 battery_delta > 0
             )
             df.loc[needs_energy, "energy_added"] = estimated_energy[needs_energy].round(2)
+            if "energy_source" not in df.columns:
+                df["energy_source"] = pd.NA
+            df.loc[needs_energy, "energy_source"] = "derived"
+            metered = df["energy_added"].notna() & df["energy_source"].isna()
+            df.loc[metered, "energy_source"] = "metered"
 
         # Average power from energy and duration when missing. A minimum-duration
         # floor prevents dividing by a tiny interval and reporting absurd kW.
@@ -687,6 +697,7 @@ class CSVStorage(StorageBackend):
             if battery_diff > 0:
                 energy_added = (battery_diff / 100) * self.battery_capacity_kwh
                 sessions_df.loc[idx, "energy_added"] = round(energy_added, 2)
+                sessions_df.loc[idx, "energy_source"] = "derived"
 
             # Calculate average power. Require a minimum duration so a tiny
             # interval between snapshots can't yield an absurd kW value.

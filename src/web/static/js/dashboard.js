@@ -3023,6 +3023,7 @@ document.head.appendChild(style);
                 if (instance && typeof instance.resize === 'function') { instance.resize(); }
             });
         }
+        if (tab.id === 'tab-charging' && !healthLoaded) { loadBatteryHealth(); }
         if (tab.id === 'tab-weather') {
             if (!efficiencyLoaded) { loadChargingEfficiency(); }
             if (!monthlyLoaded) { loadMonthlyEfficiency(); }
@@ -3272,6 +3273,86 @@ document.head.appendChild(style);
                 });
             })
             .catch(error => console.error('Failed to load monthly efficiency:', error));
+    }
+
+    /* --- battery health -------------------------------------------------- */
+
+    let healthChart = null;
+    let healthLoaded = false;
+
+    function loadBatteryHealth() {
+        const canvas = document.getElementById('battery-health-chart');
+        if (!canvas) { return; }
+        healthLoaded = true;
+
+        fetch('/api/battery-health')
+            .then(response => response.json())
+            .then(data => {
+                const points = (data && data.points) || [];
+                const note = document.getElementById('battery-health-note');
+                const set = (id, text) => {
+                    const el = document.getElementById(id);
+                    if (el) { el.textContent = text; }
+                };
+
+                set('pack-estimate', data.current_estimate_kwh ?
+                    `${data.current_estimate_kwh} kWh` : '--');
+                set('pack-sessions', String(data.session_count || points.length || 0));
+                set('pack-span', data.span_years ? data.span_years.toFixed(1) : '--');
+
+                // The verdict is the point of this section. A trendline through
+                // scatter that cannot resolve a year of degradation would look
+                // authoritative and mean nothing, so say so instead.
+                if (note && data.reason) {
+                    note.textContent = data.verdict === 'insufficient_data'
+                        ? `Not enough history yet. ${data.reason}`
+                        : `No measurable degradation yet. ${data.reason}`;
+                }
+
+                if (!points.length) {
+                    if (healthChart) { healthChart.destroy(); healthChart = null; }
+                    return;
+                }
+
+                if (healthChart) { healthChart.destroy(); }
+                healthChart = new Chart(canvas.getContext('2d'), {
+                    type: 'scatter',
+                    data: {
+                        datasets: [{
+                            label: 'Measured capacity',
+                            data: points.map(p => ({ x: new Date(p.date), y: p.pack_kwh })),
+                            backgroundColor: '#2471a3',
+                            borderColor: '#2471a3',
+                            pointRadius: 6,
+                            pointHoverRadius: 9
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: { display: false },
+                            tooltip: {
+                                callbacks: {
+                                    label: context => {
+                                        const p = points[context.dataIndex];
+                                        return [
+                                            `${p.pack_kwh} kWh (±${p.uncertainty_pct}%)`,
+                                            `${p.energy_kwh} kWh over ${p.soc_points}% of charge`
+                                        ];
+                                    }
+                                }
+                            }
+                        },
+                        scales: {
+                            x: { type: 'time', time: { unit: 'month' },
+                                 title: { display: true, text: 'Session date' } },
+                            y: { title: { display: true, text: 'Implied usable capacity (kWh)' } }
+                        }
+                    }
+                });
+            })
+            .catch(error => console.error('Failed to load battery health:', error));
     }
 
     /* --- shared lookup so other tables can show the same measurement ------ */
