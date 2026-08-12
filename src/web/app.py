@@ -566,47 +566,64 @@ def get_temperature_efficiency():
         if trips_df.empty or battery_df.empty:
             return jsonify({"error": "No data available"}), 404
 
-        # Merge trips with battery data to get temperature
-        # First, get the closest battery reading for each trip
-        efficiency_data = []
+        # Pair each trip with the nearest battery reading within an hour.
+        #
+        # This was a per-trip scan of the whole battery frame, with the
+        # timestamp column re-parsed inside the loop -- about 13 million
+        # redundant datetime parses across ~1,500 trips and ~9,000 readings,
+        # which took 11 seconds. merge_asof does the same nearest-match join
+        # vectorised, once.
+        trips_df = trips_df.copy()
+        trips_df["date"] = pd.to_datetime(trips_df["date"], errors="coerce")
+        trips_df["distance"] = pd.to_numeric(trips_df["distance"], errors="coerce")
+        trips_df["total_consumed"] = pd.to_numeric(trips_df["total_consumed"], errors="coerce")
+        trips_df = trips_df.dropna(subset=["date", "distance", "total_consumed"])
+        trips_df = trips_df[(trips_df["distance"] > 0) & (trips_df["total_consumed"] > 0)]
 
-        for _, trip in trips_df.iterrows():
-            if trip["distance"] > 0 and trip["total_consumed"] and trip["total_consumed"] > 0:
-                # Calculate efficiency
-                per_km = efficiency_wh_per_km(trip["total_consumed"], trip["distance"])
-                efficiency_mi_per_kwh = 1000 / (per_km * KM_PER_MILE)
+        trips_df["efficiency"] = 1000.0 / (
+            trips_df.apply(
+                lambda row: efficiency_wh_per_km(row["total_consumed"], row["distance"]),
+                axis=1,
+            )
+            * KM_PER_MILE
+        )
 
-                # Discard logging faults. Six rows in the history pair a long
-                # distance with a stub consumption of a few Wh, the worst
-                # reading 15,300 mi/kWh. Plotted raw they set the y-axis two
-                # orders of magnitude too high and flatten every real point
-                # onto the baseline.
-                if not (
-                    MIN_PLAUSIBLE_MI_PER_KWH <= efficiency_mi_per_kwh <= MAX_PLAUSIBLE_MI_PER_KWH
-                ):
-                    continue
+        # Discard logging faults: a few rows pair a long distance with a stub
+        # consumption of a few Wh, the worst reading 15,300 mi/kWh. Plotted raw
+        # they set the y-axis two orders of magnitude too high and flatten every
+        # real point onto the baseline.
+        trips_df = trips_df[
+            trips_df["efficiency"].between(MIN_PLAUSIBLE_MI_PER_KWH, MAX_PLAUSIBLE_MI_PER_KWH)
+        ]
 
-                # Find closest battery reading to get temperature
-                trip_time = pd.to_datetime(trip["date"])
-                battery_df["timestamp"] = pd.to_datetime(battery_df["timestamp"], format="ISO8601")
-                time_diffs = abs(battery_df["timestamp"] - trip_time)
-                closest_idx = time_diffs.idxmin()
+        battery_df = battery_df.copy()
+        battery_df["timestamp"] = pd.to_datetime(
+            battery_df["timestamp"], format="ISO8601", errors="coerce"
+        )
+        battery_df["temperature"] = pd.to_numeric(battery_df["temperature"], errors="coerce")
+        battery_df = battery_df.dropna(subset=["timestamp", "temperature"]).sort_values("timestamp")
 
-                if time_diffs[closest_idx] < pd.Timedelta(hours=1):  # Within 1 hour
-                    temp = battery_df.loc[closest_idx, "temperature"]
-                    if pd.notna(temp):
-                        efficiency_data.append(
-                            {
-                                "temperature": float(temp),
-                                "efficiency": float(efficiency_mi_per_kwh),
-                                "distance": float(trip["distance"]),
-                                "date": (
-                                    trip["date"].isoformat()
-                                    if hasattr(trip["date"], "isoformat")
-                                    else str(trip["date"])
-                                ),
-                            }
-                        )
+        if trips_df.empty or battery_df.empty:
+            return jsonify({"error": "No efficiency data with temperature available"}), 404
+
+        matched = pd.merge_asof(
+            trips_df.sort_values("date"),
+            battery_df[["timestamp", "temperature"]],
+            left_on="date",
+            right_on="timestamp",
+            direction="nearest",
+            tolerance=pd.Timedelta(hours=1),
+        ).dropna(subset=["temperature"])
+
+        efficiency_data = [
+            {
+                "temperature": float(row.temperature),
+                "efficiency": float(row.efficiency),
+                "distance": float(row.distance),
+                "date": row.date.isoformat(),
+            }
+            for row in matched.itertuples()
+        ]
 
         if not efficiency_data:
             return (
@@ -728,16 +745,24 @@ def get_charging_temperature_impact():
 
         battery_df = battery_df.sort_values("timestamp").reset_index(drop=True)
 
+        # Nearest battery reading per session, resolved in one vectorised pass
+        # rather than scanning the whole frame once per session. Readings
+        # without a temperature are dropped first, so a session matches the
+        # nearest reading that actually has one.
+        with_temp = battery_df.dropna(subset=["temperature"]).sort_values("timestamp")
+        session_temps = pd.merge_asof(
+            sessions_df[["start_time"]].sort_values("start_time"),
+            with_temp[["timestamp", "temperature"]],
+            left_on="start_time",
+            right_on="timestamp",
+            direction="nearest",
+            tolerance=pd.Timedelta(minutes=90),
+        )
+        temperature_by_start = dict(zip(session_temps["start_time"], session_temps["temperature"]))
+
         def lookup_temperature(session_time):
-            deltas = (battery_df["timestamp"] - session_time).abs()
-            if deltas.empty:
-                return None
-            idx = deltas.idxmin()
-            if pd.isna(idx):
-                return None
-            if deltas.iloc[idx] > pd.Timedelta(minutes=90):
-                return None
-            return battery_df.iloc[idx]["temperature"]
+            value = temperature_by_start.get(session_time)
+            return None if value is None or pd.isna(value) else value
 
         raw_points = []
         temp_bins: Dict[str, Dict[str, float]] = {}
