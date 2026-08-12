@@ -302,7 +302,10 @@ def main():
     )
     parser.add_argument(
         "--subject",
-        default="fleet.karwyn.notify,fleet.digest",
+        # One subject only. fleet.digest and any *.notify subject are both
+        # forwarded by fleet-notifier to the same Telegram chat, so publishing
+        # to both delivers every alert twice rather than reaching two places.
+        default="fleet.karwyn.notify",
         help="comma-separated NATS subjects to publish to",
     )
     parser.add_argument("--server", default="nats://localhost:4222")
