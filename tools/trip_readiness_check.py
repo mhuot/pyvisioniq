@@ -22,6 +22,7 @@ import pandas as pd
 
 DEFAULT_PLAN = os.path.join(os.path.dirname(__file__), "trip_plan.json")
 BATTERY_CSV = "data/battery_status.csv"
+PLUG_CSV = "data/plug_power.csv"
 
 # A day realistically offers 13-18 h plugged in (55-75% duty) based on the
 # logged home sessions. Beyond that the plan depends on charging essentially
@@ -30,6 +31,13 @@ DUTY_ON_TRACK = 0.55
 DUTY_TIGHT = 0.75
 
 NATS_BIN = os.environ.get("NATS_BIN", "/usr/local/bin/nats")
+
+# The smart plug reports every 5 minutes; the vehicle is polled every 90-150.
+# Whether the car is plugged in is therefore far better answered by the plug,
+# and a stale vehicle reading has already produced a "NOT plugged in" warning
+# for a car that had been charging for half an hour.
+PLUG_FRESH = pd.Timedelta(minutes=15)
+PLUG_CHARGING_WATTS = 100.0
 
 
 def load_plan(path):
@@ -44,6 +52,39 @@ def load_plan(path):
         raise SystemExit(f"No trip plan at {path}.{hint}")
     with open(path, encoding="utf-8") as handle:
         return json.load(handle)
+
+
+def plug_charging_state(repo_root, now):
+    """Charging state from the smart plug, or None when it cannot be trusted.
+
+    Returns None if the webhook feed is missing, unreadable or older than
+    PLUG_FRESH, so the caller falls back to the vehicle's own flag rather than
+    acting on a stale plug reading.
+    """
+    path = os.path.join(repo_root, PLUG_CSV)
+    if not os.path.exists(path):
+        return None
+    try:
+        frame = pd.read_csv(path)
+        frame["timestamp"] = pd.to_datetime(frame["timestamp"], errors="coerce")
+        frame["watts"] = pd.to_numeric(frame["watts"], errors="coerce")
+    except (OSError, ValueError, KeyError):
+        return None
+
+    frame = frame.dropna(subset=["timestamp", "watts"]).sort_values("timestamp")
+    if frame.empty:
+        return None
+
+    row = frame.iloc[-1]
+    age = now - row["timestamp"].to_pydatetime()
+    if age > PLUG_FRESH or age < pd.Timedelta(minutes=-5):
+        return None
+
+    return {
+        "is_charging": bool(row["watts"] >= PLUG_CHARGING_WATTS),
+        "watts": float(row["watts"]),
+        "age_minutes": round(age.total_seconds() / 60, 1),
+    }
 
 
 def latest_battery(repo_root):
@@ -126,6 +167,15 @@ def assess(plan, repo_root, now=None):
     stamp, soc, charging = latest_battery(repo_root)
     now = now or datetime.now()
 
+    # Prefer the smart plug for plugged-in state: it is minutes old rather than
+    # up to two and a half hours. SOC still comes from the vehicle, which is the
+    # only thing that knows it.
+    plug = plug_charging_state(repo_root, now)
+    charging_source = "vehicle"
+    if plug is not None:
+        charging = plug["is_charging"]
+        charging_source = "smart plug"
+
     pack = plan["pack_kwh"]
     charger_kw = plan["charger_kw"]
     depart = datetime.strptime(plan["departure"], "%Y-%m-%d %H:%M")
@@ -161,6 +211,9 @@ def assess(plan, repo_root, now=None):
         "stale_reading": age_hours > plan.get("max_reading_age_hours", 3.0),
         "soc_pct": soc,
         "is_charging": charging,
+        "charging_source": charging_source,
+        "plug_watts": plug["watts"] if plug else None,
+        "plug_age_minutes": plug["age_minutes"] if plug else None,
         "hours_to_departure": round(hours_left, 1),
         "pending_drive_kwh": round(pending_kwh, 1),
         "charge_needed_kwh": round(needed_kwh, 1),
@@ -170,6 +223,15 @@ def assess(plan, repo_root, now=None):
         "dcfc_minutes_equiv": round(shortfall_kwh / plan["dcfc_kw"] * 60, 0),
         "detail": detail,
     }
+
+
+def _charging_note(result):
+    """Describe charging state, naming the plug when that is what reported it."""
+    if not result["is_charging"]:
+        return " (NOT plugged in)"
+    if result["charging_source"] == "smart plug":
+        return f" (charging, {result['plug_watts']:.0f} W at the plug)"
+    return " (charging)"
 
 
 def summarize(result, plan):
@@ -187,7 +249,7 @@ def summarize(result, plan):
         )
     lines += [
         f"{head} for {plan['trip_name']} - {result['soc_pct']:.0f}% now"
-        f"{' (charging)' if result['is_charging'] else ' (NOT plugged in)'}",
+        f"{_charging_note(result)}",
         f"Need {result['charge_needed_kwh']:.1f} kWh in {result['hours_to_departure']:.0f} h "
         f"= {result['plugged_hours_needed']:.0f} h plugged ({result['duty_cycle_pct']:.0f}% duty)",
     ]

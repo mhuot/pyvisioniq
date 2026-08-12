@@ -14,7 +14,11 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "tools"))
 
-from trip_readiness_check import energy_consumed_on, remaining_load  # noqa: E402
+from trip_readiness_check import (  # noqa: E402
+    energy_consumed_on,
+    plug_charging_state,
+    remaining_load,
+)
 
 PACK = 74.0
 
@@ -91,3 +95,50 @@ def test_past_days_are_dropped(tmp_path):
     total, detail = remaining_load(plan, root, datetime(2026, 8, 11, 9, 0))
     assert total == 0.0
     assert detail == []
+
+
+def _plug_csv(tmp_path, samples):
+    """Write data/plug_power.csv from (timestamp, watts) pairs."""
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(exist_ok=True)
+    pd.DataFrame(samples, columns=["timestamp", "watts"]).to_csv(
+        data_dir / "plug_power.csv", index=False
+    )
+    return str(tmp_path)
+
+
+def test_fresh_plug_sample_reports_charging(tmp_path):
+    """A recent above-threshold reading means plugged in, whatever the car says."""
+    now = datetime(2026, 8, 11, 20, 26)
+    root = _plug_csv(tmp_path, [("2026-08-11 20:20:00", 1346.8)])
+    state = plug_charging_state(root, now)
+    assert state["is_charging"] is True
+    assert state["watts"] == pytest.approx(1346.8)
+    assert state["age_minutes"] == pytest.approx(6.0, abs=0.1)
+
+
+def test_fresh_plug_sample_reports_idle(tmp_path):
+    """The plug draws ~2 W when nothing is charging; that is not charging."""
+    now = datetime(2026, 8, 11, 20, 26)
+    root = _plug_csv(tmp_path, [("2026-08-11 20:20:00", 2.0)])
+    assert plug_charging_state(root, now)["is_charging"] is False
+
+
+def test_stale_plug_sample_is_ignored(tmp_path):
+    """Beyond the freshness window the caller must fall back to the vehicle."""
+    now = datetime(2026, 8, 11, 20, 26)
+    root = _plug_csv(tmp_path, [("2026-08-11 19:00:00", 1346.8)])
+    assert plug_charging_state(root, now) is None
+
+
+def test_missing_plug_feed_is_ignored(tmp_path):
+    """No webhook file at all must not raise."""
+    assert plug_charging_state(str(tmp_path), datetime(2026, 8, 11, 20, 26)) is None
+
+
+def test_unreadable_plug_feed_is_ignored(tmp_path):
+    """A truncated or malformed feed falls back rather than crashing."""
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    (data_dir / "plug_power.csv").write_text("timestamp,watts\nnot-a-date,not-a-number\n")
+    assert plug_charging_state(str(tmp_path), datetime(2026, 8, 11, 20, 26)) is None
