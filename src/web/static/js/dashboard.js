@@ -292,6 +292,22 @@ document.addEventListener('DOMContentLoaded', function() {
     // e.g. "-25 to -20°C". They are category labels on the chart, so without
     // rewriting them the axis keeps reading Celsius no matter what the units
     // toggle says.
+    // Bands backed by only a handful of trips are labelled as indicative.
+    const THIN_BAND_TRIPS = 20;
+
+    // Diverging about freezing, matching the by-month chart.
+    function temperatureBandColor(celsius) {
+        if (celsius === null || celsius === undefined) { return 'rgb(143,143,143)'; }
+        const ratio = Math.max(-1, Math.min(1, celsius / 25));
+        const cold = [33, 102, 172];
+        const warm = [178, 24, 43];
+        const mid = [143, 143, 143];
+        const target = ratio < 0 ? cold : warm;
+        const weight = Math.abs(ratio);
+        const ch = i => Math.round(mid[i] + (target[i] - mid[i]) * weight);
+        return `rgb(${ch(0)}, ${ch(1)}, ${ch(2)})`;
+    }
+
     function relabelBand(range) {
         const bounds = String(range).match(/(-?\d+(?:\.\d+)?)\s*to\s*(-?\d+(?:\.\d+)?)/);
         if (!bounds) { return range; }
@@ -1694,145 +1710,104 @@ document.addEventListener('DOMContentLoaded', function() {
                 return;
             }
             
-            // Create scatter plot with trend line
             const ctx = document.getElementById('temperature-efficiency-chart').getContext('2d');
-            
-            // The API reports efficiency as mi/kWh and temperature in Celsius;
-            // both follow the units toggle here.
-            const scatterData = data.raw_data.map(point => ({
-                x: displayTemp(point.temperature),
-                y: displayEfficiency(point.efficiency)
-            }));
 
-            // Prepare data for bar chart (binned data)
-            const barLabels = data.temperature_bins.map(bin => relabelBand(bin.temperature_range));
-            const barData = data.temperature_bins.map(bin => displayEfficiency(bin.avg_efficiency));
-            
-            // Update or create chart
-            if (tempEfficiencyChart) {
-                tempEfficiencyChart.data.datasets[0].data = scatterData;
-                tempEfficiencyChart.data.datasets[1].data = barData;
-                tempEfficiencyChart.data.labels = barLabels;
-                tempEfficiencyChart.update('none');
-            } else {
-                tempEfficiencyChart = new Chart(ctx, {
-                    type: 'scatter',
-                    data: {
-                        labels: barLabels,
-                        datasets: [{
-                            label: 'Trip Efficiency',
-                            data: scatterData,
-                            backgroundColor: 'rgba(52, 152, 219, 0.5)',
-                            borderColor: 'rgba(52, 152, 219, 1)',
-                            pointRadius: 5,
-                            type: 'scatter'
-                        }, {
-                            label: 'Average by Temperature Range',
-                            data: barData,
-                            backgroundColor: 'rgba(231, 76, 60, 0.7)',
-                            borderColor: 'rgba(231, 76, 60, 1)',
-                            borderWidth: 2,
-                            type: 'bar',
-                            yAxisID: 'y',
-                            xAxisID: 'x2'
-                        }]
-                    },
-                    options: {
-                        responsive: true,
-                        maintainAspectRatio: false,
-                        interaction: {
-                            mode: 'index',
-                            intersect: false
+            // A bar per temperature band, not a scatter of every trip. 1,481
+            // overlapping points hid the relationship they were meant to show,
+            // and individual short trips are dominated by their own noise. The
+            // band averages are energy-weighted, so a long run counts for more
+            // than a two-mile hop.
+            const metricUnits = currentUnits === 'metric';
+            const energyLabel = metricUnits ? 'Wh/km' : 'Wh/mi';
+            const bins = data.temperature_bins;
+            const barLabels = bins.map(bin => relabelBand(bin.temperature_range));
+            const barData = bins.map(bin => (metricUnits ? bin.wh_per_km : bin.wh_per_mile));
+
+            if (tempEfficiencyChart) { tempEfficiencyChart.destroy(); }
+            tempEfficiencyChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: barLabels,
+                    datasets: [{
+                        label: `Energy per distance (${energyLabel})`,
+                        data: barData,
+                        // Same diverging ramp as the by-month chart, so the two
+                        // read as one system. Redundant with the axis here,
+                        // which is fine -- it reinforces rather than encodes.
+                        backgroundColor: bins.map(bin => temperatureBandColor(bin.avg_temperature)),
+                        borderWidth: 0,
+                        borderRadius: 4
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        title: {
+                            display: true,
+                            text: 'Energy Used per Distance, by Temperature',
+                            font: { size: 16 }
                         },
-                        plugins: {
-                            title: {
-                                display: true,
-                                text: 'How Temperature Affects Your EV Efficiency',
-                                font: { size: 16 }
-                            },
-                            legend: {
-                                display: true,
-                                position: 'top'
-                            },
-                            tooltip: {
-                                callbacks: {
-                                    label: function(context) {
-                                        if (context.dataset.type === 'scatter') {
-                                            return `${context.parsed.x.toFixed(1)}${tempUnitLabel()}: ${context.parsed.y.toFixed(2)} ${efficiencyUnitLabel()}`;
-                                        } else {
-                                            const binIndex = context.dataIndex;
-                                            const bin = data.temperature_bins[binIndex];
-                                            return [
-                                                `Average: ${context.parsed.y.toFixed(2)} ${efficiencyUnitLabel()}`,
-                                                `Trips: ${bin.trip_count}`,
-                                                `Distance: ${bin.total_distance} km`
-                                            ];
-                                        }
+                        legend: { display: false },
+                        tooltip: {
+                            callbacks: {
+                                label: function (context) {
+                                    const bin = bins[context.dataIndex];
+                                    const lines = [
+                                        `${context.parsed.y.toFixed(0)} ${energyLabel} ` +
+                                            `(${bin.avg_efficiency.toFixed(2)} mi/kWh)`,
+                                        `${bin.trip_count} trips, ${bin.total_distance.toFixed(0)} mi`
+                                    ];
+                                    if (bin.trip_count < THIN_BAND_TRIPS) {
+                                        lines.push('Few trips — treat as indicative');
                                     }
+                                    return lines;
                                 }
-                            }
-                        },
-                        scales: {
-                            x: {
-                                type: 'linear',
-                                position: 'bottom',
-                                title: {
-                                    display: true,
-                                    text: `Temperature (${tempUnitLabel()})`
-                                },
-                                grid: {
-                                    display: true
-                                }
-                            },
-                            x2: {
-                                type: 'category',
-                                position: 'bottom',
-                                display: false,
-                                grid: {
-                                    display: false
-                                }
-                            },
-                            y: {
-                                type: 'linear',
-                                title: {
-                                    display: true,
-                                    text: `Efficiency (${efficiencyUnitLabel()})`
-                                },
-                                min: 0
                             }
                         }
+                    },
+                    scales: {
+                        x: {
+                            title: { display: true, text: `Temperature (${tempUnitLabel()})` },
+                            grid: { display: false }
+                        },
+                        y: {
+                            beginAtZero: true,
+                            title: { display: true, text: `Energy used (${energyLabel})` }
+                        }
                     }
-                });
-            }
-            
+                }
+            });
+
             // Display statistics
             let statsHtml = '<div class="temp-efficiency-stats">';
             statsHtml += '<h3>Temperature Impact Summary</h3>';
             statsHtml += '<div class="stats-grid">';
             
-            // Find best and worst temperature ranges
-            const bestBin = data.temperature_bins.reduce((a, b) => 
-                a.avg_efficiency > b.avg_efficiency ? a : b
-            );
-            const worstBin = data.temperature_bins.reduce((a, b) => 
-                a.avg_efficiency < b.avg_efficiency ? a : b
-            );
-            
+            // Rank only bands with enough trips to mean something. The 35-40C
+            // band holds 7 trips and the coldest holds 9; either could otherwise
+            // win on a handful of unusual drives.
+            const ranked = bins.filter(bin => bin.trip_count >= THIN_BAND_TRIPS);
+            const pool = ranked.length >= 2 ? ranked : bins;
+            const energyOf = bin => (metricUnits ? bin.wh_per_km : bin.wh_per_mile);
+            const bestBin = pool.reduce((a, b) => (energyOf(a) < energyOf(b) ? a : b));
+            const worstBin = pool.reduce((a, b) => (energyOf(a) > energyOf(b) ? a : b));
+
             statsHtml += `
                 <div class="stat-item">
-                    <span class="stat-label">Best Efficiency Range:</span>
+                    <span class="stat-label">Most Efficient Range:</span>
                     <span class="stat-value">${relabelBand(bestBin.temperature_range)}</span>
-                    <span class="stat-detail">${displayEfficiency(bestBin.avg_efficiency).toFixed(2)} ${efficiencyUnitLabel()} average</span>
+                    <span class="stat-detail">${energyOf(bestBin).toFixed(0)} ${energyLabel} · ${bestBin.trip_count} trips</span>
                 </div>
                 <div class="stat-item">
-                    <span class="stat-label">Worst Efficiency Range:</span>
+                    <span class="stat-label">Least Efficient Range:</span>
                     <span class="stat-value">${relabelBand(worstBin.temperature_range)}</span>
-                    <span class="stat-detail">${displayEfficiency(worstBin.avg_efficiency).toFixed(2)} ${efficiencyUnitLabel()} average</span>
+                    <span class="stat-detail">${energyOf(worstBin).toFixed(0)} ${energyLabel} · ${worstBin.trip_count} trips</span>
                 </div>
                 <div class="stat-item">
-                    <span class="stat-label">Efficiency Loss:</span>
-                    <span class="stat-value">${((1 - worstBin.avg_efficiency / bestBin.avg_efficiency) * 100).toFixed(1)}%</span>
-                    <span class="stat-detail">From best to worst conditions</span>
+                    <span class="stat-label">Extra Energy When Cold:</span>
+                    <span class="stat-value">${(energyOf(worstBin) / energyOf(bestBin)).toFixed(2)}x</span>
+                    <span class="stat-detail">${(energyOf(worstBin) - energyOf(bestBin)).toFixed(0)} ${energyLabel} more per unit distance</span>
                 </div>
             `;
             

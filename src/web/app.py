@@ -628,18 +628,32 @@ def get_temperature_efficiency():
                     "efficiencies": [],
                     "count": 0,
                     "total_distance": 0,
+                    "total_energy_kwh": 0.0,
                 }
 
             temp_bins[bin_label]["temperatures"].append(temp)
             temp_bins[bin_label]["efficiencies"].append(data_point["efficiency"])
             temp_bins[bin_label]["count"] += 1
             temp_bins[bin_label]["total_distance"] += data_point["distance"]
+            # Energy implied by this trip, so the band can be aggregated by
+            # energy rather than by averaging per-trip ratios.
+            temp_bins[bin_label]["total_energy_kwh"] += (
+                data_point["distance"] / data_point["efficiency"]
+            )
 
         # Calculate averages for each bin
         bin_stats = []
         for bin_label, data in temp_bins.items():
             if data["efficiencies"]:
-                avg_efficiency = sum(data["efficiencies"]) / len(data["efficiencies"])
+                # Energy-weighted: total distance over total energy. A mean of
+                # per-trip ratios lets a 2 mile hop count as much as a 76 mile
+                # run, which biases every band toward its shortest trips.
+                total_distance = data["total_distance"]
+                total_energy = data["total_energy_kwh"]
+                if total_energy <= 0 or total_distance <= 0:
+                    continue
+                avg_efficiency = total_distance / total_energy
+                wh_per_mile = total_energy * 1000.0 / total_distance
                 avg_temp = sum(data["temperatures"]) / len(data["temperatures"])
 
                 bin_stats.append(
@@ -647,6 +661,9 @@ def get_temperature_efficiency():
                         "temperature_range": bin_label,
                         "avg_temperature": round(avg_temp, 1),
                         "avg_efficiency": round(avg_efficiency, 2),
+                        "wh_per_mile": round(wh_per_mile, 1),
+                        "wh_per_km": round(wh_per_mile / KM_PER_MILE, 1),
+                        "total_energy_kwh": round(total_energy, 1),
                         "trip_count": data["count"],
                         "total_distance": round(data["total_distance"], 1),
                         "best_efficiency": round(max(data["efficiencies"]), 2),
