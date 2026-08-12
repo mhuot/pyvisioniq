@@ -605,8 +605,7 @@ document.addEventListener('DOMContentLoaded', function() {
     // Load initial data
     loadCurrentStatus();
     loadBatteryHistory(24); // Default to 24 hours
-    loadCollectionStatus();
-    loadPollingStatus();
+    if (window.PYVISIONIC_COLLECTION) { window.PYVISIONIC_COLLECTION.refresh(); }
     loadEfficiencyStats(24);
     loadChargingSessions(24);
     loadTemperatureEfficiency(24);
@@ -843,8 +842,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     loadChargingSessions(currentTimeRange);
                     loadTemperatureEfficiency(currentTimeRange);
                 }
-                loadCollectionStatus(); // Update API usage display
-                loadPollingStatus();
+                if (window.PYVISIONIC_COLLECTION) { window.PYVISIONIC_COLLECTION.refresh(); }
             } else {
                 // Show specific error message with appropriate styling
                 const errorType = data.error_type || 'error';
@@ -1392,125 +1390,8 @@ document.addEventListener('DOMContentLoaded', function() {
         return dateObj.toLocaleDateString('en-US', options);
     }
     
-    async function loadCollectionStatus() {
-        try {
-            const response = await fetch('/api/collection-status');
-            const data = await response.json();
-            
-            const callsToday = document.getElementById('api-calls-today');
-            const nextCollection = document.getElementById('next-collection');
-            const headerApiCalls = document.getElementById('header-api-calls');
-            
-            if (callsToday) {
-                callsToday.textContent = `${data.calls_today}/${data.daily_limit}`;
-                callsToday.className = data.calls_today >= data.daily_limit ? 'limit-reached' : '';
-            }
-            
-            // Update header API usage indicator
-            if (headerApiCalls) {
-                const callsText = `${data.calls_today}/${data.daily_limit}`;
-                headerApiCalls.textContent = callsText;
-                
-                // Update aria-label for screen readers
-                const percentage = Math.round((data.calls_today / data.daily_limit) * 100);
-                let ariaLabel = `${data.calls_today} of ${data.daily_limit} API calls used today (${percentage}%)`;
-                
-                // Apply warning classes and update aria-label
-                headerApiCalls.className = '';
-                if (data.calls_today >= data.daily_limit) {
-                    headerApiCalls.className = 'limit-reached';
-                    ariaLabel += '. Daily limit reached.';
-                } else if (data.calls_today >= data.daily_limit * 0.8) {
-                    headerApiCalls.className = 'limit-warning';
-                    ariaLabel += '. Approaching daily limit.';
-                }
-                
-                headerApiCalls.setAttribute('aria-label', ariaLabel);
-            }
-            
-            if (nextCollection && data.next_collection) {
-                const next = new Date(data.next_collection);
-                const now = new Date();
-                const diff = Math.round((next - now) / 60000);
-                
-                if (diff > 0) {
-                    nextCollection.textContent = `in ${diff} minutes`;
-                } else {
-                    nextCollection.textContent = 'soon';
-                }
-            }
-        } catch (error) {
-            console.error('Error loading collection status:', error);
-        }
-    }
-
-    const POLLING_REASON_LABELS = {
-        dcfc: 'DC fast charging',
-        ac_charge_start: 'AC charge starting',
-        ac_charge_steady: 'AC charge steady',
-        post_trip: 'Post-trip watch',
-        idle_day: 'Idle (day)',
-        idle_night: 'Idle (night)',
-        budget_clamp: 'Budget rationing',
-        budget_exhausted: 'Budget exhausted',
-        fixed: 'Fixed interval'
-    };
-
-    async function loadPollingStatus() {
-        try {
-            const response = await fetch('/api/polling-status');
-            const status = await response.json();
-
-            const modeElement = document.getElementById('polling-mode');
-            if (modeElement) {
-                modeElement.textContent = status.adaptive_enabled ? 'Adaptive' : 'Fixed';
-            }
-
-            const container = document.getElementById('polling-decisions');
-            if (!container) return;
-
-            const decisions = status.recent_decisions || [];
-            if (decisions.length === 0) {
-                container.innerHTML =
-                    '<p class="no-data">No polling decisions recorded yet</p>';
-                return;
-            }
-
-            const rowsHtml = decisions.slice().reverse().map(decision => {
-                const when = new Date(decision.timestamp);
-                const reasonLabel = POLLING_REASON_LABELS[decision.reason] || decision.reason;
-                const backoffNote = Number(decision.backoff) > 1 ?
-                    ` (${Number(decision.backoff).toFixed(1)}x backoff)` : '';
-                return `
-                    <tr>
-                        <td>${formatDate(when)}</td>
-                        <td>${reasonLabel}</td>
-                        <td>${Math.round(decision.interval_minutes)} min${backoffNote}</td>
-                        <td>${decision.calls_today}/${decision.daily_limit}</td>
-                    </tr>
-                `;
-            }).join('');
-
-            container.innerHTML = `
-                <h3>Recent Polling Decisions</h3>
-                <div class="table-container">
-                    <table id="polling-table" aria-label="Recent polling decisions">
-                        <thead>
-                            <tr>
-                                <th scope="col">Decided At</th>
-                                <th scope="col">Reason</th>
-                                <th scope="col">Next Poll</th>
-                                <th scope="col">Budget Used</th>
-                            </tr>
-                        </thead>
-                        <tbody>${rowsHtml}</tbody>
-                    </table>
-                </div>
-            `;
-        } catch (error) {
-            console.error('Error loading polling status:', error);
-        }
-    }
+    // Collection status and polling decisions live in collection-status.js,
+    // shared with the Data & Collection page.
 
     function showNotification(message, type = 'info') {
         const notification = document.createElement('div');
@@ -2885,8 +2766,7 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Reduce update frequency and stagger the calls
     setInterval(() => {
-        loadCollectionStatus();
-        loadPollingStatus();
+        if (window.PYVISIONIC_COLLECTION) { window.PYVISIONIC_COLLECTION.refresh(); }
     }, 60000);
     
     setInterval(() => {

@@ -17,7 +17,7 @@
         <h1>PyVisionic Dashboard</h1>
         <div class="header-controls">
             <nav class="header-nav" aria-label="Main navigation">
-                <a href="/cache/" class="cache-link" aria-label="View cache manager">Cache Manager</a>
+                <a href="/cache/" class="cache-link" aria-label="View data and collection status">Data &amp; Collection</a>
             </nav>
             <button id="units-toggle" class="units-button"
                     aria-label="Toggle distance units between kilometres and miles">
@@ -348,15 +348,6 @@
             </div>
         </section>
 
-        <section class="collection-status" aria-labelledby="collection-heading">
-            <h2 id="collection-heading">Data Collection Status</h2>
-            <div class="collection-info">
-                <p>API Calls Today: <span id="api-calls-today">--</span></p>
-                <p>Next Collection: <span id="next-collection">--</span></p>
-                <p>Polling Mode: <span id="polling-mode">--</span></p>
-            </div>
-            <div id="polling-decisions"></div>
-        </section>
         </div><!-- /panel-charging -->
     </main>
 
@@ -406,6 +397,7 @@
             batteryUsableKwh: {{ battery_usable_kwh }}
         };
     </script>
+    <script src="{{ url_for('static', filename='js/collection-status.js') }}"></script>
     <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
 </body>
 </html>
