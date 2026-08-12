@@ -1815,3 +1815,8 @@ button.modal-close:focus-visible {
     outline: 3px solid var(--primary-color);
     outline-offset: 2px;
 }
+
+/* Second unit toggle sits beside the first; keep them visually paired. */
+#temp-units-toggle {
+    min-width: 64px;
+}

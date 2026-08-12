@@ -254,6 +254,8 @@ document.addEventListener('DOMContentLoaded', function() {
     const refreshBtn = document.getElementById('refresh-btn');
     const unitsToggle = document.getElementById('units-toggle');
     const unitsText = unitsToggle.querySelector('.units-text');
+    const tempUnitsToggle = document.getElementById('temp-units-toggle');
+    const tempUnitsText = tempUnitsToggle ? tempUnitsToggle.querySelector('.temp-units-text') : null;
     const batteryLevel = document.getElementById('battery-level');
     const range = document.getElementById('range');
     const temperature = document.getElementById('temperature');
@@ -283,9 +285,18 @@ document.addEventListener('DOMContentLoaded', function() {
         return currentUnits === 'metric' ? 'Wh/km' : 'mi/kWh';
     }
 
+    function displayDistance(miles) {
+        if (miles === null || miles === undefined) { return miles; }
+        return currentUnits === 'metric' ? miles * 1.60934 : miles;
+    }
+
+    function distanceUnitLabel() {
+        return currentUnits === 'metric' ? 'km' : 'mi';
+    }
+
     function displayTemp(celsius) {
         if (celsius === null || celsius === undefined) { return celsius; }
-        return currentUnits === 'metric' ? celsius : conversions.celsiusToFahrenheit(celsius);
+        return currentTempUnits === 'c' ? celsius : conversions.celsiusToFahrenheit(celsius);
     }
 
     // Temperature bin labels arrive from the API pre-formatted in Celsius,
@@ -320,6 +331,11 @@ document.addEventListener('DOMContentLoaded', function() {
     }
     
     let currentUnits = localStorage.getItem('units') || 'metric';
+    // Temperature is independent of distance: Wh/km vs mi/kWh is distance-derived,
+    // Celsius vs Fahrenheit is not, and plenty of drivers want miles with Celsius.
+    // Existing users inherit whatever their single toggle implied.
+    let currentTempUnits = localStorage.getItem('tempUnits') ||
+        (currentUnits === 'metric' ? 'c' : 'f');
     let currentTrips = [];
     let currentData = {
         batteryHistory: null,
@@ -332,6 +348,8 @@ document.addEventListener('DOMContentLoaded', function() {
     function updateUnitsDisplay() {
         unitsText.textContent = currentUnits === 'metric' ? 'km' : 'mi';
         unitsToggle.classList.toggle('imperial', currentUnits === 'imperial');
+        if (tempUnitsText) { tempUnitsText.textContent = currentTempUnits === 'c' ? '\u00B0C' : '\u00B0F'; }
+        if (tempUnitsToggle) { tempUnitsToggle.classList.toggle('imperial', currentTempUnits === 'f'); }
     }
     
     unitsToggle.addEventListener('click', function() {
@@ -355,6 +373,22 @@ document.addEventListener('DOMContentLoaded', function() {
         loadChargingTemperatureImpact(currentTimeRange, currentStartDate, currentEndDate);
         if (window.PYVISIONIC_WEATHER_REFRESH) { window.PYVISIONIC_WEATHER_REFRESH(); }
     });
+
+    if (tempUnitsToggle) {
+        tempUnitsToggle.addEventListener('click', function () {
+            currentTempUnits = currentTempUnits === 'c' ? 'f' : 'c';
+            localStorage.setItem('tempUnits', currentTempUnits);
+            updateUnitsDisplay();
+
+            loadCurrentStatus();
+            if (currentData.batteryHistory) { updateBatteryChart(currentData.batteryHistory); }
+            if (tempEfficiencyChart) { tempEfficiencyChart.destroy(); tempEfficiencyChart = null; }
+            if (chargingTempChart) { chargingTempChart.destroy(); chargingTempChart = null; }
+            loadTemperatureEfficiency(currentTimeRange, currentStartDate, currentEndDate);
+            loadChargingTemperatureImpact(currentTimeRange, currentStartDate, currentEndDate);
+            if (window.PYVISIONIC_WEATHER_REFRESH) { window.PYVISIONIC_WEATHER_REFRESH(); }
+        });
+    }
 
     // Charge-type filter for the temperature/charging chart.
     document.addEventListener('click', function (event) {
@@ -1623,7 +1657,9 @@ document.addEventListener('DOMContentLoaded', function() {
                         
                         let popupContent = `<strong>${formatDate(loc.date)}</strong>`;
                         if (loc.distance > 0) {
-                            popupContent += `<br>Distance: ${loc.distance} km`;
+                            // trips.distance is recorded in miles, so this was labelling
+                            // miles as kilometres regardless of preference.
+                            popupContent += `<br>Distance: ${displayDistance(loc.distance).toFixed(1)} ${distanceUnitLabel()}`;
                             popupContent += `<br>Duration: ${loc.duration} min`;
                             if (loc.efficiency) {
                                 // The API sends mi/kWh here; this previously
@@ -1635,7 +1671,7 @@ document.addEventListener('DOMContentLoaded', function() {
                             }
                         }
                         if (loc.temperature !== null && loc.temperature !== undefined) {
-                            popupContent += `<br>Temperature: ${loc.temperature}°F`;
+                            popupContent += `<br>Temperature: ${displayTemp(loc.temperature).toFixed(1)}${tempUnitLabel()}`;
                         }
                         
                         marker.bindPopup(popupContent);
@@ -1672,7 +1708,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 const detailElement = document.getElementById(elementId + '-detail');
                 
                 if (valueElement && data) {
-                    valueElement.textContent = `${data.average} mi/kWh`;
+                    valueElement.textContent = `${displayEfficiency(data.average).toFixed(2)} ${efficiencyUnitLabel()}`;
                 }
                 if (detailElement && data) {
                     detailElement.textContent = `Best: ${data.best} | Worst: ${data.worst}`;
@@ -1758,8 +1794,9 @@ document.addEventListener('DOMContentLoaded', function() {
                                     const bin = bins[context.dataIndex];
                                     const lines = [
                                         `${context.parsed.y.toFixed(2)} ${energyLabel} ` +
-                                            `(${bin.wh_per_mile.toFixed(0)} Wh/mi)`,
-                                        `${bin.trip_count} trips, ${bin.total_distance.toFixed(0)} mi`
+                                            `(${(currentUnits === 'metric' ? bin.wh_per_km : bin.wh_per_mile).toFixed(0)} ` +
+                                            `${currentUnits === 'metric' ? 'Wh/km' : 'Wh/mi'})`,
+                                        `${bin.trip_count} trips, ${displayDistance(bin.total_distance).toFixed(0)} ${distanceUnitLabel()}`
                                     ];
                                     if (bin.trip_count < THIN_BAND_TRIPS) {
                                         lines.push('Few trips — treat as indicative');
@@ -1813,7 +1850,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 <div class="stat-item">
                     <span class="stat-label">Extra Energy When Cold:</span>
                     <span class="stat-value">${(worstBin.wh_per_mile / bestBin.wh_per_mile).toFixed(2)}x</span>
-                    <span class="stat-detail">${(worstBin.wh_per_mile - bestBin.wh_per_mile).toFixed(0)} Wh/mi more in the cold</span>
+                    <span class="stat-detail">${((worstBin.wh_per_mile - bestBin.wh_per_mile) / (currentUnits === 'metric' ? 1.60934 : 1)).toFixed(0)} ${currentUnits === 'metric' ? 'Wh/km' : 'Wh/mi'} more in the cold</span>
                 </div>
             `;
             
@@ -2922,13 +2959,20 @@ document.head.appendChild(style);
         return (localStorage.getItem('units') || 'metric') === 'metric';
     }
 
+    // Temperature has its own preference, independent of distance.
+    function tempIsCelsius() {
+        const stored = localStorage.getItem('tempUnits');
+        if (stored) { return stored === 'c'; }
+        return unitsAreMetric();
+    }
+
     function localTempLabel() {
-        return unitsAreMetric() ? '°C' : '°F';
+        return tempIsCelsius() ? '°C' : '°F';
     }
 
     function localTemp(celsius) {
         if (celsius === null || celsius === undefined) { return celsius; }
-        return unitsAreMetric() ? celsius : celsius * 9 / 5 + 32;
+        return tempIsCelsius() ? celsius : celsius * 9 / 5 + 32;
     }
     let chargeEfficiencyChart = null;
     let efficiencyLoaded = false;
@@ -3167,8 +3211,10 @@ document.head.appendChild(style);
                 // mi/kWh in imperial, Wh/km in metric.
                 const unitLabel = metric ? 'Wh/km' : 'mi/kWh';
                 const value = m => (metric ? m.wh_per_km : m.mi_per_kwh);
-                const tempLabel = metric ? '°C' : '°F';
-                const temp = c => (c === null ? null : (metric ? c : c * 9 / 5 + 32));
+                const tempLabel = localTempLabel();
+                const temp = c => localTemp(c);
+                const distLabel = metric ? 'km' : 'mi';
+                const dist = mi => (metric ? mi * 1.60934 : mi);
 
                 if (monthlyChart) { monthlyChart.destroy(); }
                 monthlyChart = new Chart(canvas.getContext('2d'), {
@@ -3195,7 +3241,7 @@ document.head.appendChild(style);
                                         return [
                                             `${value(m).toFixed(metric ? 0 : 2)} ${unitLabel} (${m.wh_per_mile.toFixed(0)} Wh/mi)`,
                                             m.temperature === null ? '' : `Avg temperature: ${temp(m.temperature).toFixed(1)} ${tempLabel}`,
-                                            `${m.miles.toFixed(0)} mi over ${m.trips} trips`
+                                            `${dist(m.miles).toFixed(0)} ${distLabel} over ${m.trips} trips`
                                         ].filter(Boolean);
                                     }
                                 }
