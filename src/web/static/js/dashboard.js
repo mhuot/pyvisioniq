@@ -1717,11 +1717,14 @@ document.addEventListener('DOMContentLoaded', function() {
             // and individual short trips are dominated by their own noise. The
             // band averages are energy-weighted, so a long run counts for more
             // than a two-mile hop.
-            const metricUnits = currentUnits === 'metric';
-            const energyLabel = metricUnits ? 'Wh/km' : 'Wh/mi';
+            // Displayed on the app's convention: mi/kWh in imperial, Wh/km in
+            // metric, same as the trips table and the efficiency cards. Note
+            // these run in opposite directions, so the bars invert with the
+            // toggle: taller is better in mi/kWh, worse in Wh/km.
             const bins = data.temperature_bins;
+            const energyLabel = efficiencyUnitLabel();
             const barLabels = bins.map(bin => relabelBand(bin.temperature_range));
-            const barData = bins.map(bin => (metricUnits ? bin.wh_per_km : bin.wh_per_mile));
+            const barData = bins.map(bin => displayEfficiency(bin.avg_efficiency));
 
             if (tempEfficiencyChart) { tempEfficiencyChart.destroy(); }
             tempEfficiencyChart = new Chart(ctx, {
@@ -1729,7 +1732,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 data: {
                     labels: barLabels,
                     datasets: [{
-                        label: `Energy per distance (${energyLabel})`,
+                        label: `Efficiency (${energyLabel})`,
                         data: barData,
                         // Same diverging ramp as the by-month chart, so the two
                         // read as one system. Redundant with the axis here,
@@ -1745,7 +1748,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     plugins: {
                         title: {
                             display: true,
-                            text: 'Energy Used per Distance, by Temperature',
+                            text: 'Efficiency by Temperature',
                             font: { size: 16 }
                         },
                         legend: { display: false },
@@ -1754,8 +1757,8 @@ document.addEventListener('DOMContentLoaded', function() {
                                 label: function (context) {
                                     const bin = bins[context.dataIndex];
                                     const lines = [
-                                        `${context.parsed.y.toFixed(0)} ${energyLabel} ` +
-                                            `(${bin.avg_efficiency.toFixed(2)} mi/kWh)`,
+                                        `${context.parsed.y.toFixed(2)} ${energyLabel} ` +
+                                            `(${bin.wh_per_mile.toFixed(0)} Wh/mi)`,
                                         `${bin.trip_count} trips, ${bin.total_distance.toFixed(0)} mi`
                                     ];
                                     if (bin.trip_count < THIN_BAND_TRIPS) {
@@ -1773,7 +1776,7 @@ document.addEventListener('DOMContentLoaded', function() {
                         },
                         y: {
                             beginAtZero: true,
-                            title: { display: true, text: `Energy used (${energyLabel})` }
+                            title: { display: true, text: `Efficiency (${energyLabel})` }
                         }
                     }
                 }
@@ -1789,25 +1792,28 @@ document.addEventListener('DOMContentLoaded', function() {
             // win on a handful of unusual drives.
             const ranked = bins.filter(bin => bin.trip_count >= THIN_BAND_TRIPS);
             const pool = ranked.length >= 2 ? ranked : bins;
-            const energyOf = bin => (metricUnits ? bin.wh_per_km : bin.wh_per_mile);
-            const bestBin = pool.reduce((a, b) => (energyOf(a) < energyOf(b) ? a : b));
-            const worstBin = pool.reduce((a, b) => (energyOf(a) > energyOf(b) ? a : b));
+            // Rank on Wh/mi always, where lower is unambiguously better, then
+            // convert only for display. Ranking on the displayed value would
+            // need its comparison flipped with the units toggle.
+            const bestBin = pool.reduce((a, b) => (a.wh_per_mile < b.wh_per_mile ? a : b));
+            const worstBin = pool.reduce((a, b) => (a.wh_per_mile > b.wh_per_mile ? a : b));
+            const shown = bin => displayEfficiency(bin.avg_efficiency).toFixed(2);
 
             statsHtml += `
                 <div class="stat-item">
                     <span class="stat-label">Most Efficient Range:</span>
                     <span class="stat-value">${relabelBand(bestBin.temperature_range)}</span>
-                    <span class="stat-detail">${energyOf(bestBin).toFixed(0)} ${energyLabel} · ${bestBin.trip_count} trips</span>
+                    <span class="stat-detail">${shown(bestBin)} ${energyLabel} · ${bestBin.trip_count} trips</span>
                 </div>
                 <div class="stat-item">
                     <span class="stat-label">Least Efficient Range:</span>
                     <span class="stat-value">${relabelBand(worstBin.temperature_range)}</span>
-                    <span class="stat-detail">${energyOf(worstBin).toFixed(0)} ${energyLabel} · ${worstBin.trip_count} trips</span>
+                    <span class="stat-detail">${shown(worstBin)} ${energyLabel} · ${worstBin.trip_count} trips</span>
                 </div>
                 <div class="stat-item">
                     <span class="stat-label">Extra Energy When Cold:</span>
-                    <span class="stat-value">${(energyOf(worstBin) / energyOf(bestBin)).toFixed(2)}x</span>
-                    <span class="stat-detail">${(energyOf(worstBin) - energyOf(bestBin)).toFixed(0)} ${energyLabel} more per unit distance</span>
+                    <span class="stat-value">${(worstBin.wh_per_mile / bestBin.wh_per_mile).toFixed(2)}x</span>
+                    <span class="stat-detail">${(worstBin.wh_per_mile - bestBin.wh_per_mile).toFixed(0)} Wh/mi more in the cold</span>
                 </div>
             `;
             
@@ -3124,14 +3130,14 @@ document.head.appendChild(style);
         const host = document.getElementById('monthly-efficiency-table');
         if (!host) { return; }
         const metric = unitsAreMetric();
-        const energyLabel = metric ? 'Wh/km' : 'Wh/mi';
+        const energyLabel = metric ? 'Wh/km' : 'mi/kWh';
         const distanceLabel = metric ? 'km' : 'mi';
-        const energy = m => (metric ? m.wh_per_km : m.wh_per_mile);
+        const energy = m => (metric ? m.wh_per_km : m.mi_per_kwh);
         const distance = m => (metric ? m.miles * 1.60934 : m.miles);
 
         const rows = months.map(m => `<tr>
             <td>${m.month}</td>
-            <td>${energy(m).toFixed(0)}</td>
+            <td>${energy(m).toFixed(metric ? 0 : 2)}</td>
             <td>${m.mi_per_kwh.toFixed(2)}</td>
             <td>${m.temperature === null ? '--' : localTemp(m.temperature).toFixed(1)}</td>
             <td>${distance(m).toFixed(0)}</td>
@@ -3157,8 +3163,10 @@ document.head.appendChild(style);
                 // This IIFE is outside the scope holding currentUnits, so it
                 // reads the same persisted preference the toggle writes.
                 const metric = (localStorage.getItem('units') || 'metric') === 'metric';
-                const unitLabel = metric ? 'Wh/km' : 'Wh/mi';
-                const value = m => (metric ? m.wh_per_km : m.wh_per_mile);
+                // Same convention as the temperature chart and the trips table:
+                // mi/kWh in imperial, Wh/km in metric.
+                const unitLabel = metric ? 'Wh/km' : 'mi/kWh';
+                const value = m => (metric ? m.wh_per_km : m.mi_per_kwh);
                 const tempLabel = metric ? '°C' : '°F';
                 const temp = c => (c === null ? null : (metric ? c : c * 9 / 5 + 32));
 
@@ -3168,7 +3176,7 @@ document.head.appendChild(style);
                     data: {
                         labels: months.map(m => m.month),
                         datasets: [{
-                            label: `Energy per distance (${unitLabel})`,
+                            label: `Efficiency (${unitLabel})`,
                             data: months.map(value),
                             backgroundColor: months.map(m => temperatureColor(m.temperature)),  // ramp stays on Celsius
                             borderWidth: 0,
@@ -3185,7 +3193,7 @@ document.head.appendChild(style);
                                     label: context => {
                                         const m = months[context.dataIndex];
                                         return [
-                                            `${value(m).toFixed(0)} ${unitLabel} (${m.mi_per_kwh.toFixed(2)} mi/kWh)`,
+                                            `${value(m).toFixed(metric ? 0 : 2)} ${unitLabel} (${m.wh_per_mile.toFixed(0)} Wh/mi)`,
                                             m.temperature === null ? '' : `Avg temperature: ${temp(m.temperature).toFixed(1)} ${tempLabel}`,
                                             `${m.miles.toFixed(0)} mi over ${m.trips} trips`
                                         ].filter(Boolean);
@@ -3197,7 +3205,7 @@ document.head.appendChild(style);
                             x: { title: { display: true, text: 'Month' } },
                             y: {
                                 beginAtZero: true,
-                                title: { display: true, text: `Energy used (${unitLabel})` }
+                                title: { display: true, text: `Efficiency (${unitLabel})` }
                             }
                         }
                     }
