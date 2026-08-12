@@ -1796,6 +1796,9 @@ document.addEventListener('DOMContentLoaded', function() {
                                         `${context.parsed.y.toFixed(2)} ${energyLabel} ` +
                                             `(${(currentUnits === 'metric' ? bin.wh_per_km : bin.wh_per_mile).toFixed(0)} ` +
                                             `${currentUnits === 'metric' ? 'Wh/km' : 'Wh/mi'})`,
+                                        `About ${displayDistance(((window.PYVISIONIC_CONFIG &&
+                                            window.PYVISIONIC_CONFIG.batteryUsableKwh) || 74.0) *
+                                            bin.avg_efficiency).toFixed(0)} ${distanceUnitLabel()} on a full charge`,
                                         `${bin.trip_count} trips, ${displayDistance(bin.total_distance).toFixed(0)} ${distanceUnitLabel()}`
                                     ];
                                     if (bin.trip_count < THIN_BAND_TRIPS) {
@@ -1836,6 +1839,17 @@ document.addEventListener('DOMContentLoaded', function() {
             const worstBin = pool.reduce((a, b) => (a.wh_per_mile > b.wh_per_mile ? a : b));
             const shown = bin => displayEfficiency(bin.avg_efficiency).toFixed(2);
 
+            // Range on a full charge is what people actually plan around, and a
+            // percentage lost is easier to act on than an energy multiplier:
+            // 1.88x more energy per mile is the same thing as 47% less range,
+            // but only one of those tells you whether you can get home.
+            const packKwh = (window.PYVISIONIC_CONFIG &&
+                window.PYVISIONIC_CONFIG.batteryUsableKwh) || 74.0;
+            const rangeMiles = bin => packKwh * bin.avg_efficiency;
+            const bestRange = displayDistance(rangeMiles(bestBin));
+            const worstRange = displayDistance(rangeMiles(worstBin));
+            const rangeLossPct = (1 - rangeMiles(worstBin) / rangeMiles(bestBin)) * 100;
+
             statsHtml += `
                 <div class="stat-item">
                     <span class="stat-label">Most Efficient Range:</span>
@@ -1848,9 +1862,9 @@ document.addEventListener('DOMContentLoaded', function() {
                     <span class="stat-detail">${shown(worstBin)} ${energyLabel} · ${worstBin.trip_count} trips</span>
                 </div>
                 <div class="stat-item">
-                    <span class="stat-label">Extra Energy When Cold:</span>
-                    <span class="stat-value">${(worstBin.wh_per_mile / bestBin.wh_per_mile).toFixed(2)}x</span>
-                    <span class="stat-detail">${((worstBin.wh_per_mile - bestBin.wh_per_mile) / (currentUnits === 'metric' ? 1.60934 : 1)).toFixed(0)} ${currentUnits === 'metric' ? 'Wh/km' : 'Wh/mi'} more in the cold</span>
+                    <span class="stat-label">Range Lost in the Cold:</span>
+                    <span class="stat-value">${rangeLossPct.toFixed(0)}%</span>
+                    <span class="stat-detail">A full charge goes about ${bestRange.toFixed(0)} ${distanceUnitLabel()} at ${relabelBand(bestBin.temperature_range)}, but only ${worstRange.toFixed(0)} ${distanceUnitLabel()} at ${relabelBand(worstBin.temperature_range)}</span>
                 </div>
             `;
             
