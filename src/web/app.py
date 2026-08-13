@@ -17,6 +17,7 @@ sys.path.append(str(Path(__file__).parent.parent.parent))
 
 from src.api.client import APIError, CachedVehicleClient
 from src.storage.csv_store import CSVStorage
+from src.utils.trip_planner import assess_trip, find_destinations, seasonal_daily_energy
 from src.utils.charge_efficiency import MIN_SOC_POINTS, compute_efficiency_points, summarize
 from src.utils.plug_sessions import append_plug_sample, load_ha_export, load_plug_log
 from src.utils.receipts import upsert_receipts
@@ -36,6 +37,12 @@ KM_PER_MILE = 1.60934
 # Capacity from a charge session is only as precise as its SOC gain: one
 # whole percent on a 20-point session is 5%. Small sessions are excluded, and
 # a trend is withheld until there is enough history to outrun that noise.
+# Energy reaching the pack on L1, not the ~1.35 kW the plug reports.
+PLANNER_DEFAULT_CHARGER_KW = 0.95
+# Sustained-highway consumption; band averages understate a long trip because
+# they mix in town driving.
+PLANNER_DEFAULT_WH_PER_MILE = 340.0
+
 MIN_CAPACITY_SOC_POINTS = 15
 MIN_CAPACITY_SESSIONS = 20
 MIN_CAPACITY_SPAN_YEARS = 2.0
@@ -986,6 +993,108 @@ def get_efficiency_by_month():
 
     except Exception as e:  # pylint: disable=broad-except
         app.logger.error("Error computing efficiency by month: %s", e, exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/planner/destinations")
+@api_login_required
+def get_planner_destinations():
+    """Places the car has been more than once, with what each visit cost."""
+    try:
+        trips_df = storage.get_trips_df()
+        battery_df = storage.get_battery_df()
+        if trips_df.empty or battery_df.empty:
+            return jsonify({"destinations": []})
+
+        trips_df = trips_df.copy()
+        trips_df["date"] = pd.to_datetime(
+            trips_df["date"].astype(str).str.replace(r"\.0+$", "", regex=True), errors="coerce"
+        )
+        battery_df = battery_df.copy()
+        battery_df["timestamp"] = pd.to_datetime(
+            battery_df["timestamp"], format="mixed", errors="coerce"
+        )
+        pack_kwh = float(os.getenv("BATTERY_USABLE_KWH", "74.0"))
+
+        return jsonify(
+            {
+                "destinations": find_destinations(
+                    trips_df.dropna(subset=["date"]), battery_df, pack_kwh
+                ),
+                "pack_kwh": pack_kwh,
+            }
+        )
+    except Exception as e:  # pylint: disable=broad-except
+        app.logger.error("Error finding destinations: %s", e, exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/planner/assess")
+@api_login_required
+def get_planner_assessment():
+    """Assess a planned trip against current charge and the driving before it.
+
+    Takes either trip_kwh directly, or distance_km which is costed at the
+    efficiency the car actually achieves at the expected temperature.
+    """
+    try:
+        departure_raw = request.args.get("departure")
+        if not departure_raw:
+            return jsonify({"error": "departure is required (ISO 8601)"}), 400
+        try:
+            departure = datetime.fromisoformat(departure_raw)
+        except ValueError:
+            return jsonify({"error": f"could not parse departure '{departure_raw}'"}), 400
+
+        pack_kwh = float(os.getenv("BATTERY_USABLE_KWH", "74.0"))
+        charger_kw = float(request.args.get("charger_kw", PLANNER_DEFAULT_CHARGER_KW))
+        buffer_pct = float(request.args.get("arrival_buffer_pct", 10))
+
+        trip_kwh = request.args.get("trip_kwh")
+        if trip_kwh is not None:
+            trip_kwh = float(trip_kwh)
+        else:
+            distance_km = request.args.get("distance_km")
+            if distance_km is None:
+                return jsonify({"error": "one of trip_kwh or distance_km is required"}), 400
+            wh_per_mile = float(request.args.get("wh_per_mile", PLANNER_DEFAULT_WH_PER_MILE))
+            trip_kwh = float(distance_km) / KM_PER_MILE * wh_per_mile / 1000.0
+
+        battery_df = storage.get_battery_df().copy()
+        battery_df["timestamp"] = pd.to_datetime(
+            battery_df["timestamp"], format="mixed", errors="coerce"
+        )
+        battery_df = battery_df.dropna(subset=["timestamp", "battery_level"])
+        if battery_df.empty:
+            return jsonify({"error": "No battery readings available"}), 404
+        latest = battery_df.sort_values("timestamp").iloc[-1]
+
+        trips_df = storage.get_trips_df().copy()
+        trips_df["date"] = pd.to_datetime(
+            trips_df["date"].astype(str).str.replace(r"\.0+$", "", regex=True), errors="coerce"
+        )
+        daily = seasonal_daily_energy(
+            trips_df.dropna(subset=["date"]), battery_df, pack_kwh, departure
+        )
+
+        result = assess_trip(
+            now=datetime.now(),
+            departure=departure,
+            soc_pct=float(latest["battery_level"]),
+            pack_kwh=pack_kwh,
+            charger_kw=charger_kw,
+            trip_kwh=trip_kwh,
+            arrival_buffer_pct=buffer_pct,
+            daily_kwh=(daily or {}).get("kwh", 0.0),
+        )
+        result["soc_pct"] = float(latest["battery_level"])
+        result["reading_at"] = latest["timestamp"].isoformat()
+        result["daily_basis"] = daily
+        result["charger_kw"] = charger_kw
+        return jsonify(result)
+
+    except Exception as e:  # pylint: disable=broad-except
+        app.logger.error("Error assessing trip: %s", e, exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 
