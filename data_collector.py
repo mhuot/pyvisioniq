@@ -264,8 +264,8 @@ class DataCollector:
             )
             summary = summarize(points)
             derived["charge_efficiency"] = summary.get("efficiency_pct")
-        except Exception:  # pylint: disable=broad-except
-            pass
+        except Exception as metric_error:  # pylint: disable=broad-except
+            logger.debug("charge_efficiency unavailable: %s", metric_error)
 
         # Season-matched full-charge range from this month's driving.
         try:
@@ -279,8 +279,8 @@ class DataCollector:
             if len(month) >= 5:
                 mi_per_kwh = month["distance"].sum() / (month["total_consumed"].sum() / 1000)
                 derived["est_range_full"] = round(pack_kwh * mi_per_kwh)
-        except Exception:  # pylint: disable=broad-except
-            pass
+        except Exception as metric_error:  # pylint: disable=broad-except
+            logger.debug("est_range_full unavailable: %s", metric_error)
 
         # Trip readiness, when a plan exists and its departure is ahead.
         try:
@@ -308,8 +308,8 @@ class DataCollector:
                 derived["trip_readiness"] = "idle"
         except SystemExit:
             derived["trip_readiness"] = "no_plan"
-        except Exception:  # pylint: disable=broad-except
-            pass
+        except Exception as metric_error:  # pylint: disable=broad-except
+            logger.debug("trip_readiness unavailable: %s", metric_error)
 
         return derived
 
