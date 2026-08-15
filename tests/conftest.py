@@ -1,5 +1,13 @@
 """Shared fixtures for tests."""
 
+import os
+
+# Decided before src.web.app is first imported anywhere in the session: the
+# auth module reads AUTH_ENABLED at import, and load_dotenv does not override
+# existing variables, so setting it here beats the .env present on a dev
+# machine. CI has no .env and defaults off either way.
+os.environ["AUTH_ENABLED"] = "false"
+
 import pytest
 
 

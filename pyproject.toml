@@ -32,7 +32,6 @@ addopts = "-v --tb=short"
 
 [tool.coverage.run]
 omit = [
-    "src/web/app.py",
     "src/web/auth.py",
     "src/web/auth_routes.py",
     "src/web/cache_routes.py",
