@@ -45,3 +45,6 @@ tools/trip_plan.json
 
 # Coverage output
 .coverage
+
+# Local backups (rotated archives, not for the repo)
+backups/
