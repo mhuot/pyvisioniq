@@ -1,0 +1,182 @@
+# PyVisionic — Home Assistant dashboard
+#
+# Core cards only; no custom-card dependencies. Paste into a new dashboard:
+# Settings → Dashboards → Add dashboard → New dashboard from scratch → open it
+# → ⋮ → Raw configuration editor → replace everything with this file.
+#
+# Entity ids assume the post-August-15 discovery configs (object_id set). If
+# your entities predate that, delete the "PyVisionic EV" device on the MQTT
+# integration page once; it rediscovers with clean ids within seconds.
+
+views:
+  - title: EV
+    icon: mdi:car-electric
+    type: sections
+    max_columns: 3
+    badges:
+      - type: entity
+        entity: binary_sensor.pyvisionic_is_charging
+        visibility:
+          - condition: state
+            entity: binary_sensor.pyvisionic_is_charging
+            state: "on"
+      - type: entity
+        entity: sensor.pyvisionic_trip_readiness
+        visibility:
+          - condition: state
+            entity: sensor.pyvisionic_trip_readiness
+            state: off_track
+    sections:
+      - type: grid
+        cards:
+          - type: heading
+            heading: Right now
+            icon: mdi:car-electric
+          - type: gauge
+            entity: sensor.pyvisionic_battery_level
+            name: Battery
+            min: 0
+            max: 100
+            severity:
+              green: 45
+              yellow: 20
+              red: 0
+            grid_options:
+              columns: 6
+              rows: 3
+          - type: gauge
+            entity: sensor.pyvisionic_twelve_v
+            name: 12V
+            min: 0
+            max: 100
+            severity:
+              green: 60
+              yellow: 50
+              red: 0
+            grid_options:
+              columns: 6
+              rows: 3
+          - type: tile
+            entity: sensor.pyvisionic_range_km
+            name: Range (car's guess)
+            icon: mdi:map-marker-distance
+          - type: tile
+            entity: sensor.pyvisionic_est_range_full
+            name: Full-charge range (measured)
+            icon: mdi:map-marker-radius
+          - type: tile
+            entity: sensor.pyvisionic_temperature
+            name: Outside
+
+      - type: grid
+        visibility:
+          - condition: state
+            entity: binary_sensor.pyvisionic_is_charging
+            state: "on"
+        cards:
+          - type: heading
+            heading: Charging
+            icon: mdi:ev-station
+          - type: tile
+            entity: sensor.pyvisionic_charging_power
+            name: Power now
+            color: green
+          - type: history-graph
+            hours_to_show: 12
+            entities:
+              - entity: sensor.pyvisionic_charging_power
+                name: kW
+              - entity: sensor.pyvisionic_battery_level
+                name: SOC
+
+      - type: grid
+        cards:
+          - type: heading
+            heading: Trip readiness
+            icon: mdi:routes-clock
+          - type: markdown
+            content: >-
+              {% set s = states('sensor.pyvisionic_trip_readiness') %}
+              {% set a = states.sensor.pyvisionic_trip_readiness.attributes %}
+              {% if s == 'on_track' %}## ✅ On track
+              {% elif s == 'tight' %}## ⚠️ Tight
+              {% elif s == 'off_track' %}## 🔴 Off track
+              {% elif s == 'no_plan' or s == 'idle' %}## 💤 No trip planned
+              {% else %}## ❔ {{ s }}
+              {% endif %}
+              {% if a.trip is defined and s in ['on_track','tight','off_track'] %}
+              **{{ a.trip }}** — departs {{ a.departure }}
+
+              Needs **{{ a.plugged_hours_needed }} h plugged**
+              ({{ a.duty_cycle_pct | round(0) }}% of the time remaining)
+              {% endif %}
+          - type: markdown
+            visibility:
+              - condition: state
+                entity: sensor.pyvisionic_trip_readiness
+                state: off_track
+            content: >-
+              #### 🔌 Plug in now or plan a DC fast charge —
+              the current pace does not reach this departure.
+
+      - type: grid
+        cards:
+          - type: heading
+            heading: Battery week
+            icon: mdi:battery-charging-60
+          - type: history-graph
+            hours_to_show: 168
+            entities:
+              - entity: sensor.pyvisionic_battery_level
+                name: SOC
+            grid_options:
+              columns: 12
+              rows: 5
+
+      - type: grid
+        cards:
+          - type: heading
+            heading: Charging economics
+            icon: mdi:transmission-tower
+          - type: gauge
+            entity: sensor.pyvisionic_charge_efficiency
+            name: Wall → battery
+            min: 40
+            max: 100
+            severity:
+              green: 80
+              yellow: 60
+              red: 40
+            grid_options:
+              columns: 6
+              rows: 3
+          - type: markdown
+            grid_options:
+              columns: 6
+              rows: 3
+            content: >-
+              {% set e = states('sensor.pyvisionic_charge_efficiency') | float(0) %}
+              {% if e > 0 %}
+              Of every **10 kWh** billed at the wall,
+              **{{ (e / 10) | round(1) }} kWh** reaches the pack.
+
+              *30-day energy-weighted measurement.*
+              {% else %} *No measured sessions yet.* {% endif %}
+
+      - type: grid
+        cards:
+          - type: heading
+            heading: Data pipeline
+            icon: mdi:database-sync
+          - type: tile
+            entity: binary_sensor.pyvisionic_data_fresh
+            name: Vehicle data
+          - type: tile
+            entity: sensor.pyvisionic_call_class
+            name: Last fetch
+          - type: tile
+            entity: sensor.pyvisionic_forces_today
+            name: Car wakeups today
+          - type: tile
+            entity: sensor.pyvisionic_odometer_km
+            name: Odometer

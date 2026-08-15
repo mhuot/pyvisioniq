@@ -34,19 +34,33 @@ DEVICE = {
     "model": "Bluelink telemetry bridge",
 }
 
-# key, friendly name, unit, device_class, state_class
+# key, friendly name, unit, device_class, state_class, icon
 SENSORS = [
-    ("battery_level", "Battery", "%", "battery", "measurement"),
-    ("range_km", "Range", "km", "distance", "measurement"),
-    ("charging_power", "Charging power", "kW", "power", "measurement"),
-    ("odometer_km", "Odometer", "km", "distance", "total_increasing"),
-    ("twelve_v", "12V battery", "%", "battery", "measurement"),
-    ("temperature", "Ambient temperature", "°C", "temperature", "measurement"),
-    ("forces_today", "Force refreshes today", None, None, "measurement"),
-    ("call_class", "Last fetch class", None, None, None),
-    ("charge_efficiency", "Wall-to-battery efficiency", "%", None, "measurement"),
-    ("est_range_full", "Estimated range at 100%", "mi", "distance", "measurement"),
-    ("trip_readiness", "Trip readiness", None, None, None),
+    ("battery_level", "Battery", "%", "battery", "measurement", None),
+    ("range_km", "Range", "km", "distance", "measurement", "mdi:map-marker-distance"),
+    ("charging_power", "Charging power", "kW", "power", "measurement", "mdi:ev-station"),
+    ("odometer_km", "Odometer", "km", "distance", "total_increasing", "mdi:counter"),
+    ("twelve_v", "12V battery", "%", "battery", "measurement", "mdi:car-battery"),
+    ("temperature", "Ambient temperature", "°C", "temperature", "measurement", None),
+    ("forces_today", "Force refreshes today", None, None, "measurement", "mdi:sleep-off"),
+    ("call_class", "Last fetch class", None, None, None, "mdi:swap-vertical"),
+    (
+        "charge_efficiency",
+        "Wall-to-battery efficiency",
+        "%",
+        None,
+        "measurement",
+        "mdi:transmission-tower",
+    ),
+    (
+        "est_range_full",
+        "Estimated range at 100%",
+        "mi",
+        "distance",
+        "measurement",
+        "mdi:map-marker-radius",
+    ),
+    ("trip_readiness", "Trip readiness", None, None, None, "mdi:routes-clock"),
 ]
 
 BINARY_SENSORS = [
@@ -62,9 +76,14 @@ def discovery_messages(prefix, base):
         "availability_topic": f"{base}/status",
         "device": DEVICE,
     }
-    for key, name, unit, device_class, state_class in SENSORS:
+    for key, name, unit, device_class, state_class, icon in SENSORS:
         config = {
             "name": name,
+            # has_entity_name + object_id give clean, prefixed entity ids
+            # (sensor.pyvisionic_battery_level) instead of collision-prone
+            # bare names like sensor.battery.
+            "has_entity_name": True,
+            "object_id": f"pyvisionic_{key}",
             "unique_id": f"pyvisionic_{key}",
             "state_topic": f"{base}/{key}/state",
             "json_attributes_topic": f"{base}/{key}/attributes",
@@ -76,10 +95,14 @@ def discovery_messages(prefix, base):
             config["device_class"] = device_class
         if state_class:
             config["state_class"] = state_class
+        if icon:
+            config["icon"] = icon
         messages.append((f"{prefix}/sensor/pyvisionic/{key}/config", json.dumps(config)))
     for key, name, device_class in BINARY_SENSORS:
         config = {
             "name": name,
+            "has_entity_name": True,
+            "object_id": f"pyvisionic_{key}",
             "unique_id": f"pyvisionic_{key}",
             "state_topic": f"{base}/{key}/state",
             "payload_on": "ON",
