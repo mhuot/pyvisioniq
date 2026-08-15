@@ -79,11 +79,12 @@ def discovery_messages(prefix, base):
     for key, name, unit, device_class, state_class, icon in SENSORS:
         config = {
             "name": name,
-            # has_entity_name + object_id give clean, prefixed entity ids
+            # has_entity_name + default_entity_id give clean, prefixed ids
             # (sensor.pyvisionic_battery_level) instead of collision-prone
-            # bare names like sensor.battery.
+            # bare names. object_id did the same job until HA Core 2026.4
+            # removed it; default_entity_id is its domain-prefixed successor.
             "has_entity_name": True,
-            "object_id": f"pyvisionic_{key}",
+            "default_entity_id": f"sensor.pyvisionic_{key}",
             "unique_id": f"pyvisionic_{key}",
             "state_topic": f"{base}/{key}/state",
             "json_attributes_topic": f"{base}/{key}/attributes",
@@ -102,7 +103,7 @@ def discovery_messages(prefix, base):
         config = {
             "name": name,
             "has_entity_name": True,
-            "object_id": f"pyvisionic_{key}",
+            "default_entity_id": f"binary_sensor.pyvisionic_{key}",
             "unique_id": f"pyvisionic_{key}",
             "state_topic": f"{base}/{key}/state",
             "payload_on": "ON",
