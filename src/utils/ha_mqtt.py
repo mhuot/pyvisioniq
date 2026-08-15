@@ -164,7 +164,11 @@ class HAPublisher:
         if not self.enabled:
             return
         try:
+            # Retained: polls are 60-150 minutes apart, so a subscriber that
+            # connects between them (HA restarting, integration added later)
+            # should get the last known state immediately instead of showing
+            # "unknown" until the next cycle.
             for topic, payload in state_messages(self.base, values, attributes):
-                self.client.publish(topic, payload)
+                self.client.publish(topic, payload, retain=True)
         except Exception as publish_error:  # pylint: disable=broad-except
             logger.warning("MQTT publish failed: %s", publish_error)
