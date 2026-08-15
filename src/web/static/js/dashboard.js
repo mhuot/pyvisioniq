@@ -319,6 +319,35 @@ document.addEventListener('DOMContentLoaded', function() {
         return `rgb(${ch(0)}, ${ch(1)}, ${ch(2)})`;
     }
 
+    // One preference drives the range view on both efficiency charts, so they
+    // never show different framings of the same data side by side.
+    function chartViewIsRange() {
+        return localStorage.getItem('pyvisionic.chartView') === 'range';
+    }
+
+    // Two-tone stacked bar: solid up to the range at an 80% charge, lighter
+    // above it to 100%. One mark answers both questions, and the boundary is
+    // the daily charge limit people actually plan around.
+    function rangeDatasets(fullRanges, colors) {
+        return [
+            {
+                label: 'Range at 80% charge',
+                data: fullRanges.map(r => r * 0.8),
+                backgroundColor: colors,
+                borderWidth: 0,
+                stack: 'range'
+            },
+            {
+                label: '80% to full charge',
+                data: fullRanges.map(r => r * 0.2),
+                backgroundColor: colors.map(c => c.replace('rgb(', 'rgba(').replace(')', ', 0.35)')),
+                borderWidth: 0,
+                borderRadius: 4,
+                stack: 'range'
+            }
+        ];
+    }
+
     function relabelBand(range) {
         const bounds = String(range).match(/(-?\d+(?:\.\d+)?)\s*to\s*(-?\d+(?:\.\d+)?)/);
         if (!bounds) { return range; }
@@ -389,6 +418,22 @@ document.addEventListener('DOMContentLoaded', function() {
             if (window.PYVISIONIC_WEATHER_REFRESH) { window.PYVISIONIC_WEATHER_REFRESH(); }
         });
     }
+
+    // Efficiency / range view toggle for the two efficiency bar charts. One
+    // stored preference drives both, so the tab never shows mixed framings.
+    document.addEventListener('click', function (event) {
+        const button = event.target.closest('.chart-view-btn');
+        if (!button) { return; }
+        localStorage.setItem('pyvisionic.chartView', button.dataset.view);
+        document.querySelectorAll('.chart-view-btn').forEach(other => {
+            const on = other.dataset.view === button.dataset.view;
+            other.classList.toggle('active', on);
+            other.setAttribute('aria-pressed', String(on));
+        });
+        if (tempEfficiencyChart) { tempEfficiencyChart.destroy(); tempEfficiencyChart = null; }
+        loadTemperatureEfficiency(currentTimeRange, currentStartDate, currentEndDate);
+        if (window.PYVISIONIC_WEATHER_REFRESH) { window.PYVISIONIC_WEATHER_REFRESH(); }
+    });
 
     // Charge-type filter for the temperature/charging chart.
     document.addEventListener('click', function (event) {
@@ -1643,18 +1688,24 @@ document.addEventListener('DOMContentLoaded', function() {
             const barLabels = bins.map(bin => relabelBand(bin.temperature_range));
             const barData = bins.map(bin => displayEfficiency(bin.avg_efficiency));
 
+            const packKwh = (window.PYVISIONIC_CONFIG &&
+                window.PYVISIONIC_CONFIG.batteryUsableKwh) || 74.0;
+            const rangeView = chartViewIsRange();
+            const rampColors = bins.map(bin => temperatureBandColor(bin.avg_temperature));
+            const fullRanges = bins.map(bin => displayDistance(packKwh * bin.avg_efficiency));
+
             if (tempEfficiencyChart) { tempEfficiencyChart.destroy(); }
             tempEfficiencyChart = new Chart(ctx, {
                 type: 'bar',
                 data: {
                     labels: barLabels,
-                    datasets: [{
+                    datasets: rangeView ? rangeDatasets(fullRanges, rampColors) : [{
                         label: `Efficiency (${energyLabel})`,
                         data: barData,
                         // Same diverging ramp as the by-month chart, so the two
                         // read as one system. Redundant with the axis here,
                         // which is fine -- it reinforces rather than encodes.
-                        backgroundColor: bins.map(bin => temperatureBandColor(bin.avg_temperature)),
+                        backgroundColor: rampColors,
                         borderWidth: 0,
                         borderRadius: 4
                     }]
@@ -1665,21 +1716,25 @@ document.addEventListener('DOMContentLoaded', function() {
                     plugins: {
                         title: {
                             display: true,
-                            text: 'Efficiency by Temperature',
+                            text: rangeView ? 'Estimated Range by Temperature'
+                                : 'Efficiency by Temperature',
                             font: { size: 16 }
                         },
-                        legend: { display: false },
+                        legend: { display: rangeView, position: 'top' },
                         tooltip: {
                             callbacks: {
                                 label: function (context) {
                                     const bin = bins[context.dataIndex];
-                                    const lines = [
+                                    const full = fullRanges[context.dataIndex];
+                                    const lines = rangeView ? [
+                                        `${(full * 0.8).toFixed(0)} ${distanceUnitLabel()} at an 80% charge`,
+                                        `${full.toFixed(0)} ${distanceUnitLabel()} at 100%`,
+                                        `${displayEfficiency(bin.avg_efficiency).toFixed(2)} ${energyLabel}`
+                                    ] : [
                                         `${context.parsed.y.toFixed(2)} ${energyLabel} ` +
                                             `(${(currentUnits === 'metric' ? bin.wh_per_km : bin.wh_per_mile).toFixed(0)} ` +
                                             `${currentUnits === 'metric' ? 'Wh/km' : 'Wh/mi'})`,
-                                        `About ${displayDistance(((window.PYVISIONIC_CONFIG &&
-                                            window.PYVISIONIC_CONFIG.batteryUsableKwh) || 74.0) *
-                                            bin.avg_efficiency).toFixed(0)} ${distanceUnitLabel()} on a full charge`,
+                                        `About ${full.toFixed(0)} ${distanceUnitLabel()} on a full charge`,
                                         `${bin.trip_count} trips, ${displayDistance(bin.total_distance).toFixed(0)} ${distanceUnitLabel()}`
                                     ];
                                     if (bin.trip_count < THIN_BAND_TRIPS) {
@@ -1692,12 +1747,19 @@ document.addEventListener('DOMContentLoaded', function() {
                     },
                     scales: {
                         x: {
+                            stacked: rangeView,
                             title: { display: true, text: `Temperature (${tempUnitLabel()})` },
                             grid: { display: false }
                         },
                         y: {
+                            stacked: rangeView,
                             beginAtZero: true,
-                            title: { display: true, text: `Efficiency (${energyLabel})` }
+                            title: {
+                                display: true,
+                                text: rangeView
+                                    ? `Estimated range (${distanceUnitLabel()})`
+                                    : `Efficiency (${energyLabel})`
+                            }
                         }
                     }
                 }
@@ -1724,8 +1786,6 @@ document.addEventListener('DOMContentLoaded', function() {
             // percentage lost is easier to act on than an energy multiplier:
             // 1.88x more energy per mile is the same thing as 47% less range,
             // but only one of those tells you whether you can get home.
-            const packKwh = (window.PYVISIONIC_CONFIG &&
-                window.PYVISIONIC_CONFIG.batteryUsableKwh) || 74.0;
             const rangeMiles = bin => packKwh * bin.avg_efficiency;
             const bestRange = displayDistance(rangeMiles(bestBin));
             const worstRange = displayDistance(rangeMiles(worstBin));
@@ -3111,15 +3171,38 @@ document.head.appendChild(style);
                 const distLabel = metric ? 'km' : 'mi';
                 const dist = mi => (metric ? mi * 1.60934 : mi);
 
+                const packKwh = (window.PYVISIONIC_CONFIG &&
+                    window.PYVISIONIC_CONFIG.batteryUsableKwh) || 74.0;
+                const rangeView = localStorage.getItem('pyvisionic.chartView') === 'range';
+                const rampColors = months.map(m => temperatureColor(m.temperature));  // ramp stays on Celsius
+                const fullRanges = months.map(m => dist(packKwh * m.mi_per_kwh));
+
                 if (monthlyChart) { monthlyChart.destroy(); }
                 monthlyChart = new Chart(canvas.getContext('2d'), {
                     type: 'bar',
                     data: {
                         labels: months.map(m => m.month),
-                        datasets: [{
+                        datasets: rangeView ? [
+                            {
+                                label: 'Range at 80% charge',
+                                data: fullRanges.map(r => r * 0.8),
+                                backgroundColor: rampColors,
+                                borderWidth: 0,
+                                stack: 'range'
+                            },
+                            {
+                                label: '80% to full charge',
+                                data: fullRanges.map(r => r * 0.2),
+                                backgroundColor: rampColors.map(c =>
+                                    c.replace('rgb(', 'rgba(').replace(')', ', 0.35)')),
+                                borderWidth: 0,
+                                borderRadius: 4,
+                                stack: 'range'
+                            }
+                        ] : [{
                             label: `Efficiency (${unitLabel})`,
                             data: months.map(value),
-                            backgroundColor: months.map(m => temperatureColor(m.temperature)),  // ramp stays on Celsius
+                            backgroundColor: rampColors,
                             borderWidth: 0,
                             borderRadius: 4
                         }]
@@ -3128,11 +3211,19 @@ document.head.appendChild(style);
                         responsive: true,
                         maintainAspectRatio: false,
                         plugins: {
-                            legend: { display: false },
+                            legend: { display: rangeView, position: 'top' },
                             tooltip: {
                                 callbacks: {
                                     label: context => {
                                         const m = months[context.dataIndex];
+                                        const full = fullRanges[context.dataIndex];
+                                        if (rangeView) {
+                                            return [
+                                                `${(full * 0.8).toFixed(0)} ${distLabel} at an 80% charge`,
+                                                `${full.toFixed(0)} ${distLabel} at 100%`,
+                                                m.temperature === null ? '' : `Avg temperature: ${temp(m.temperature).toFixed(1)} ${tempLabel}`
+                                            ].filter(Boolean);
+                                        }
                                         return [
                                             `${value(m).toFixed(metric ? 0 : 2)} ${unitLabel} (${m.wh_per_mile.toFixed(0)} Wh/mi)`,
                                             m.temperature === null ? '' : `Avg temperature: ${temp(m.temperature).toFixed(1)} ${tempLabel}`,
@@ -3143,10 +3234,16 @@ document.head.appendChild(style);
                             }
                         },
                         scales: {
-                            x: { title: { display: true, text: 'Month' } },
+                            x: { stacked: rangeView, title: { display: true, text: 'Month' } },
                             y: {
+                                stacked: rangeView,
                                 beginAtZero: true,
-                                title: { display: true, text: `Efficiency (${unitLabel})` }
+                                title: {
+                                    display: true,
+                                    text: rangeView
+                                        ? `Estimated range (${distLabel})`
+                                        : `Efficiency (${unitLabel})`
+                                }
                             }
                         }
                     }
@@ -3274,6 +3371,16 @@ document.head.appendChild(style);
         load: loadAllEfficiencyPoints,
         match: matchEfficiency
     };
+
+    document.addEventListener('DOMContentLoaded', function () {
+        // Reflect the stored chart view on the toggle buttons.
+        const view = localStorage.getItem('pyvisionic.chartView') || 'efficiency';
+        document.querySelectorAll('.chart-view-btn').forEach(button => {
+            const on = button.dataset.view === view;
+            button.classList.toggle('active', on);
+            button.setAttribute('aria-pressed', String(on));
+        });
+    });
 
     document.addEventListener('DOMContentLoaded', initTabs);
     document.addEventListener('click', event => {

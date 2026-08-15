@@ -149,6 +149,12 @@
              tabindex="0" hidden>
         <section class="chart-section" aria-labelledby="temp-efficiency-heading">
             <h2 id="temp-efficiency-heading">Temperature Impact on Efficiency</h2>
+            <div class="chart-filter" role="group" aria-label="Chart view">
+                <button type="button" class="chart-filter-btn chart-view-btn active"
+                        data-view="efficiency" aria-pressed="true">Efficiency</button>
+                <button type="button" class="chart-filter-btn chart-view-btn"
+                        data-view="range" aria-pressed="false">Range at 80% / 100%</button>
+            </div>
             <div class="chart-container">
                 <canvas id="temperature-efficiency-chart"></canvas>
             </div>
@@ -185,6 +191,12 @@
 
         <section class="chart-section" aria-labelledby="monthly-efficiency-heading">
             <h2 id="monthly-efficiency-heading">Driving Efficiency by Month</h2>
+            <div class="chart-filter" role="group" aria-label="Chart view">
+                <button type="button" class="chart-filter-btn chart-view-btn active"
+                        data-view="efficiency" aria-pressed="true">Efficiency</button>
+                <button type="button" class="chart-filter-btn chart-view-btn"
+                        data-view="range" aria-pressed="false">Range at 80% / 100%</button>
+            </div>
             <div class="chart-container">
                 <canvas id="monthly-efficiency-chart" role="img"
                         aria-label="Energy consumption per month, coloured by average temperature"></canvas>
