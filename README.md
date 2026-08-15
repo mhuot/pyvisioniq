@@ -269,7 +269,7 @@ All tools live in `tools/` and require an activated venv. One-off historical scr
 | `deduplicate_trips_v2.py` | Remove duplicate trip rows from `trips.csv` | — |
 | `rebuild_charging_sessions.py` | Merge fragmented charging sessions using the dynamic gap threshold | — |
 | `rebuild_sessions_from_battery.py` | Rebuild `charging_sessions.csv` from the battery history | `--preview` |
-| `reprocess_cache_complete.py` | Rebuild every CSV from the cache directory (disaster recovery) | — |
+| `backfill_from_cache.py` | Append cache snapshots the CSVs missed (additive; dry run by default) | — |
 | `recompute_is_cached.py` | Re-evaluate the `is_cached` flag across historical rows | `--write-cache` (default is dry-run) |
 | `analyze_errors.py` | Summarize errors in `cache/error_*.json` | — |
 

@@ -4,14 +4,22 @@ Utility scripts for managing and maintaining PyVisionic data.
 
 ## Active Tools
 
-### reprocess_cache_complete.py
-Rebuilds all CSV data files from cached API responses. **Recovery tool.**
+### backfill_from_cache.py
+Appends battery and location rows for cache snapshots the CSVs missed. Additive
+only; dry run by default.
 
 ```bash
-python tools/reprocess_cache_complete.py
+python tools/backfill_from_cache.py            # show what would be added
+python tools/backfill_from_cache.py --write    # apply (backs up first)
 ```
 
-**When to use:** After updating parsing logic, recovering from corrupted CSVs, or applying new transformations to historical data.
+**When to use:** After any period where the collector was down while the web app
+kept refreshing the cache, or to verify cache/CSV consistency.
+
+> `reprocess_cache_complete.py` has moved to `archive/`. It **discards** the
+> CSVs and rebuilds them from cache alone — appropriate only when the CSVs are
+> lost entirely, since cache now spans just the retention window and the CSVs
+> hold years.
 
 ### deduplicate_trips_v2.py
 Removes duplicate trip entries from trips.csv.

@@ -1473,6 +1473,15 @@ def get_all_locations():
             if client:
                 try:
                     data = client.get_vehicle_data()
+                    # If the cache had expired this call fetched fresh data.
+                    # Only the collector normally stores rows, so without this
+                    # the reading would exist in cache and nowhere else -- an
+                    # audit found 143 such orphans in one retention window.
+                    if data and not data.get("is_cached"):
+                        try:
+                            storage.store_vehicle_data(data)
+                        except Exception as store_error:  # pylint: disable=broad-except
+                            app.logger.warning("Could not store web-fetched data: %s", store_error)
                     if data and data.get("location"):
                         loc = data["location"]
                         if loc.get("latitude") and loc.get("longitude"):

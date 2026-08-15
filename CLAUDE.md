@@ -75,7 +75,7 @@ pre-commit install
 ### Data Management Tools
 ```bash
 # All tools require venv activation first
-python tools/reprocess_cache_complete.py                  # Rebuild CSV files from cache (recovery)
+python tools/backfill_from_cache.py                        # Harvest cache snapshots the CSVs missed (dry run; --write to apply)
 python tools/deduplicate_trips_v2.py                      # Remove duplicate trips
 python tools/rebuild_sessions_from_battery.py              # Rebuild charging sessions from battery history
 python tools/rebuild_sessions_from_battery.py --preview    # Preview rebuild without writing

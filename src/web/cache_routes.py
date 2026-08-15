@@ -3,7 +3,7 @@ import os
 from datetime import datetime
 from pathlib import Path
 
-from flask import Blueprint, Response, jsonify, render_template, request
+from flask import Blueprint, Response, current_app, jsonify, render_template, request
 
 from src.web.auth import admin_required, api_login_required, login_required
 
@@ -179,6 +179,17 @@ def force_cache_update():
     try:
         # Use the force_cache_update method we created earlier
         data = client.force_cache_update()
+        if data:
+            # A forced update is always a fresh fetch; store it so the reading
+            # reaches the CSVs rather than only the cache.
+            storage = current_app.config.get("storage")
+            if storage:
+                try:
+                    storage.store_vehicle_data(data)
+                except Exception as store_error:  # pylint: disable=broad-except
+                    current_app.logger.warning(
+                        "Could not store force-updated data: %s", store_error
+                    )
         if data:
             return jsonify(
                 {

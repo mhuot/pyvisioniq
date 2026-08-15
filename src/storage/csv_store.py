@@ -25,7 +25,9 @@ Usage:
     locations_df = storage.get_locations_df()
 """
 
+import contextlib
 import csv
+import fcntl
 import logging
 import os
 import sys
@@ -185,7 +187,33 @@ class CSVStorage(StorageBackend):
                 )
                 writer.writeheader()
 
+    @contextlib.contextmanager
+    def _write_lock(self):
+        """Serialise CSV writes across processes.
+
+        store_vehicle_data is called by the collector and by gunicorn web
+        workers (refresh, and harvesting fresh web-path fetches). Its pattern
+        is read-modify-write over shared CSV files plus a charging-session
+        state machine, so two concurrent callers can silently lose rows or
+        corrupt session state. An fcntl lock on a sidecar file makes the whole
+        store atomic per process; callers just block briefly instead.
+        """
+        lock_path = self.data_dir / ".store.lock"
+        with open(lock_path, "w", encoding="utf-8") as handle:
+            fcntl.flock(handle, fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(handle, fcntl.LOCK_UN)
+
     def store_vehicle_data(self, data):
+        """Store vehicle data in the CSV files, serialised across processes."""
+        if not data:
+            return
+        with self._write_lock():
+            self._store_vehicle_data_locked(data)
+
+    def _store_vehicle_data_locked(self, data):
         """store vehicle data in CSV files
         This method will store the vehicle data in CSV files.
         It will create the files if they do not exist and append the data to them.
@@ -195,8 +223,6 @@ class CSVStorage(StorageBackend):
         Args:
             data (_type_): _description_
         """
-        if not data:
-            return
 
         timestamp = data.get("timestamp", datetime.now().isoformat())
 
