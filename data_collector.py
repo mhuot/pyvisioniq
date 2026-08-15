@@ -16,6 +16,7 @@ from dotenv import load_dotenv
 
 from src.api.client import CachedVehicleClient
 from src.storage.csv_store import CSVStorage
+from src.utils.ha_mqtt import HAPublisher, values_from_vehicle
 from src.utils.plug_sessions import detect_charging_spans, load_plug_log, refine_sessions
 
 sys.path.append(str(Path(__file__).parent))
@@ -121,6 +122,9 @@ class DataCollector:
 
         # Adaptive polling state
         self.adaptive_enabled = os.getenv("ADAPTIVE_POLLING", "false").lower() == "true"
+        # Home Assistant bridge: publish each poll's state over MQTT so HA
+        # never needs its own Bluelink integration against the same budget.
+        self.ha_publisher = HAPublisher()
         self.last_battery_state = {}
         self.charging_since = None
         self.last_trip_end = None
@@ -207,6 +211,108 @@ class DataCollector:
 
         return self.calls_today < self.daily_limit
 
+    def _publish_to_ha(self, data):
+        """Push raw state plus derived metrics to Home Assistant, best-effort.
+
+        Derived values are what justify bridging instead of running kia_uvo:
+        measured charging efficiency, the season-matched range estimate, and
+        the trip-readiness verdict, none of which the car reports.
+        """
+        if not self.ha_publisher.enabled:
+            return
+        try:
+            values = values_from_vehicle(data, forces_today=self.client._forces_today())
+        except Exception:  # pylint: disable=broad-except
+            values = values_from_vehicle(data)
+        attributes = {}
+        try:
+            values.update(self._derived_metrics(attributes))
+        except Exception as derived_error:  # pylint: disable=broad-except
+            logger.debug("Derived metrics unavailable: %s", derived_error)
+        self.ha_publisher.publish(values, attributes)
+
+    def _derived_metrics(self, attributes):
+        """Compute the analytics-side sensors; every piece is optional."""
+        import pandas as pd  # pylint: disable=import-outside-toplevel
+
+        derived = {}
+        pack_kwh = float(os.getenv("BATTERY_USABLE_KWH", "74.0"))
+
+        # Energy-weighted wall-to-battery efficiency over the last 30 days.
+        try:
+            from src.utils.charge_efficiency import (  # pylint: disable=import-outside-toplevel
+                compute_efficiency_points,
+                summarize,
+            )
+            from src.utils.plug_sessions import (  # pylint: disable=import-outside-toplevel
+                load_ha_export,
+                load_plug_log,
+            )
+
+            frames = [load_plug_log()]
+            export = Path("data/ha_plug_history.csv")
+            if export.exists():
+                frames.append(load_ha_export(export))
+            ac = pd.concat(frames, ignore_index=True).drop_duplicates("timestamp")
+            battery = pd.read_csv("data/battery_status.csv")
+            battery["timestamp"] = pd.to_datetime(
+                battery["timestamp"], format="mixed", errors="coerce"
+            )
+            cutoff = pd.Timestamp.now() - pd.Timedelta(days=30)
+            points = compute_efficiency_points(
+                battery[battery["timestamp"] >= cutoff], ac, pack_kwh
+            )
+            summary = summarize(points)
+            derived["charge_efficiency"] = summary.get("efficiency_pct")
+        except Exception:  # pylint: disable=broad-except
+            pass
+
+        # Season-matched full-charge range from this month's driving.
+        try:
+            trips = pd.read_csv("data/trips.csv")
+            trips["date"] = pd.to_datetime(trips["date"], errors="coerce")
+            month = trips[
+                (trips["date"].dt.month == datetime.now().month)
+                & (trips["distance"] > 0)
+                & (trips["total_consumed"] > 0)
+            ]
+            if len(month) >= 5:
+                mi_per_kwh = month["distance"].sum() / (month["total_consumed"].sum() / 1000)
+                derived["est_range_full"] = round(pack_kwh * mi_per_kwh)
+        except Exception:  # pylint: disable=broad-except
+            pass
+
+        # Trip readiness, when a plan exists and its departure is ahead.
+        try:
+            import sys  # pylint: disable=import-outside-toplevel
+
+            sys.path.insert(0, str(Path(__file__).parent / "tools"))
+            from trip_readiness_check import (  # pylint: disable=import-outside-toplevel
+                assess,
+                load_plan,
+            )
+
+            plan = load_plan(str(Path(__file__).parent / "tools" / "trip_plan.json"))
+            departure = datetime.strptime(plan["departure"], "%Y-%m-%d %H:%M")
+            if departure > datetime.now():
+                result = assess(plan, str(Path(__file__).parent))
+                derived["trip_readiness"] = result["status"]
+                attributes["trip_readiness"] = {
+                    "trip": plan.get("trip_name"),
+                    "departure": plan.get("departure"),
+                    "duty_cycle_pct": result.get("duty_cycle_pct"),
+                    "projected_arrival_pct": result.get("shortfall_kwh"),
+                    "plugged_hours_needed": result.get("plugged_hours_needed"),
+                }
+            else:
+                derived["trip_readiness"] = "idle"
+        except SystemExit:
+            derived["trip_readiness"] = "no_plan"
+        except Exception:  # pylint: disable=broad-except
+            pass
+
+        return derived
+
     def _should_force(self):
         """Decide whether this poll should wake the car.
 
@@ -255,6 +361,7 @@ class DataCollector:
                 self._update_adaptive_state(data)
                 self.save_call_history()
                 self._refine_sessions_from_plug()
+                self._publish_to_ha(data)
 
                 logger.info(
                     "Data collected successfully (call %d/%d, %s)",
