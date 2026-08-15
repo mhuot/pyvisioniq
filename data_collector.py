@@ -207,6 +207,31 @@ class DataCollector:
 
         return self.calls_today < self.daily_limit
 
+    def _should_force(self):
+        """Decide whether this poll should wake the car.
+
+        Cached server fetches are free of wakeups and the car pushes fresh
+        data after every drive and charge, so cached is the default. A force
+        is requested only when it buys something cached cannot:
+
+        * the previous fetch found the server copy stale, so only the car
+          itself has current data;
+        * a DC fast charge is in progress, where 15-minute resolution on a
+          rapidly changing SOC is the whole point of adaptive polling.
+
+        The client may still demote the request if the 12V is low or the
+        daily force budget is spent.
+        """
+        last = getattr(self, "last_data", None)
+        if not last:
+            return False
+        if last.get("hyundai_data_fresh") is False:
+            return True
+        battery = last.get("battery") or {}
+        if battery.get("is_charging") and (battery.get("charging_power") or 0) >= 20:
+            return True
+        return False
+
     def collect_data(self):
         """Collect vehicle data from API"""
         if not self.can_make_api_call():
@@ -217,9 +242,10 @@ class DataCollector:
             logger.info("Collecting vehicle data...")
 
             # Get fresh data and let it cache
-            data = self.client.get_vehicle_data()
+            data = self.client.get_vehicle_data(force=self._should_force())
 
             if data:
+                self.last_data = data
                 # Store in CSV files
                 self.storage.store_vehicle_data(data)
 
@@ -231,9 +257,10 @@ class DataCollector:
                 self._refine_sessions_from_plug()
 
                 logger.info(
-                    "Data collected successfully (call %d/%d)",
+                    "Data collected successfully (call %d/%d, %s)",
                     self.calls_today,
                     self.daily_limit,
+                    data.get("call_class", "unknown"),
                 )
                 # Temperature from API is in Fahrenheit
                 temp_f = data.get("raw_data", {}).get("airTemp", {}).get("value")

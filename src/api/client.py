@@ -206,8 +206,11 @@ class CachedVehicleClient:
             return None
 
         try:
-            # Update and get vehicle data
-            success = self._update_vehicle_with_retry()
+            # A manual refresh is explicit user intent, but the 12V guard and
+            # force budget still apply -- the button should not be able to do
+            # what the scheduler is forbidden from doing.
+            do_force, call_class = self.resolve_call_class(True)
+            success = self._update_vehicle_with_retry(force=do_force)
             if success:
                 vehicle = None
                 try:
@@ -225,6 +228,7 @@ class CachedVehicleClient:
                         is_fresh = self._is_remote_data_fresh(data, previous_cache)
                         data["hyundai_data_fresh"] = is_fresh
                         data["is_cached"] = not is_fresh
+                        data["call_class"] = call_class
                         self._save_to_cache(cache_key, data)
                         logger.info("Cache updated successfully")
                         return data
@@ -431,7 +435,7 @@ class CachedVehicleClient:
             logger.error("Error processing vehicle data: %s", e, exc_info=True)
             return None
 
-    def get_vehicle_data(self):
+    def get_vehicle_data(self, force=False):
         cache_key = self._get_cache_key("full_data")
         cached_data = self._load_from_cache(cache_key)
 
@@ -465,7 +469,8 @@ class CachedVehicleClient:
                 return None
 
             # Attempt to update with retry logic for rate limits
-            success = self._update_vehicle_with_retry()
+            do_force, call_class = self.resolve_call_class(force)
+            success = self._update_vehicle_with_retry(force=do_force)
             if not success:
                 logger.warning("Failed to update vehicle data after retries")
                 return self._get_last_successful_cache()
@@ -511,6 +516,7 @@ class CachedVehicleClient:
                 is_fresh = self._is_remote_data_fresh(data, previous_cache)
                 data["hyundai_data_fresh"] = is_fresh
                 data["is_cached"] = not is_fresh
+                data["call_class"] = call_class
                 self._save_to_cache(cache_key, data)
                 return data
             else:
@@ -662,7 +668,78 @@ class CachedVehicleClient:
             error,
         )
 
-    def _update_vehicle_with_retry(self, max_retries=3):
+    def _last_12v_soc(self):
+        """12V battery percentage from the newest cached payload, or None.
+
+        A force refresh runs the car's telematics unit off the 12V battery.
+        The ecosystem's most-reported failure is a 12V killed by over-polling
+        a parked car, so a sagging reading blocks forces entirely.
+        """
+        try:
+            newest = max(self.cache_dir.glob("history_*.json"), default=None)
+            if not newest:
+                return None
+            with open(newest, encoding="utf-8") as handle:
+                payload = json.load(handle)
+            return (
+                payload.get("raw_data", {})
+                .get("vehicleStatus", {})
+                .get("battery", {})
+                .get("batSoc")
+            )
+        except (OSError, ValueError):
+            return None
+
+    def resolve_call_class(self, want_force):
+        """Decide whether a fetch may wake the vehicle.
+
+        Force refreshes are the scarce resource: they drain the 12V and they
+        are what the strict per-endpoint limits actually meter. A requested
+        force is demoted to a cached fetch when the 12V is low or the daily
+        force budget is spent. Cached fetches are never demoted.
+        """
+        if not want_force:
+            return False, "cached"
+        min_soc = float(os.getenv("MIN_12V_SOC_FOR_FORCE", "55"))
+        soc_12v = self._last_12v_soc()
+        if soc_12v is not None and soc_12v < min_soc:
+            logger.warning(
+                "Force refresh demoted to cached: 12V at %s%% (floor %s%%)", soc_12v, min_soc
+            )
+            return False, "demoted_low_12v"
+        limit = int(os.getenv("FORCE_DAILY_LIMIT", "8"))
+        used = self._forces_today()
+        if used >= limit:
+            logger.warning("Force refresh demoted to cached: %d/%d forces used today", used, limit)
+            return False, "demoted_budget"
+        return True, "force"
+
+    def _force_ledger_path(self):
+        return self.cache_dir.parent / "data" / "force_history.json"
+
+    def _forces_today(self):
+        try:
+            with open(self._force_ledger_path(), encoding="utf-8") as handle:
+                entries = json.load(handle)
+            today = datetime.now().strftime("%Y-%m-%d")
+            return sum(1 for stamp in entries if stamp.startswith(today))
+        except (OSError, ValueError):
+            return 0
+
+    def _record_force(self):
+        path = self._force_ledger_path()
+        try:
+            entries = []
+            if path.exists():
+                with open(path, encoding="utf-8") as handle:
+                    entries = json.load(handle)
+            entries = entries[-200:] + [datetime.now().isoformat()]
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump(entries, handle)
+        except (OSError, ValueError) as ledger_error:
+            logger.warning("Could not record force refresh: %s", ledger_error)
+
+    def _update_vehicle_with_retry(self, max_retries=3, force=True):
         """Update vehicle data with exponential backoff for rate limits"""
         last_error = None
         last_action = None
@@ -682,16 +759,28 @@ class CachedVehicleClient:
                     )
                     time.sleep(delay)
 
-                # Force refresh vehicle state to get fresh data from the vehicle
-                if self.vehicle_id:
-                    last_action = f"Forcing refresh of state for vehicle {self.vehicle_id}"
-                    self.manager.force_refresh_vehicle_state(self.vehicle_id)
-                    logger.info("Vehicle %s state refreshed successfully", self.vehicle_id)
+                # Cached fetch reads what the car last pushed to Hyundai's
+                # servers -- free of vehicle wakeups. Force polls the car
+                # itself: fresher, but drains the 12V and is what the strict
+                # per-endpoint limits meter. The car pushes after every drive
+                # and charge, so cached is usually identical.
+                if force:
+                    if self.vehicle_id:
+                        last_action = f"Forcing refresh of state for vehicle {self.vehicle_id}"
+                        self.manager.force_refresh_vehicle_state(self.vehicle_id)
+                    else:
+                        last_action = "Forcing refresh of state for all vehicles"
+                        self.manager.force_refresh_all_vehicles_states()
+                    self._record_force()
+                    logger.info("Vehicle state force-refreshed (woke the car)")
                 else:
-                    # Fallback to refresh all vehicles if no specific ID
-                    last_action = "Forcing refresh of state for all vehicles"
-                    self.manager.force_refresh_all_vehicles_states()
-                    logger.info("All vehicles states refreshed successfully")
+                    if self.vehicle_id:
+                        last_action = f"Cached-state update for vehicle {self.vehicle_id}"
+                        self.manager.update_vehicle_with_cached_state(self.vehicle_id)
+                    else:
+                        last_action = "Cached-state update for all vehicles"
+                        self.manager.update_all_vehicles_with_cached_state()
+                    logger.info("Vehicle state updated from server cache (no wakeup)")
                 return True
 
             except Exception as e:
