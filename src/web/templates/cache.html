@@ -167,6 +167,62 @@
             background: #6c757d;
             color: white;
         }
+        .table-controls {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            align-items: center;
+            justify-content: space-between;
+            margin: 0 0 12px;
+        }
+        .filter-group { display: flex; gap: 8px; flex-wrap: wrap; }
+        .filter-btn {
+            padding: 8px 14px;
+            min-height: 44px;
+            border: 2px solid #767676; /* 4.5:1 on white */
+            border-radius: 6px;
+            background: white;
+            color: #212529;
+            font-size: 0.95rem;
+            cursor: pointer;
+        }
+        .filter-btn:hover { background: #f8f9fa; }
+        .filter-btn.active {
+            font-weight: 700;
+            border-color: #212529;
+            background: #f8f9fa;
+        }
+        .filter-btn:focus-visible { outline: 3px solid #0b5ed7; outline-offset: 2px; }
+        .per-page-label { color: #212529; }
+        .per-page-label select { min-height: 44px; padding: 6px; }
+        .table-wrap { overflow-x: auto; }
+        .files-table {
+            width: 100%;
+            border-collapse: collapse;
+            background: white;
+            font-size: 0.9rem;
+        }
+        .files-table th, .files-table td {
+            padding: 10px 12px;
+            border-bottom: 1px solid #d5dbdb;
+            text-align: left;
+            white-space: nowrap;
+        }
+        .files-table .file-name-cell {
+            white-space: normal;
+            word-break: break-all;
+            font-family: monospace;
+        }
+        .files-table .file-actions-cell { display: flex; gap: 8px; }
+        .pager {
+            display: flex;
+            gap: 16px;
+            align-items: center;
+            justify-content: center;
+            margin-top: 14px;
+        }
+        .pager span { color: #212529; }
+
         .tag-error {
             background: #dc3545;
             color: white;
@@ -190,8 +246,30 @@
             <button class="btn btn-primary" onclick="loadFiles()">Refresh List</button>
         </div>
 
+        <div class="table-controls">
+            <div class="filter-group" role="group" aria-label="Filter files by type">
+                <button type="button" class="filter-btn active" data-type="all" aria-pressed="true">All</button>
+                <button type="button" class="filter-btn" data-type="current" aria-pressed="false">Current</button>
+                <button type="button" class="filter-btn" data-type="history" aria-pressed="false">History</button>
+                <button type="button" class="filter-btn" data-type="error" aria-pressed="false">Errors</button>
+            </div>
+            <label class="per-page-label">Per page:
+                <select id="files-per-page">
+                    <option value="10">10</option>
+                    <option value="25" selected>25</option>
+                    <option value="50">50</option>
+                </select>
+            </label>
+        </div>
+
         <div class="file-list" id="file-list">
             <div class="loading">Loading cache files...</div>
+        </div>
+
+        <div class="pager" id="files-pager" hidden>
+            <button type="button" class="btn btn-primary" id="files-prev">&larr; Previous</button>
+            <span id="files-page-info" role="status" aria-live="polite"></span>
+            <button type="button" class="btn btn-primary" id="files-next">Next &rarr;</button>
         </div>
     </div>
 
@@ -212,8 +290,8 @@
                 
                 if (response.ok) {
                     displayStats(data.stats);
-                    displayFiles(data.files);
                     currentFiles = data.files;
+                    displayFiles();
                 } else {
                     showError(data.error || 'Failed to load cache files');
                 }
@@ -255,48 +333,107 @@
             `;
         }
 
-        function displayFiles(files) {
+        // Filter and pagination state. The full list is already in memory, so
+        // both happen client-side; no extra requests per page.
+        let fileFilter = 'all';
+        let filePage = 1;
+        let filesPerPage = 25;
+
+        function fileType(file) {
+            if (file.is_history) return 'history';
+            if (file.is_error) return 'error';
+            return 'current';
+        }
+
+        function displayFiles() {
             const container = document.getElementById('file-list');
-            
-            if (files.length === 0) {
-                container.innerHTML = '<div class="loading">No cache files found</div>';
+            const pager = document.getElementById('files-pager');
+
+            const filtered = fileFilter === 'all'
+                ? currentFiles
+                : currentFiles.filter(f => fileType(f) === fileFilter);
+
+            if (!filtered.length) {
+                container.innerHTML = '<div class="loading">No matching cache files</div>';
+                pager.hidden = true;
                 return;
             }
-            
-            container.innerHTML = files.map(file => {
-                let icon = '📄';
-                let tags = [];
-                
-                if (file.is_history) {
-                    icon = '📚';
-                    tags.push('<span class="tag tag-history">history</span>');
-                } else if (file.is_error) {
-                    icon = '⚠️';
-                    tags.push('<span class="tag tag-error">error</span>');
-                } else {
-                    icon = '💾';
-                }
-                
+
+            const pages = Math.max(1, Math.ceil(filtered.length / filesPerPage));
+            if (filePage > pages) { filePage = pages; }
+            const start = (filePage - 1) * filesPerPage;
+            const visible = filtered.slice(start, start + filesPerPage);
+
+            const rows = visible.map(file => {
+                const type = fileType(file);
+                const tag = type === 'history' ? '<span class="tag tag-history">history</span>'
+                    : type === 'error' ? '<span class="tag tag-error">error</span>'
+                    : '<span class="tag tag-current">current</span>';
                 return `
-                    <div class="file-item">
-                        <div class="file-icon">${icon}</div>
-                        <div class="file-info">
-                            <div class="file-name">
-                                ${file.name}
-                                ${tags.join('')}
-                            </div>
-                            <div class="file-meta">
-                                ${formatBytes(file.size)} • ${file.age_hours} hours ago • ${new Date(file.modified).toLocaleString()}
-                            </div>
-                        </div>
-                        <div class="file-actions">
-                            <button class="btn btn-primary" onclick="viewFile('${file.name}')">View</button>
-                            <button class="btn btn-danger" onclick="deleteFile('${file.name}')">Delete</button>
-                        </div>
-                    </div>
-                `;
+                    <tr>
+                        <td class="file-name-cell">${file.name}</td>
+                        <td>${tag}</td>
+                        <td>${formatBytes(file.size)}</td>
+                        <td>${file.age_hours} h</td>
+                        <td>${new Date(file.modified).toLocaleString()}</td>
+                        <td class="file-actions-cell">
+                            <button class="btn btn-primary" onclick="viewFile('${file.name}')"
+                                    aria-label="View ${file.name}">View</button>
+                            <button class="btn btn-danger" onclick="deleteFile('${file.name}')"
+                                    aria-label="Delete ${file.name}">Delete</button>
+                        </td>
+                    </tr>`;
             }).join('');
+
+            container.innerHTML = `
+                <div class="table-wrap">
+                    <table class="files-table" aria-label="Cache files">
+                        <thead>
+                            <tr>
+                                <th scope="col">File</th>
+                                <th scope="col">Type</th>
+                                <th scope="col">Size</th>
+                                <th scope="col">Age</th>
+                                <th scope="col">Modified</th>
+                                <th scope="col">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>${rows}</tbody>
+                    </table>
+                </div>`;
+
+            pager.hidden = pages <= 1;
+            document.getElementById('files-page-info').textContent =
+                `Page ${filePage} of ${pages} — ${filtered.length} file${filtered.length === 1 ? '' : 's'}` +
+                (fileFilter === 'all' ? '' : ` (${fileFilter})`);
+            document.getElementById('files-prev').disabled = filePage <= 1;
+            document.getElementById('files-next').disabled = filePage >= pages;
         }
+
+        document.addEventListener('click', function (event) {
+            const btn = event.target.closest('.filter-btn');
+            if (!btn) return;
+            fileFilter = btn.dataset.type;
+            filePage = 1;
+            document.querySelectorAll('.filter-btn').forEach(other => {
+                const on = other === btn;
+                other.classList.toggle('active', on);
+                other.setAttribute('aria-pressed', String(on));
+            });
+            displayFiles();
+        });
+
+        document.getElementById('files-per-page').addEventListener('change', function () {
+            filesPerPage = parseInt(this.value, 10);
+            filePage = 1;
+            displayFiles();
+        });
+        document.getElementById('files-prev').addEventListener('click', function () {
+            if (filePage > 1) { filePage--; displayFiles(); }
+        });
+        document.getElementById('files-next').addEventListener('click', function () {
+            filePage++; displayFiles();
+        });
 
         async function viewFile(filename) {
             try {
