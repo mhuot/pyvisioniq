@@ -187,6 +187,13 @@ class HAPublisher:
         if not self.enabled:
             return
         try:
+            # Discovery configs are republished every cycle, not just at
+            # startup: deleting the device in HA wipes the retained configs
+            # from the broker (HA publishes empty payloads to prevent
+            # rediscovery), which otherwise leaves the bridge silently dead
+            # until the next collector restart. Idempotent and tiny.
+            for topic, payload in discovery_messages(self.prefix, self.base):
+                self.client.publish(topic, payload, retain=True)
             # Retained: polls are 60-150 minutes apart, so a subscriber that
             # connects between them (HA restarting, integration added later)
             # should get the last known state immediately instead of showing
