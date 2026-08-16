@@ -7,7 +7,7 @@ from src.utils.ha_mqtt import discovery_messages, state_messages, values_from_ve
 
 def test_discovery_covers_every_sensor_with_device_and_availability():
     messages = discovery_messages("homeassistant", "pyvisionic")
-    assert len(messages) == 18  # 12 sensors + 5 binary + device tracker
+    assert len(messages) == 20  # 12 sensors + 7 binary + device tracker
     for topic, payload in messages:
         config = json.loads(payload)
         assert topic.startswith("homeassistant/")
@@ -53,6 +53,27 @@ def test_values_from_vehicle_reads_nested_payload():
     assert values["doors_unlocked"] is False
     assert values["tire_warning"] is False
     assert values["charge_time_remaining"] == 530
+    assert values["opening_open"] is False
+    assert values["climate_on"] is False
+
+
+def test_detail_attributes_name_what_is_open_and_running():
+    from src.utils.ha_mqtt import detail_attributes
+
+    detail = detail_attributes(
+        {
+            "raw_data": {
+                "vehicleStatus": {
+                    "doorOpen": {"frontLeft": 1, "frontRight": 0},
+                    "trunkOpen": True,
+                    "airCtrlOn": True,
+                    "steerWheelHeat": 1,
+                }
+            }
+        }
+    )
+    assert detail["opening_open"]["open"] == ["door frontLeft", "trunk"]
+    assert set(detail["climate_on"]["active"]) == {"hvac", "steering wheel heat"}
 
 
 def test_device_block_promotes_vehicle_identity():

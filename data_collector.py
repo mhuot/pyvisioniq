@@ -18,6 +18,7 @@ from src.api.client import CachedVehicleClient
 from src.storage.csv_store import CSVStorage
 from src.utils.ha_mqtt import (
     HAPublisher,
+    detail_attributes,
     device_from_vehicle,
     location_from_vehicle,
     values_from_vehicle,
@@ -234,6 +235,7 @@ class DataCollector:
             values.update(self._derived_metrics(attributes))
         except Exception as derived_error:  # pylint: disable=broad-except
             logger.debug("Derived metrics unavailable: %s", derived_error)
+        attributes.update(detail_attributes(data))
         state, location_attrs = location_from_vehicle(data)
         if state:
             values["location"] = state

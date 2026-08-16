@@ -81,6 +81,22 @@ views:
               - condition: state
                 entity: binary_sensor.pyvisionic_tire_warning
                 state: "on"
+          - type: tile
+            entity: binary_sensor.pyvisionic_opening_open
+            name: Something open
+            color: amber
+            visibility:
+              - condition: state
+                entity: binary_sensor.pyvisionic_opening_open
+                state: "on"
+          - type: tile
+            entity: binary_sensor.pyvisionic_climate_on
+            name: Climate running
+            color: cyan
+            visibility:
+              - condition: state
+                entity: binary_sensor.pyvisionic_climate_on
+                state: "on"
 
       - type: grid
         cards:

@@ -110,6 +110,8 @@ BINARY_SENSORS = [
     ("plugged_in", "Plugged in", "plug", None),
     ("doors_unlocked", "Doors", "lock", None),
     ("tire_warning", "Tire pressure", "problem", None),
+    ("opening_open", "Doors, windows, trunk", "opening", None),
+    ("climate_on", "Climate", "running", None),
     ("data_fresh", "Vehicle data fresh", None, "diagnostic"),
 ]
 
@@ -153,6 +155,7 @@ def discovery_messages(prefix, base, device=None):
             "default_entity_id": f"binary_sensor.pyvisionic_{key}",
             "unique_id": f"pyvisionic_{key}",
             "state_topic": f"{base}/{key}/state",
+            "json_attributes_topic": f"{base}/{key}/attributes",
             "payload_on": "ON",
             "payload_off": "OFF",
             **availability,
@@ -213,6 +216,31 @@ def values_from_vehicle(data, forces_today=None):
     charging = bool(battery.get("is_charging"))
     remain = ((ev_status.get("remainTime2") or {}).get("atc") or {}).get("value")
 
+    def truthy(value):
+        return str(value).lower() == "true" or value is True
+
+    openings = {}
+    for side, flag in (raw_status.get("doorOpen") or {}).items():
+        if flag:
+            openings[f"door {side}"] = True
+    for side, flag in (raw_status.get("windowOpen") or {}).items():
+        if flag:
+            openings[f"window {side}"] = True
+    if truthy(raw_status.get("trunkOpen")):
+        openings["trunk"] = True
+    if truthy(raw_status.get("hoodOpen")):
+        openings["hood"] = True
+
+    climate = {}
+    if truthy(raw_status.get("airCtrlOn")):
+        climate["hvac"] = True
+    if truthy(raw_status.get("defrost")):
+        climate["defrost"] = True
+    if raw_status.get("steerWheelHeat"):
+        climate["steering wheel heat"] = True
+    if raw_status.get("sideBackWindowHeat"):
+        climate["rear window heat"] = True
+
     return {
         "battery_level": battery.get("level"),
         "range_km": battery.get("range"),
@@ -227,9 +255,42 @@ def values_from_vehicle(data, forces_today=None):
         # binary_sensor device_class lock reads ON as unlocked.
         "doors_unlocked": str(raw_status.get("doorLockStatus")).lower() != "true",
         "tire_warning": any(int(v or 0) for v in tires.values()),
+        "opening_open": bool(openings),
+        "climate_on": bool(climate),
         "data_fresh": bool(data.get("hyundai_data_fresh")),
         "call_class": data.get("call_class"),
         "forces_today": forces_today,
+    }
+
+
+def detail_attributes(data):
+    """Which openings and climate loads are active, for the attribute topics."""
+    raw_status = (data.get("raw_data") or {}).get("vehicleStatus", {})
+
+    def truthy(value):
+        return str(value).lower() == "true" or value is True
+
+    open_list = [
+        f"door {side}" for side, flag in (raw_status.get("doorOpen") or {}).items() if flag
+    ] + [f"window {side}" for side, flag in (raw_status.get("windowOpen") or {}).items() if flag]
+    if truthy(raw_status.get("trunkOpen")):
+        open_list.append("trunk")
+    if truthy(raw_status.get("hoodOpen")):
+        open_list.append("hood")
+
+    active = []
+    if truthy(raw_status.get("airCtrlOn")):
+        active.append("hvac")
+    if truthy(raw_status.get("defrost")):
+        active.append("defrost")
+    if raw_status.get("steerWheelHeat"):
+        active.append("steering wheel heat")
+    if raw_status.get("sideBackWindowHeat"):
+        active.append("rear window heat")
+
+    return {
+        "opening_open": {"open": open_list or ["none"]},
+        "climate_on": {"active": active or ["none"]},
     }
 
 
