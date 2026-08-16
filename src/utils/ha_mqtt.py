@@ -111,6 +111,7 @@ BINARY_SENSORS = [
     ("doors_unlocked", "Doors", "lock", None),
     ("tire_warning", "Tire pressure", "problem", None),
     ("opening_open", "Doors, windows, trunk", "opening", None),
+    ("vehicle_warning", "Vehicle warnings", "problem", None),
     ("climate_on", "Climate", "running", None),
     ("data_fresh", "Vehicle data fresh", None, "diagnostic"),
 ]
@@ -257,10 +258,32 @@ def values_from_vehicle(data, forces_today=None):
         "tire_warning": any(int(v or 0) for v in tires.values()),
         "opening_open": bool(openings),
         "climate_on": bool(climate),
+        "vehicle_warning": bool(warnings_from_status(raw_status)),
         "data_fresh": bool(data.get("hyundai_data_fresh")),
         "call_class": data.get("call_class"),
         "forces_today": forces_today,
     }
+
+
+def _any_flag(value):
+    """True if any nested value in a bool/dict tree is truthy."""
+    if isinstance(value, dict):
+        return any(_any_flag(v) for v in value.values())
+    return str(value).lower() == "true" or value is True or value == 1
+
+
+def warnings_from_status(raw_status):
+    """Named service warnings the car is currently flagging."""
+    warnings = []
+    if _any_flag(raw_status.get("washerFluidStatus")):
+        warnings.append("washer fluid low")
+    if _any_flag(raw_status.get("breakOilStatus")):
+        warnings.append("brake fluid low")
+    if _any_flag(raw_status.get("smartKeyBatteryWarning")):
+        warnings.append("smart key battery low")
+    if _any_flag(raw_status.get("lampWireStatus")):
+        warnings.append("exterior lamp fault")
+    return warnings
 
 
 def detail_attributes(data):
@@ -291,6 +314,7 @@ def detail_attributes(data):
     return {
         "opening_open": {"open": open_list or ["none"]},
         "climate_on": {"active": active or ["none"]},
+        "vehicle_warning": {"warnings": warnings_from_status(raw_status) or ["none"]},
     }
 
 

@@ -19,6 +19,7 @@ from src.api.client import APIError, CachedVehicleClient
 from src.storage.csv_store import CSVStorage
 from src.utils.trip_planner import assess_trip, find_destinations, seasonal_daily_energy
 from src.utils.charge_efficiency import MIN_SOC_POINTS, compute_efficiency_points, summarize
+from src.utils.ha_mqtt import detail_attributes, values_from_vehicle
 from src.utils.plug_sessions import append_plug_sample, load_ha_export, load_plug_log
 from src.utils.receipts import upsert_receipts
 from src.web.auth import admin_required, api_login_required, init_auth, login_required
@@ -1888,6 +1889,34 @@ def get_polling_status():
         return jsonify({"error": str(e)}), 500
 
 
+def vehicle_snapshot():
+    """Doors, plug, climate, openings, warnings and 12V from the newest cache.
+
+    Uses the same extraction as the Home Assistant bridge so the two surfaces
+    can never disagree about what the car is reporting.
+    """
+    try:
+        newest = max(Path("cache").glob("history_*.json"), default=None)
+        if not newest:
+            return None
+        with open(newest, encoding="utf-8") as handle:
+            payload = json.load(handle)
+        values = values_from_vehicle(payload)
+        detail = detail_attributes(payload)
+        return {
+            "twelve_v": values.get("twelve_v"),
+            "doors_locked": not values.get("doors_unlocked"),
+            "plugged_in": values.get("plugged_in"),
+            "openings": [o for o in detail["opening_open"]["open"] if o != "none"],
+            "climate": [c for c in detail["climate_on"]["active"] if c != "none"],
+            "warnings": [w for w in detail["vehicle_warning"]["warnings"] if w != "none"],
+            "as_of": payload.get("timestamp"),
+        }
+    except (OSError, ValueError, KeyError) as snapshot_error:
+        app.logger.debug("vehicle snapshot unavailable: %s", snapshot_error)
+        return None
+
+
 @app.route("/api/current-status")
 @api_login_required
 def get_current_status():
@@ -1958,6 +1987,9 @@ def get_current_status():
                     "wind_speed": weather_data.get("wind_speed"),
                 }
 
+            snapshot = vehicle_snapshot()
+            if snapshot:
+                response_data["vehicle"] = snapshot
             return jsonify(response_data)
         return jsonify(
             {

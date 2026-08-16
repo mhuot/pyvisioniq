@@ -454,6 +454,26 @@ document.addEventListener('DOMContentLoaded', function() {
             const response = await fetch('/api/current-status');
             const data = await response.json();
             
+            const vehicle = data.vehicle || null;
+            const setText = (id, text) => {
+                const el = document.getElementById(id);
+                if (el) { el.textContent = text; }
+            };
+            if (vehicle) {
+                setText('doors-state', vehicle.doors_locked ? 'Locked' : 'Unlocked');
+                setText('cable-state', vehicle.plugged_in ? 'Plugged in' : 'Unplugged');
+                setText('twelve-v', vehicle.twelve_v !== null ? `${vehicle.twelve_v}%` : '--');
+                const items = [...(vehicle.openings || []).map(o => `Open: ${o}`),
+                               ...(vehicle.climate || []).map(c => `Climate: ${c}`),
+                               ...(vehicle.warnings || [])];
+                const box = document.getElementById('vehicle-alerts');
+                const list = document.getElementById('vehicle-alerts-list');
+                if (box && list) {
+                    list.innerHTML = items.map(i => `<li>${i}</li>`).join('');
+                    box.hidden = items.length === 0;
+                }
+            }
+
             if (data.battery_level !== null && batteryLevel) {
                 batteryLevel.textContent = data.battery_level + '%';
                 // Store current battery level for active charging session display

@@ -211,6 +211,34 @@ def test_current_status_reports_latest(site, client):
     assert body["odometer"] is not None
 
 
+def test_current_status_includes_vehicle_snapshot(site, client):
+    cache = site / "cache"
+    cache.mkdir()
+    (cache / "history_20260816_010000_x.json").write_text(
+        json.dumps(
+            {
+                "timestamp": "2026-08-16T01:00:00",
+                "battery": {"level": 70, "is_charging": False},
+                "raw_data": {
+                    "vehicleStatus": {
+                        "battery": {"batSoc": 88},
+                        "doorLockStatus": "false",
+                        "trunkOpen": True,
+                        "washerFluidStatus": True,
+                        "evStatus": {"batteryPlugin": 0},
+                    }
+                },
+            }
+        )
+    )
+    vehicle = client.get("/api/current-status").get_json()["vehicle"]
+    assert vehicle["doors_locked"] is False
+    assert vehicle["plugged_in"] is False
+    assert vehicle["twelve_v"] == 88
+    assert vehicle["openings"] == ["trunk"]
+    assert vehicle["warnings"] == ["washer fluid low"]
+
+
 def test_battery_history_returns_series(site, client):
     response = client.get("/api/battery/history?hours=all")
     assert response.status_code == 200

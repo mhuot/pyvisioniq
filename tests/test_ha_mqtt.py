@@ -7,7 +7,7 @@ from src.utils.ha_mqtt import discovery_messages, state_messages, values_from_ve
 
 def test_discovery_covers_every_sensor_with_device_and_availability():
     messages = discovery_messages("homeassistant", "pyvisionic")
-    assert len(messages) == 20  # 12 sensors + 7 binary + device tracker
+    assert len(messages) == 21  # 12 sensors + 8 binary + device tracker
     for topic, payload in messages:
         config = json.loads(payload)
         assert topic.startswith("homeassistant/")
@@ -74,6 +74,19 @@ def test_detail_attributes_name_what_is_open_and_running():
     )
     assert detail["opening_open"]["open"] == ["door frontLeft", "trunk"]
     assert set(detail["climate_on"]["active"]) == {"hvac", "steering wheel heat"}
+
+
+def test_warnings_walk_nested_lamp_flags():
+    from src.utils.ha_mqtt import warnings_from_status
+
+    warnings = warnings_from_status(
+        {
+            "washerFluidStatus": True,
+            "lampWireStatus": {"headLamp": {"leftLowLamp": True}},
+            "breakOilStatus": False,
+        }
+    )
+    assert warnings == ["washer fluid low", "exterior lamp fault"]
 
 
 def test_device_block_promotes_vehicle_identity():

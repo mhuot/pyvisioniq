@@ -1820,3 +1820,28 @@ button.modal-close:focus-visible {
 #temp-units-toggle {
     min-width: 64px;
 }
+
+/* Vehicle attention: hidden unless the car is flagging something. Amber, not
+   red -- an open window is attention, not an emergency. Text on #fff3cd needs
+   the dark ink for AAA. */
+.vehicle-alerts {
+    margin-top: 1rem;
+    padding: 1rem 1.25rem;
+    background: #fff3cd;
+    border-left: 4px solid #b45309;
+    border-radius: var(--border-radius);
+}
+
+.vehicle-alerts h3 {
+    color: #7a4100;
+    font-size: 0.9rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 0.4rem;
+}
+
+.vehicle-alerts ul {
+    margin: 0;
+    padding-left: 1.2rem;
+    color: #4a3200;
+}

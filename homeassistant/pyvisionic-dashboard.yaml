@@ -97,6 +97,14 @@ views:
               - condition: state
                 entity: binary_sensor.pyvisionic_climate_on
                 state: "on"
+          - type: tile
+            entity: binary_sensor.pyvisionic_vehicle_warning
+            name: Service warnings
+            color: red
+            visibility:
+              - condition: state
+                entity: binary_sensor.pyvisionic_vehicle_warning
+                state: "on"
 
       - type: grid
         cards:
