@@ -27,23 +27,62 @@ try:
 except ImportError:  # pragma: no cover - exercised only without the extra
     PAHO_AVAILABLE = False
 
+# The identifiers stay "pyvisionic" so device-block changes update the
+# existing HA device in place rather than creating a second one. The rest is
+# populated from the vehicle payload at publish time when available.
 DEVICE = {
     "identifiers": ["pyvisionic"],
     "name": "PyVisionic EV",
-    "manufacturer": "PyVisionic",
+    "manufacturer": "Hyundai",
     "model": "Bluelink telemetry bridge",
 }
 
-# key, friendly name, unit, device_class, state_class, icon
+
+def device_from_vehicle(data):
+    """A device block presenting like a first-class car integration."""
+    details = (data.get("raw_data") or {}).get("vehicleDetails", {}) or {}
+    device = dict(DEVICE)
+    if details.get("nickName"):
+        device["name"] = details["nickName"]
+    model = " ".join(
+        str(part)
+        for part in (details.get("modelYear"), details.get("modelCode"), details.get("trim"))
+        if part
+    )
+    if model:
+        device["model"] = model
+    if details.get("vin"):
+        device["serial_number"] = details["vin"]
+    return device
+
+
+# key, friendly name, unit, device_class, state_class, icon, entity_category
 SENSORS = [
-    ("battery_level", "Battery", "%", "battery", "measurement", None),
-    ("range_km", "Range", "km", "distance", "measurement", "mdi:map-marker-distance"),
-    ("charging_power", "Charging power", "kW", "power", "measurement", "mdi:ev-station"),
-    ("odometer_km", "Odometer", "km", "distance", "total_increasing", "mdi:counter"),
-    ("twelve_v", "12V battery", "%", "battery", "measurement", "mdi:car-battery"),
-    ("temperature", "Ambient temperature", "°C", "temperature", "measurement", None),
-    ("forces_today", "Force refreshes today", None, None, "measurement", "mdi:sleep-off"),
-    ("call_class", "Last fetch class", None, None, None, "mdi:swap-vertical"),
+    ("battery_level", "Battery", "%", "battery", "measurement", None, None),
+    ("range_km", "Range", "km", "distance", "measurement", "mdi:map-marker-distance", None),
+    ("charging_power", "Charging power", "kW", "power", "measurement", "mdi:ev-station", None),
+    (
+        "charge_time_remaining",
+        "Time to charge limit",
+        "min",
+        "duration",
+        "measurement",
+        "mdi:battery-clock",
+        None,
+    ),
+    ("odometer_km", "Odometer", "km", "distance", "total_increasing", "mdi:counter", None),
+    ("twelve_v", "12V battery", "%", "battery", "measurement", "mdi:car-battery", "diagnostic"),
+    ("temperature", "Ambient temperature", "°C", "temperature", "measurement", None, None),
+    (
+        "forces_today",
+        "Force refreshes today",
+        None,
+        None,
+        "measurement",
+        "mdi:sleep-off",
+        "diagnostic",
+    ),
+    ("call_class", "Last fetch class", None, None, None, "mdi:swap-vertical", "diagnostic"),
     (
         "charge_efficiency",
         "Wall-to-battery efficiency",
@@ -51,6 +90,7 @@ SENSORS = [
         None,
         "measurement",
         "mdi:transmission-tower",
+        None,
     ),
     (
         "est_range_full",
@@ -59,24 +99,29 @@ SENSORS = [
         "distance",
         "measurement",
         "mdi:map-marker-radius",
+        None,
     ),
-    ("trip_readiness", "Trip readiness", None, None, None, "mdi:routes-clock"),
+    ("trip_readiness", "Trip readiness", None, None, None, "mdi:routes-clock", None),
 ]
 
+# key, friendly name, device_class, entity_category
 BINARY_SENSORS = [
-    ("is_charging", "Charging", "battery_charging"),
-    ("data_fresh", "Vehicle data fresh", None),
+    ("is_charging", "Charging", "battery_charging", None),
+    ("plugged_in", "Plugged in", "plug", None),
+    ("doors_unlocked", "Doors", "lock", None),
+    ("tire_warning", "Tire pressure", "problem", None),
+    ("data_fresh", "Vehicle data fresh", None, "diagnostic"),
 ]
 
 
-def discovery_messages(prefix, base):
+def discovery_messages(prefix, base, device=None):
     """Retained config payloads that make HA create the entities."""
     messages = []
     availability = {
         "availability_topic": f"{base}/status",
-        "device": DEVICE,
+        "device": device or DEVICE,
     }
-    for key, name, unit, device_class, state_class, icon in SENSORS:
+    for key, name, unit, device_class, state_class, icon, category in SENSORS:
         config = {
             "name": name,
             # has_entity_name + default_entity_id give clean, prefixed ids
@@ -98,8 +143,10 @@ def discovery_messages(prefix, base):
             config["state_class"] = state_class
         if icon:
             config["icon"] = icon
+        if category:
+            config["entity_category"] = category
         messages.append((f"{prefix}/sensor/pyvisionic/{key}/config", json.dumps(config)))
-    for key, name, device_class in BINARY_SENSORS:
+    for key, name, device_class, category in BINARY_SENSORS:
         config = {
             "name": name,
             "has_entity_name": True,
@@ -112,7 +159,28 @@ def discovery_messages(prefix, base):
         }
         if device_class:
             config["device_class"] = device_class
+        if category:
+            config["entity_category"] = category
         messages.append((f"{prefix}/binary_sensor/pyvisionic/{key}/config", json.dumps(config)))
+
+    # The car on the map: a GPS device_tracker fed from the location topic.
+    messages.append(
+        (
+            f"{prefix}/device_tracker/pyvisionic/location/config",
+            json.dumps(
+                {
+                    "name": "Location",
+                    "has_entity_name": True,
+                    "default_entity_id": "device_tracker.pyvisionic_location",
+                    "unique_id": "pyvisionic_location",
+                    "state_topic": f"{base}/location/state",
+                    "json_attributes_topic": f"{base}/location/attributes",
+                    "source_type": "gps",
+                    **availability,
+                }
+            ),
+        )
+    )
     return messages
 
 
@@ -139,17 +207,39 @@ def values_from_vehicle(data, forces_today=None):
     """Extract the raw-state sensor values from a collector payload."""
     battery = data.get("battery") or {}
     raw_status = (data.get("raw_data") or {}).get("vehicleStatus", {})
+    ev_status = raw_status.get("evStatus") or {}
+    tires = raw_status.get("tirePressure") or {}
+
+    charging = bool(battery.get("is_charging"))
+    remain = ((ev_status.get("remainTime2") or {}).get("atc") or {}).get("value")
+
     return {
         "battery_level": battery.get("level"),
         "range_km": battery.get("range"),
         "charging_power": battery.get("charging_power"),
+        # atc only means "time to the charge limit" while actually charging;
+        # parked, the API leaves the last value behind.
+        "charge_time_remaining": remain if charging else 0,
         "odometer_km": data.get("odometer"),
         "twelve_v": (raw_status.get("battery") or {}).get("batSoc"),
-        "is_charging": bool(battery.get("is_charging")),
+        "is_charging": charging,
+        "plugged_in": (ev_status.get("batteryPlugin") or 0) > 0,
+        # binary_sensor device_class lock reads ON as unlocked.
+        "doors_unlocked": str(raw_status.get("doorLockStatus")).lower() != "true",
+        "tire_warning": any(int(v or 0) for v in tires.values()),
         "data_fresh": bool(data.get("hyundai_data_fresh")),
         "call_class": data.get("call_class"),
         "forces_today": forces_today,
     }
+
+
+def location_from_vehicle(data):
+    """State + attributes for the device tracker, or (None, None) without a fix."""
+    location = data.get("location") or {}
+    lat, lon = location.get("latitude"), location.get("longitude")
+    if lat is None or lon is None:
+        return None, None
+    return "gps", {"latitude": lat, "longitude": lon, "gps_accuracy": 10}
 
 
 class HAPublisher:
@@ -183,7 +273,7 @@ class HAPublisher:
         except Exception as connect_error:  # pylint: disable=broad-except
             logger.warning("MQTT disabled: %s", connect_error)
 
-    def publish(self, values, attributes=None):
+    def publish(self, values, attributes=None, device=None):
         """Best-effort publish; failures log and never disturb collection."""
         if not self.enabled:
             return
@@ -193,7 +283,7 @@ class HAPublisher:
             # from the broker (HA publishes empty payloads to prevent
             # rediscovery), which otherwise leaves the bridge silently dead
             # until the next collector restart. Idempotent and tiny.
-            for topic, payload in discovery_messages(self.prefix, self.base):
+            for topic, payload in discovery_messages(self.prefix, self.base, device):
                 self.client.publish(topic, payload, retain=True)
             # Retained: polls are 60-150 minutes apart, so a subscriber that
             # connects between them (HA restarting, integration added later)

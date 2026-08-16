@@ -16,7 +16,12 @@ from dotenv import load_dotenv
 
 from src.api.client import CachedVehicleClient
 from src.storage.csv_store import CSVStorage
-from src.utils.ha_mqtt import HAPublisher, values_from_vehicle
+from src.utils.ha_mqtt import (
+    HAPublisher,
+    device_from_vehicle,
+    location_from_vehicle,
+    values_from_vehicle,
+)
 from src.utils.plug_sessions import detect_charging_spans, load_plug_log, refine_sessions
 
 sys.path.append(str(Path(__file__).parent))
@@ -229,7 +234,11 @@ class DataCollector:
             values.update(self._derived_metrics(attributes))
         except Exception as derived_error:  # pylint: disable=broad-except
             logger.debug("Derived metrics unavailable: %s", derived_error)
-        self.ha_publisher.publish(values, attributes)
+        state, location_attrs = location_from_vehicle(data)
+        if state:
+            values["location"] = state
+            attributes["location"] = location_attrs
+        self.ha_publisher.publish(values, attributes, device_from_vehicle(data))
 
     def _derived_metrics(self, attributes):
         """Compute the analytics-side sensors; every piece is optional."""

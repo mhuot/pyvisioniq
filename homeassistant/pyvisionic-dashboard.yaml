@@ -68,6 +68,32 @@ views:
           - type: tile
             entity: sensor.pyvisionic_temperature
             name: Outside
+          - type: tile
+            entity: binary_sensor.pyvisionic_doors_unlocked
+            name: Doors
+          - type: tile
+            entity: binary_sensor.pyvisionic_plugged_in
+            name: Charge cable
+          - type: tile
+            entity: binary_sensor.pyvisionic_tire_warning
+            name: Tires
+            visibility:
+              - condition: state
+                entity: binary_sensor.pyvisionic_tire_warning
+                state: "on"
+
+      - type: grid
+        cards:
+          - type: heading
+            heading: Where it is
+            icon: mdi:map
+          - type: map
+            entities:
+              - entity: device_tracker.pyvisionic_location
+            theme_mode: auto
+            grid_options:
+              columns: 12
+              rows: 4
 
       - type: grid
         visibility:
@@ -81,6 +107,10 @@ views:
           - type: tile
             entity: sensor.pyvisionic_charging_power
             name: Power now
+            color: green
+          - type: tile
+            entity: sensor.pyvisionic_charge_time_remaining
+            name: Time to charge limit
             color: green
           - type: history-graph
             hours_to_show: 12
