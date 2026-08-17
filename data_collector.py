@@ -235,6 +235,19 @@ class DataCollector:
             values.update(self._derived_metrics(attributes))
         except Exception as derived_error:  # pylint: disable=broad-except
             logger.debug("Derived metrics unavailable: %s", derived_error)
+        # Ambient temperature is not in the vehicle payload: raw_data.airTemp is
+        # the HVAC dial setting, never a measurement. csv_store has just written
+        # the weather-sourced value, so read it back rather than mislabelling
+        # the setpoint as ambient.
+        try:
+            import pandas as pd  # pylint: disable=import-outside-toplevel
+
+            recent = pd.read_csv("data/battery_status.csv").tail(1)
+            if not recent.empty and pd.notna(recent.iloc[0].get("temperature")):
+                values["temperature"] = float(recent.iloc[0]["temperature"])
+        except Exception as temp_error:  # pylint: disable=broad-except
+            logger.debug("ambient temperature unavailable: %s", temp_error)
+
         attributes.update(detail_attributes(data))
         state, location_attrs = location_from_vehicle(data)
         if state:

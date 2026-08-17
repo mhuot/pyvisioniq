@@ -18,10 +18,11 @@ it discards them and rebuilds from cache alone, which now spans only the
 retention window.)
 
 Temperature columns: ``vehicle_temp`` is recovered from the snapshot's
-``airTemp`` (reported in Fahrenheit). ``meteo_temp`` is left empty — it was
-fetched live from the weather service at collection time and cannot be
-recovered retroactively. ``temperature`` is set to the vehicle reading so
-the row is not blank, and ``is_cached`` is preserved from the snapshot.
+``airTemp``, which is the HVAC dial setting in Fahrenheit -- NOT a measured
+ambient temperature. ``meteo_temp`` and ``temperature`` are both left empty:
+ambient came from the weather service at collection time and cannot be
+recovered retroactively, and filling it with the dial setting would put
+setpoints into a column the efficiency analysis reads as weather.
 
 Usage:
     python tools/backfill_from_cache.py            # dry run, prints the plan
@@ -92,7 +93,8 @@ def battery_row(stamp, payload):
         "charging_power": battery.get("charging_power"),
         "remaining_time": battery.get("remaining_time"),
         "range": battery.get("range"),
-        "temperature": celsius,
+        # Left empty on purpose: see the module docstring.
+        "temperature": None,
         "odometer": payload.get("odometer"),
         "meteo_temp": None,
         "vehicle_temp": celsius,
