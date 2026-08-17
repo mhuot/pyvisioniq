@@ -1,0 +1,85 @@
+# Outside conditions from Open-Meteo, fetched by Home Assistant itself.
+#
+# Included from configuration.yaml as `rest: !include pyvisionic-weather.yaml`,
+# so this file in the pyvisionic repo is the source of truth. Changes need an
+# HA restart -- unlike the dashboard, REST platforms are not hot-reloaded.
+#
+# Why this exists separately from the car's own temperature sensor: the vehicle
+# reports no ambient temperature at all (raw_data.airTemp is the HVAC dial
+# setting), so pyvisionic sources ambient from Open-Meteo and publishes it over
+# MQTT. That value only refreshes when the collector polls, which adaptive
+# polling stretches to 60-150 minutes when the car is idle. Asking Open-Meteo
+# directly from HA gives a genuinely current reading on a 15-minute cadence and
+# keeps working while the collector is down, without spending any Bluelink API
+# budget -- the polling limit is on the car's API, not the weather one.
+#
+# Same provider and same fields as src/utils/weather.py, so a reading here and
+# the temperature column in battery_status.csv are comparable rather than two
+# different vendors' idea of the weather.
+#
+# Coordinates come from HA's own configured home location rather than being
+# written here, which keeps the repo free of a home address.
+
+- resource_template: >-
+    https://api.open-meteo.com/v1/forecast?latitude={{
+      state_attr('zone.home', 'latitude') | round(4) }}&longitude={{
+      state_attr('zone.home', 'longitude') | round(4)
+    }}&current=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,wind_speed_10m&temperature_unit=celsius&wind_speed_unit=kmh&timezone=auto
+  # Open-Meteo publishes on roughly an hourly cycle; 15 minutes is well inside
+  # the free tier and still an order of magnitude fresher than the car poll.
+  scan_interval: 900
+  timeout: 30
+  sensor:
+    # Celsius throughout, matching the stored data. HA converts to the display
+    # unit set on the dashboard, so declaring the native unit here is what lets
+    # a US-customary frontend show Fahrenheit without storing it twice.
+    - name: "Outside temperature"
+      unique_id: openmeteo_outside_temperature
+      value_template: "{{ value_json.current.temperature_2m }}"
+      unit_of_measurement: "°C"
+      device_class: temperature
+      state_class: measurement
+
+    - name: "Outside feels like"
+      unique_id: openmeteo_outside_apparent_temperature
+      value_template: "{{ value_json.current.apparent_temperature }}"
+      unit_of_measurement: "°C"
+      device_class: temperature
+      state_class: measurement
+
+    - name: "Outside humidity"
+      unique_id: openmeteo_outside_humidity
+      value_template: "{{ value_json.current.relative_humidity_2m }}"
+      unit_of_measurement: "%"
+      device_class: humidity
+      state_class: measurement
+
+    - name: "Outside wind speed"
+      unique_id: openmeteo_outside_wind_speed
+      value_template: "{{ value_json.current.wind_speed_10m }}"
+      unit_of_measurement: "km/h"
+      device_class: wind_speed
+      state_class: measurement
+
+    # WMO 4677 weather codes, grouped to the granularity that changes what you
+    # do: precipitation type and rough intensity. Unlisted codes surface as the
+    # raw number rather than a wrong label.
+    - name: "Outside conditions"
+      unique_id: openmeteo_outside_conditions
+      icon: mdi:weather-partly-cloudy
+      value_template: >-
+        {% set code = value_json.current.weather_code | int(-1) %}
+        {% set conditions = {
+          0: 'Clear', 1: 'Mainly clear', 2: 'Partly cloudy', 3: 'Overcast',
+          45: 'Fog', 48: 'Freezing fog',
+          51: 'Light drizzle', 53: 'Drizzle', 55: 'Heavy drizzle',
+          56: 'Freezing drizzle', 57: 'Freezing drizzle',
+          61: 'Light rain', 63: 'Rain', 65: 'Heavy rain',
+          66: 'Freezing rain', 67: 'Freezing rain',
+          71: 'Light snow', 73: 'Snow', 75: 'Heavy snow', 77: 'Snow grains',
+          80: 'Light showers', 81: 'Showers', 82: 'Violent showers',
+          85: 'Snow showers', 86: 'Heavy snow showers',
+          95: 'Thunderstorm', 96: 'Thunderstorm with hail',
+          99: 'Thunderstorm with hail'
+        } %}
+        {{ conditions.get(code, 'Code ' ~ code) }}

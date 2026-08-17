@@ -65,9 +65,15 @@ views:
             entity: sensor.pyvisionic_est_range_full
             name: Full-charge range (measured)
             icon: mdi:map-marker-radius
+          # Open-Meteo read by HA every 15 min, not the car's last poll, so this
+          # stays current while the collector is idle. sensor.pyvisionic_temperature
+          # is the same measurement as recorded against the driving data.
           - type: tile
-            entity: sensor.pyvisionic_temperature
+            entity: sensor.outside_temperature
             name: Outside
+          - type: tile
+            entity: sensor.outside_conditions
+            name: Conditions
           - type: tile
             entity: binary_sensor.pyvisionic_doors_unlocked
             name: Doors
@@ -180,13 +186,48 @@ views:
       - type: grid
         cards:
           - type: heading
+            heading: Outside
+            icon: mdi:weather-partly-cloudy
+          - type: tile
+            entity: sensor.outside_feels_like
+            name: Feels like
+          - type: tile
+            entity: sensor.outside_humidity
+            name: Humidity
+          - type: tile
+            entity: sensor.outside_wind_speed
+            name: Wind
+          - type: markdown
+            content: >-
+              {% set now = states('sensor.outside_temperature') | float(none) %}
+              {% set car = states('sensor.pyvisionic_temperature') | float(none) %}
+              {% if now is not none and car is not none %}
+              Cold weather is the largest single drag on range, so this is the
+              number the efficiency charts are plotted against.
+              {% if (now - car) | abs >= 3 %}
+
+              *The car's last recorded reading was
+              {{ car | round(0) }}°, {{ (now - car) | abs | round(0) }}°
+              {{ 'colder' if car < now else 'warmer' }} than now — it dates from
+              the last poll, not this minute.*
+              {% endif %}
+              {% endif %}
+
+      - type: grid
+        cards:
+          - type: heading
             heading: Battery week
             icon: mdi:battery-charging-60
+          # Separate panels, not a shared axis: SOC and temperature have no
+          # common scale, and overlaying them would invent a correlation the
+          # reader has not earned.
           - type: history-graph
             hours_to_show: 168
             entities:
               - entity: sensor.pyvisionic_battery_level
                 name: SOC
+              - entity: sensor.outside_temperature
+                name: Outside
             grid_options:
               columns: 12
               rows: 5
