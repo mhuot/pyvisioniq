@@ -76,6 +76,7 @@ pre-commit install
 ```bash
 # All tools require venv activation first
 python tools/backfill_from_cache.py                        # Harvest cache snapshots the CSVs missed (dry run; --write to apply)
+python tools/backfill_ambient.py --preview                 # Recover missing ambient temperature from Open-Meteo history (drop --preview to apply)
 python tools/deduplicate_trips_v2.py                      # Remove duplicate trips
 python tools/rebuild_sessions_from_battery.py              # Rebuild charging sessions from battery history
 python tools/rebuild_sessions_from_battery.py --preview    # Preview rebuild without writing
