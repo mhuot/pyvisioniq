@@ -18,6 +18,7 @@ import pandas as pd
 import pytest
 
 import src.web.app as app_module
+from src.storage.plan_store import PlanStore
 
 HOME = (44.90, -93.10)
 AWAY = (45.60, -92.40)  # ~85 km out; far enough to register as a destination
@@ -353,3 +354,52 @@ def test_empty_site_degrades_to_404_not_500(empty_site, client):
         response = client.get(path)
         assert response.status_code in (200, 404), path
         assert response.status_code != 500, path
+
+
+def _plan_payload(**overrides):
+    """A minimal valid plan; the synthetic site departs a fortnight out."""
+    return {
+        "trip_name": "Test trip",
+        "departure": "2099-01-02 07:00",
+        "trip_soc_pct": 55,
+        **overrides,
+    }
+
+
+def test_planner_trip_round_trip(site, client, monkeypatch):
+    """Create, list with an assessment attached, then delete."""
+    monkeypatch.setattr(app_module, "plan_store", PlanStore(str(site / "data")))
+
+    created = client.post("/api/planner/trips", json=_plan_payload())
+    assert created.status_code == 201
+    plan_id = created.get_json()["id"]
+
+    listed = client.get("/api/planner/trips").get_json()["trips"]
+    assert [p["id"] for p in listed] == [plan_id]
+    # The verdict travels with the plan, so both describe the same moment.
+    assert listed[0]["assessment"]["status"] in {"on_track", "tight", "off_track"}
+
+    assert client.delete(f"/api/planner/trips/{plan_id}").status_code == 200
+    assert client.get("/api/planner/trips").get_json()["trips"] == []
+
+
+def test_planner_trip_edit_keeps_its_id(site, client, monkeypatch):
+    monkeypatch.setattr(app_module, "plan_store", PlanStore(str(site / "data")))
+    plan_id = client.post("/api/planner/trips", json=_plan_payload()).get_json()["id"]
+
+    edited = client.post("/api/planner/trips", json=_plan_payload(id=plan_id, trip_name="Renamed"))
+    assert edited.status_code == 200
+    assert edited.get_json()["id"] == plan_id
+    assert edited.get_json()["trip_name"] == "Renamed"
+
+
+def test_planner_trip_rejects_bad_input_with_a_reason(site, client, monkeypatch):
+    monkeypatch.setattr(app_module, "plan_store", PlanStore(str(site / "data")))
+    response = client.post("/api/planner/trips", json={"trip_name": "No departure"})
+    assert response.status_code == 400
+    assert "missing required field" in response.get_json()["error"]
+
+
+def test_deleting_an_unknown_trip_is_404(site, client, monkeypatch):
+    monkeypatch.setattr(app_module, "plan_store", PlanStore(str(site / "data")))
+    assert client.delete("/api/planner/trips/nope").status_code == 404

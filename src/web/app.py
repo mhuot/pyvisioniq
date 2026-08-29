@@ -17,7 +17,13 @@ sys.path.append(str(Path(__file__).parent.parent.parent))
 
 from src.api.client import APIError, CachedVehicleClient
 from src.storage.csv_store import CSVStorage
-from src.utils.trip_planner import assess_trip, find_destinations, seasonal_daily_energy
+from src.storage.plan_store import PlanStore, PlanValidationError
+from src.utils.trip_planner import (
+    assess_plan,
+    assess_trip,
+    find_destinations,
+    seasonal_daily_energy,
+)
 from src.utils.charge_efficiency import MIN_SOC_POINTS, compute_efficiency_points, summarize
 from src.utils.ha_mqtt import detail_attributes, values_from_vehicle
 from src.utils.plug_sessions import append_plug_sample, load_ha_export, load_plug_log
@@ -93,6 +99,7 @@ except Exception as e:
     app.config["cache_client"] = None
 
 storage = CSVStorage()
+plan_store = PlanStore()
 app.config["storage"] = storage
 
 # Configure authentication. This is a no-op unless AUTH_ENABLED=true, in which
@@ -1096,6 +1103,65 @@ def get_planner_assessment():
 
     except Exception as e:  # pylint: disable=broad-except
         app.logger.error("Error assessing trip: %s", e, exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/planner/trips", methods=["GET"])
+@api_login_required
+def list_planner_trips():
+    """Stored plans, each with its current assessment.
+
+    Assessing here rather than making the client ask per plan keeps the Now
+    panel to one request, and means a plan and its verdict cannot be rendered
+    from different moments.
+    """
+    try:
+        # The hand-edited single-plan file predates the store; adopt it once so
+        # an existing plan is not silently orphaned by the upgrade.
+        plan_store.import_legacy("tools/trip_plan.json")
+
+        plans = []
+        for plan in plan_store.list_plans():
+            entry = dict(plan)
+            try:
+                entry["assessment"] = assess_plan(plan, "data")
+            except (OSError, ValueError, KeyError) as assess_error:
+                # A plan that cannot be assessed still has to be listable, or
+                # the user cannot delete the thing that is breaking.
+                entry["assessment"] = None
+                entry["assessment_error"] = str(assess_error)
+            plans.append(entry)
+        return jsonify({"trips": plans})
+    except Exception as e:  # pylint: disable=broad-except
+        app.logger.error("Error listing trip plans: %s", e, exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/planner/trips", methods=["POST"])
+@api_login_required
+def save_planner_trip():
+    """Create or update a plan. Include an id to edit an existing one."""
+    try:
+        payload = request.get_json(silent=True) or {}
+        plan = plan_store.save(payload)
+        return jsonify(plan), 200 if payload.get("id") else 201
+    except PlanValidationError as invalid:
+        return jsonify({"error": str(invalid)}), 400
+    except Exception as e:  # pylint: disable=broad-except
+        app.logger.error("Error saving trip plan: %s", e, exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/planner/trips/<plan_id>", methods=["DELETE"])
+@api_login_required
+def delete_planner_trip(plan_id):
+    """Remove a stored plan."""
+    try:
+        if not plan_store.delete(plan_id):
+            return jsonify({"error": "no such trip"}), 404
+        return jsonify({"deleted": plan_id})
+    except Exception as e:  # pylint: disable=broad-except
+        app.logger.error("Error deleting trip plan: %s", e, exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 

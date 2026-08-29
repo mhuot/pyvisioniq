@@ -515,3 +515,40 @@ def assess_plan(plan, data_dir, now=None):
         reading_at=latest["timestamp"].to_pydatetime(),
         max_reading_age_hours=plan.get("max_reading_age_hours", DEFAULT_MAX_READING_AGE_HOURS),
     )
+
+
+def _charging_note(result):
+    """Describe charging state, naming the plug when that is what reported it."""
+    if not result["is_charging"]:
+        return " (NOT plugged in)"
+    if result["charging_source"] == "smart plug":
+        return f" (charging, {result['plug_watts']:.0f} W at the plug)"
+    return " (charging)"
+
+
+def summarize_assessment(result, plan):
+    """Render a short human-readable verdict for notification bodies."""
+    head = {
+        "on_track": "On track",
+        "tight": "Tight",
+        "off_track": "OFF TRACK",
+    }[result["status"]]
+    lines = []
+    if result["stale_reading"]:
+        lines.append(
+            f"WARNING: battery reading is {result['reading_age_hours']:.1f} h old "
+            "- collector may be down, treat the numbers below as unreliable"
+        )
+    lines += [
+        f"{head} for {plan['trip_name']} - {result['soc_pct']:.0f}% now"
+        f"{_charging_note(result)}",
+        f"Need {result['charge_needed_kwh']:.1f} kWh in {result['hours_to_departure']:.0f} h "
+        f"= {result['plugged_hours_needed']:.0f} h plugged ({result['duty_cycle_pct']:.0f}% duty)",
+    ]
+    if result["status"] != "on_track":
+        lines.append(
+            f"Short ~{result['shortfall_kwh']:.1f} kWh at a realistic charge rate "
+            f"(~{result['dcfc_minutes']:.0f} min of DC fast charging)"
+        )
+    lines.extend(result["detail"])
+    return "\n".join(lines)

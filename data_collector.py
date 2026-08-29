@@ -7,6 +7,7 @@ Collects vehicle data 30 times per day (every 48 minutes)
 import json
 import logging
 import os
+import subprocess  # nosec B404 - error type only
 import sys
 import time
 from datetime import datetime, timedelta
@@ -16,6 +17,7 @@ from dotenv import load_dotenv
 
 from src.api.client import CachedVehicleClient
 from src.storage.csv_store import CSVStorage
+from src.storage.plan_store import PlanStore
 from src.utils.ha_mqtt import (
     HAPublisher,
     detail_attributes,
@@ -24,7 +26,8 @@ from src.utils.ha_mqtt import (
     values_from_vehicle,
 )
 from src.utils.plug_sessions import detect_charging_spans, load_plug_log, refine_sessions
-from src.utils.trip_planner import assess_plan
+from src.utils.notify import DEFAULT_SUBJECT, publish
+from src.utils.trip_planner import assess_plan, summarize_assessment
 
 sys.path.append(str(Path(__file__).parent))
 
@@ -88,6 +91,12 @@ def adaptive_interval_minutes(is_charging, charging_power, charging_since, last_
     return ADAPTIVE_INTERVALS_MINUTES["idle_day"], "idle_day"
 
 
+# A trip that stays off track is still worth one nudge a day, but not one
+# every collection cycle.
+REMINDER_HOURS = 24.0
+TRIP_ALERTS_ENABLED = os.getenv("TRIP_ALERTS_ENABLED", "true").lower() == "true"
+
+
 class DataCollector:
     """DataCollector class for collecting vehicle data from the API
     and storing it in CSV files. It manages API call limits,
@@ -115,6 +124,7 @@ class DataCollector:
         """Initialize DataCollector with API client and storage manager"""
         self.client = CachedVehicleClient()
         self.storage = CSVStorage()
+        self.plan_store = PlanStore(str(Path(__file__).parent / "data"))
         self.daily_limit = int(os.getenv("API_DAILY_LIMIT", "30"))  # Default to 30 calls per day
         if self.daily_limit <= 0:
             logger.error("Invalid daily limit: %d", self.daily_limit)
@@ -307,19 +317,28 @@ class DataCollector:
         except Exception as metric_error:  # pylint: disable=broad-except
             logger.debug("est_range_full unavailable: %s", metric_error)
 
-        # Trip readiness, when a plan exists and its departure is ahead.
+        self._trip_readiness(derived, attributes)
+
+        return derived
+
+    def _trip_readiness(self, derived, attributes):
+        """Assess stored plans, report the soonest, and alert on changes."""
         try:
-            plan_path = Path(__file__).parent / "tools" / "trip_plan.json"
-            if not plan_path.exists():
-                derived["trip_readiness"] = "no_plan"
-            else:
-                with open(plan_path, encoding="utf-8") as handle:
-                    plan = json.load(handle)
-                departure = datetime.strptime(plan["departure"], "%Y-%m-%d %H:%M")
-                if departure <= datetime.now():
-                    derived["trip_readiness"] = "idle"
-                else:
+            stored = self.plan_store.list_plans()
+            upcoming = self.plan_store.upcoming()
+            if not upcoming:
+                derived["trip_readiness"] = "idle" if stored else "no_plan"
+                return
+
+            for index, plan in enumerate(upcoming):
+                try:
                     result = assess_plan(plan, str(Path(__file__).parent / "data"))
+                except (OSError, ValueError, KeyError) as plan_error:
+                    logger.debug("could not assess %s: %s", plan.get("trip_name"), plan_error)
+                    continue
+
+                # The soonest departure is the one the dashboard shows.
+                if index == 0:
                     derived["trip_readiness"] = result["status"]
                     attributes["trip_readiness"] = {
                         "trip": plan.get("trip_name"),
@@ -328,10 +347,60 @@ class DataCollector:
                         "projected_arrival_pct": result.get("projected_arrival_pct"),
                         "plugged_hours_needed": result.get("plugged_hours_needed"),
                     }
+
+                self._notify_on_change(plan, result)
         except Exception as metric_error:  # pylint: disable=broad-except
             logger.debug("trip_readiness unavailable: %s", metric_error)
 
-        return derived
+    def _notify_on_change(self, plan, result):
+        """Publish when a plan's status changes, and not merely because we looked.
+
+        The old cron checker ran four times a day and announced every off-track
+        run, which was tolerable at that cadence. This runs on the collection
+        cycle -- as often as every 15 minutes while charging -- so announcing a
+        standing condition would be pure noise. Only transitions are published,
+        plus one reminder a day while a trip stays off track.
+        """
+        status = result["status"]
+        previous = plan.get("last_status")
+        changed = status != previous
+
+        hours_quiet = self._hours_since_notified(plan)
+        reminder = status == "off_track" and not changed and hours_quiet >= REMINDER_HOURS
+
+        if not (changed or reminder):
+            return
+
+        # Worth interrupting someone for a problem, or for recovering from one.
+        # Silently recording the first sight of an on-track trip is not news.
+        newsworthy = status != "on_track" or previous in ("tight", "off_track")
+
+        sent = False
+        if newsworthy and TRIP_ALERTS_ENABLED:
+            try:
+                sent = publish(
+                    [DEFAULT_SUBJECT],
+                    f"EV trip readiness: {status.replace('_', ' ')}",
+                    summarize_assessment(result, plan),
+                    status,
+                )
+            except (OSError, subprocess.SubprocessError) as publish_error:
+                logger.warning("could not publish trip alert: %s", publish_error)
+
+        # Recorded even when nothing was sent, so an unannounced status is not
+        # re-detected as a change on the next cycle.
+        self.plan_store.record_status(plan["id"], status, notified=sent)
+
+    @staticmethod
+    def _hours_since_notified(plan):
+        """Hours since this plan last produced an alert; inf if never."""
+        stamp = plan.get("last_notified_at")
+        if not stamp:
+            return float("inf")
+        try:
+            return (datetime.now() - datetime.fromisoformat(stamp)).total_seconds() / 3600
+        except (TypeError, ValueError):
+            return float("inf")
 
     def _should_force(self):
         """Decide whether this poll should wake the car.
