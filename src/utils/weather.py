@@ -12,6 +12,13 @@ import requests
 logger = logging.getLogger(__name__)
 
 
+def _at(values, index):
+    """Index into an Open-Meteo series, tolerating a short or absent array."""
+    if not values or index >= len(values):
+        return None
+    return values[index]
+
+
 class WeatherService:
     """Service for fetching weather data from Open-Meteo API"""
 
@@ -27,6 +34,11 @@ class WeatherService:
 
         # Cache weather data for 30 minutes to avoid excessive calls
         self.cache_duration = timedelta(minutes=30)
+
+        # Forecasts are recomputed upstream roughly hourly and are consumed
+        # over a planning window of days, so refetching them on the
+        # current-conditions cadence would be wasted calls.
+        self.forecast_cache_duration = timedelta(hours=3)
 
     def get_current_weather(self, latitude: float, longitude: float) -> Optional[Dict]:
         """Get current weather data for the specified location"""
@@ -88,6 +100,82 @@ class WeatherService:
             logger.error(f"Error fetching weather data: {e}")
             return None
 
+    def get_forecast(self, latitude: float, longitude: float, days: int = 7) -> Optional[list]:
+        """Daily forecast for trip planning: highs, lows and rain probability.
+
+        Celsius throughout, unlike get_current_weather, because the measured
+        efficiency bands the planner costs a trip against are in Celsius and
+        converting twice is how unit bugs start.
+
+        Open-Meteo's horizon is about 16 days; a level 1 planning window is
+        three to five, so the default covers it comfortably.
+        """
+        if latitude is None or longitude is None:
+            logger.error("Forecast requires latitude and longitude")
+            return None
+
+        cache_key = f"forecast_{latitude}_{longitude}_{days}"
+        cached = self._get_from_cache(cache_key, self.forecast_cache_duration)
+        if cached:
+            return cached.get("days")
+
+        try:
+            response = requests.get(
+                self.api_url,
+                params={
+                    "latitude": latitude,
+                    "longitude": longitude,
+                    "daily": (
+                        "temperature_2m_max,temperature_2m_min,precipitation_probability_max"
+                    ),
+                    "temperature_unit": "celsius",
+                    "timezone": os.getenv("TZ", "America/Chicago"),
+                    "forecast_days": days,
+                },
+                timeout=10,
+            )
+            response.raise_for_status()
+            daily = response.json().get("daily", {})
+
+            forecast = []
+            for index, date in enumerate(daily.get("time", [])):
+                high = _at(daily.get("temperature_2m_max"), index)
+                low = _at(daily.get("temperature_2m_min"), index)
+                forecast.append(
+                    {
+                        "date": date,
+                        "temp_max_c": high,
+                        "temp_min_c": low,
+                        # The mean is what a day's driving actually happens at,
+                        # more nearly than either extreme.
+                        "temp_mean_c": (
+                            round((high + low) / 2, 1)
+                            if high is not None and low is not None
+                            else None
+                        ),
+                        "precipitation_probability": _at(
+                            daily.get("precipitation_probability_max"), index
+                        ),
+                    }
+                )
+
+            self._save_to_cache(
+                cache_key, {"days": forecast, "fetched_at": datetime.now().isoformat()}
+            )
+            return forecast
+
+        except (requests.RequestException, ValueError, KeyError) as error:
+            logger.error("Error fetching forecast: %s", error)
+            return None
+
+    def forecast_for(self, latitude: float, longitude: float, when) -> Optional[Dict]:
+        """The forecast entry covering a given date, or None if out of range."""
+        target = when.date() if hasattr(when, "date") else when
+        forecast = self.get_forecast(latitude, longitude)
+        if not forecast:
+            return None
+        return next((day for day in forecast if day["date"] == target.isoformat()), None)
+
     def _get_weather_description(self, code: int) -> str:
         """Convert weather code to description"""
         if code is None:
@@ -127,7 +215,7 @@ class WeatherService:
         """Get cache file path"""
         return self.cache_dir / f"{cache_key}.json"
 
-    def _get_from_cache(self, cache_key: str) -> Optional[Dict]:
+    def _get_from_cache(self, cache_key: str, max_age=None) -> Optional[Dict]:
         """Get data from cache if still valid"""
         cache_path = self._get_cache_path(cache_key)
 
@@ -137,7 +225,7 @@ class WeatherService:
         try:
             # Check if cache is still valid
             modified_time = datetime.fromtimestamp(cache_path.stat().st_mtime)
-            if datetime.now() - modified_time > self.cache_duration:
+            if datetime.now() - modified_time > (max_age or self.cache_duration):
                 return None
 
             with open(cache_path, "r") as f:

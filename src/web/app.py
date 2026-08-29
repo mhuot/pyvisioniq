@@ -18,6 +18,8 @@ sys.path.append(str(Path(__file__).parent.parent.parent))
 from src.api.client import APIError, CachedVehicleClient
 from src.storage.csv_store import CSVStorage
 from src.storage.plan_store import PlanStore, PlanValidationError
+from src.utils.efficiency import temperature_bins, wh_per_mile_at
+from src.utils.weather import WeatherService
 from src.utils.trip_planner import (
     assess_plan,
     assess_trip,
@@ -100,6 +102,7 @@ except Exception as e:
 
 storage = CSVStorage()
 plan_store = PlanStore()
+weather_service = WeatherService()
 app.config["storage"] = storage
 
 # Configure authentication. This is a no-op unless AUTH_ENABLED=true, in which
@@ -577,75 +580,83 @@ def debug_api():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
+def temperature_efficiency_points():
+    """Every trip paired with the temperature it was driven at.
+
+    Shared by the temperature-efficiency chart and the planner, which costs a
+    future trip against these same measurements. Returns [] when there is
+    nothing usable rather than raising, so callers can degrade to a default.
+    """
+    trips_df = storage.get_trips_df()
+    battery_df = storage.get_battery_df()
+    if trips_df.empty or battery_df.empty:
+        return []
+
+    # Pair each trip with the nearest battery reading within an hour.
+    #
+    # This was a per-trip scan of the whole battery frame, with the timestamp
+    # column re-parsed inside the loop -- about 13 million redundant datetime
+    # parses across ~1,500 trips and ~9,000 readings, which took 11 seconds.
+    # merge_asof does the same nearest-match join vectorised, once.
+    trips_df = trips_df.copy()
+    trips_df["date"] = pd.to_datetime(trips_df["date"], errors="coerce")
+    trips_df["distance"] = pd.to_numeric(trips_df["distance"], errors="coerce")
+    trips_df["total_consumed"] = pd.to_numeric(trips_df["total_consumed"], errors="coerce")
+    trips_df = trips_df.dropna(subset=["date", "distance", "total_consumed"])
+    trips_df = trips_df[(trips_df["distance"] > 0) & (trips_df["total_consumed"] > 0)]
+
+    trips_df["efficiency"] = 1000.0 / (
+        trips_df.apply(
+            lambda row: efficiency_wh_per_km(row["total_consumed"], row["distance"]),
+            axis=1,
+        )
+        * KM_PER_MILE
+    )
+
+    # Discard logging faults: a few rows pair a long distance with a stub
+    # consumption of a few Wh, the worst reading 15,300 mi/kWh. Plotted raw
+    # they set the y-axis two orders of magnitude too high and flatten every
+    # real point onto the baseline.
+    trips_df = trips_df[
+        trips_df["efficiency"].between(MIN_PLAUSIBLE_MI_PER_KWH, MAX_PLAUSIBLE_MI_PER_KWH)
+    ]
+
+    battery_df = battery_df.copy()
+    battery_df["timestamp"] = pd.to_datetime(
+        battery_df["timestamp"], format="ISO8601", errors="coerce"
+    )
+    battery_df["temperature"] = pd.to_numeric(battery_df["temperature"], errors="coerce")
+    battery_df = battery_df.dropna(subset=["timestamp", "temperature"]).sort_values("timestamp")
+
+    if trips_df.empty or battery_df.empty:
+        return []
+
+    matched = pd.merge_asof(
+        trips_df.sort_values("date"),
+        battery_df[["timestamp", "temperature"]],
+        left_on="date",
+        right_on="timestamp",
+        direction="nearest",
+        tolerance=pd.Timedelta(hours=1),
+    ).dropna(subset=["temperature"])
+
+    return [
+        {
+            "temperature": float(row.temperature),
+            "efficiency": float(row.efficiency),
+            "distance": float(row.distance),
+            "date": row.date.isoformat(),
+        }
+        for row in matched.itertuples()
+    ]
+
+
 @app.route("/api/temperature-efficiency")
 @api_login_required
 def get_temperature_efficiency():
     """Get efficiency data correlated with temperature"""
     try:
-        trips_df = storage.get_trips_df()
-        battery_df = storage.get_battery_df()
-
-        if trips_df.empty or battery_df.empty:
-            return jsonify({"error": "No data available"}), 404
-
-        # Pair each trip with the nearest battery reading within an hour.
-        #
-        # This was a per-trip scan of the whole battery frame, with the
-        # timestamp column re-parsed inside the loop -- about 13 million
-        # redundant datetime parses across ~1,500 trips and ~9,000 readings,
-        # which took 11 seconds. merge_asof does the same nearest-match join
-        # vectorised, once.
-        trips_df = trips_df.copy()
-        trips_df["date"] = pd.to_datetime(trips_df["date"], errors="coerce")
-        trips_df["distance"] = pd.to_numeric(trips_df["distance"], errors="coerce")
-        trips_df["total_consumed"] = pd.to_numeric(trips_df["total_consumed"], errors="coerce")
-        trips_df = trips_df.dropna(subset=["date", "distance", "total_consumed"])
-        trips_df = trips_df[(trips_df["distance"] > 0) & (trips_df["total_consumed"] > 0)]
-
-        trips_df["efficiency"] = 1000.0 / (
-            trips_df.apply(
-                lambda row: efficiency_wh_per_km(row["total_consumed"], row["distance"]),
-                axis=1,
-            )
-            * KM_PER_MILE
-        )
-
-        # Discard logging faults: a few rows pair a long distance with a stub
-        # consumption of a few Wh, the worst reading 15,300 mi/kWh. Plotted raw
-        # they set the y-axis two orders of magnitude too high and flatten every
-        # real point onto the baseline.
-        trips_df = trips_df[
-            trips_df["efficiency"].between(MIN_PLAUSIBLE_MI_PER_KWH, MAX_PLAUSIBLE_MI_PER_KWH)
-        ]
-
-        battery_df = battery_df.copy()
-        battery_df["timestamp"] = pd.to_datetime(
-            battery_df["timestamp"], format="ISO8601", errors="coerce"
-        )
-        battery_df["temperature"] = pd.to_numeric(battery_df["temperature"], errors="coerce")
-        battery_df = battery_df.dropna(subset=["timestamp", "temperature"]).sort_values("timestamp")
-
-        if trips_df.empty or battery_df.empty:
-            return jsonify({"error": "No efficiency data with temperature available"}), 404
-
-        matched = pd.merge_asof(
-            trips_df.sort_values("date"),
-            battery_df[["timestamp", "temperature"]],
-            left_on="date",
-            right_on="timestamp",
-            direction="nearest",
-            tolerance=pd.Timedelta(hours=1),
-        ).dropna(subset=["temperature"])
-
-        efficiency_data = [
-            {
-                "temperature": float(row.temperature),
-                "efficiency": float(row.efficiency),
-                "distance": float(row.distance),
-                "date": row.date.isoformat(),
-            }
-            for row in matched.itertuples()
-        ]
+        efficiency_data = temperature_efficiency_points()
 
         if not efficiency_data:
             return (
@@ -653,65 +664,7 @@ def get_temperature_efficiency():
                 404,
             )
 
-        # Create temperature bins (5°C ranges)
-        temp_bins = {}
-        for data_point in efficiency_data:
-            temp = data_point["temperature"]
-            # Create 5°C bins: -20 to -15, -15 to -10, etc.
-            bin_start = int(temp // 5) * 5
-            bin_label = f"{bin_start} to {bin_start + 5}°C"
-
-            if bin_label not in temp_bins:
-                temp_bins[bin_label] = {
-                    "temperatures": [],
-                    "efficiencies": [],
-                    "count": 0,
-                    "total_distance": 0,
-                    "total_energy_kwh": 0.0,
-                }
-
-            temp_bins[bin_label]["temperatures"].append(temp)
-            temp_bins[bin_label]["efficiencies"].append(data_point["efficiency"])
-            temp_bins[bin_label]["count"] += 1
-            temp_bins[bin_label]["total_distance"] += data_point["distance"]
-            # Energy implied by this trip, so the band can be aggregated by
-            # energy rather than by averaging per-trip ratios.
-            temp_bins[bin_label]["total_energy_kwh"] += (
-                data_point["distance"] / data_point["efficiency"]
-            )
-
-        # Calculate averages for each bin
-        bin_stats = []
-        for bin_label, data in temp_bins.items():
-            if data["efficiencies"]:
-                # Energy-weighted: total distance over total energy. A mean of
-                # per-trip ratios lets a 2 mile hop count as much as a 76 mile
-                # run, which biases every band toward its shortest trips.
-                total_distance = data["total_distance"]
-                total_energy = data["total_energy_kwh"]
-                if total_energy <= 0 or total_distance <= 0:
-                    continue
-                avg_efficiency = total_distance / total_energy
-                wh_per_mile = total_energy * 1000.0 / total_distance
-                avg_temp = sum(data["temperatures"]) / len(data["temperatures"])
-
-                bin_stats.append(
-                    {
-                        "temperature_range": bin_label,
-                        "avg_temperature": round(avg_temp, 1),
-                        "avg_efficiency": round(avg_efficiency, 2),
-                        "wh_per_mile": round(wh_per_mile, 1),
-                        "wh_per_km": round(wh_per_mile / KM_PER_MILE, 1),
-                        "total_energy_kwh": round(total_energy, 1),
-                        "trip_count": data["count"],
-                        "total_distance": round(data["total_distance"], 1),
-                        "best_efficiency": round(max(data["efficiencies"]), 2),
-                        "worst_efficiency": round(min(data["efficiencies"]), 2),
-                    }
-                )
-
-        # Sort by average temperature
-        bin_stats.sort(key=lambda x: x["avg_temperature"])
+        bin_stats = temperature_bins(efficiency_data)
 
         return jsonify(
             {
@@ -1037,6 +990,45 @@ def get_planner_destinations():
         return jsonify({"error": str(e)}), 500
 
 
+def _trip_consumption(explicit_wh_per_mile, departure):
+    """Decide what a mile of this trip will cost, and say how that was decided.
+
+    Preference order: what the caller specified, then the measured band for the
+    temperature forecast at departure, then a fixed default. The basis string
+    travels to the UI because "measured from 41 trips at 0 to 5C" and "assumed"
+    deserve different amounts of trust from whoever reads the verdict.
+    """
+    if explicit_wh_per_mile is not None:
+        return float(explicit_wh_per_mile), "specified", None
+
+    forecast = None
+    try:
+        locations = storage.get_locations_df()
+        if not locations.empty:
+            latest = locations.dropna(subset=["latitude", "longitude"]).iloc[-1]
+            # Where the car is now stands in for where it will depart from.
+            forecast = weather_service.forecast_for(
+                float(latest["latitude"]), float(latest["longitude"]), departure
+            )
+    except (OSError, ValueError, KeyError, IndexError) as forecast_error:
+        app.logger.debug("no forecast for departure: %s", forecast_error)
+
+    if forecast and forecast.get("temp_mean_c") is not None:
+        bands = temperature_bins(temperature_efficiency_points())
+        wh_per_mile, basis = wh_per_mile_at(bands, forecast["temp_mean_c"])
+        if wh_per_mile:
+            # Precipitation is reported, never applied. The literature puts a
+            # wet road at 5-15%, but we have no measured figure of our own and
+            # inventing one would dress an assumption up as a measurement.
+            return wh_per_mile, f"{basis}, forecast {forecast['temp_mean_c']:.0f}°C", forecast
+
+    return (
+        PLANNER_DEFAULT_WH_PER_MILE,
+        "default assumption; no forecast or no measured band",
+        forecast,
+    )
+
+
 @app.route("/api/planner/assess")
 @api_login_required
 def get_planner_assessment():
@@ -1059,13 +1051,17 @@ def get_planner_assessment():
         buffer_pct = float(request.args.get("arrival_buffer_pct", 10))
 
         trip_kwh = request.args.get("trip_kwh")
+        energy_basis = "given directly"
+        forecast = None
         if trip_kwh is not None:
             trip_kwh = float(trip_kwh)
         else:
             distance_km = request.args.get("distance_km")
             if distance_km is None:
                 return jsonify({"error": "one of trip_kwh or distance_km is required"}), 400
-            wh_per_mile = float(request.args.get("wh_per_mile", PLANNER_DEFAULT_WH_PER_MILE))
+            wh_per_mile, energy_basis, forecast = _trip_consumption(
+                request.args.get("wh_per_mile"), departure
+            )
             trip_kwh = float(distance_km) / KM_PER_MILE * wh_per_mile / 1000.0
 
         battery_df = storage.get_battery_df().copy()
@@ -1099,6 +1095,8 @@ def get_planner_assessment():
         result["reading_at"] = latest["timestamp"].isoformat()
         result["daily_basis"] = daily
         result["charger_kw"] = charger_kw
+        result["energy_basis"] = energy_basis
+        result["forecast"] = forecast
         return jsonify(result)
 
     except Exception as e:  # pylint: disable=broad-except
@@ -2005,9 +2003,6 @@ def get_current_status():
                     lon = latest_location.get("longitude")
 
                     if lat and lon:
-                        from src.utils.weather import WeatherService
-
-                        weather_service = WeatherService()
                         weather_data = weather_service.get_current_weather(lat, lon)
 
             # Get the most recent cached data to check api_last_updated
