@@ -126,6 +126,69 @@
             </p>
         </section>
 
+        <section class="planner-section" aria-labelledby="planner-heading">
+            <h2 id="planner-heading">Trip Planner</h2>
+            <p class="planner-intro">
+                Whether the charging available before departure gets you there,
+                costed from what this car has actually used at the temperature
+                it will be driven in.
+            </p>
+
+            <form class="planner-form" id="planner-form">
+                <div class="planner-controls">
+                    <div class="planner-field">
+                        <label for="planner-destination">Destination</label>
+                        <select id="planner-destination">
+                            <option value="">Somewhere new&hellip;</option>
+                        </select>
+                    </div>
+                    <div class="planner-field">
+                        <label for="planner-distance">
+                            Distance one way (<span class="planner-unit" id="planner-distance-unit">km</span>)
+                        </label>
+                        <input type="number" id="planner-distance" min="1" step="1"
+                               inputmode="numeric" required>
+                    </div>
+                    <div class="planner-field">
+                        <label for="planner-departure">Departure</label>
+                        <input type="datetime-local" id="planner-departure" required>
+                    </div>
+                    <div class="planner-field">
+                        <label for="planner-charger">Charger</label>
+                        <select id="planner-charger">
+                            <!-- Energy reaching the pack, not what the plug reports.
+                                 On 120V those differ by about 30%. -->
+                            <option value="0.95">Home 120V &mdash; 0.95 kW to pack</option>
+                            <option value="6.6">240V L2 &mdash; 6.6 kW to pack</option>
+                            <option value="10.0">Fast L2 &mdash; 10 kW to pack</option>
+                        </select>
+                    </div>
+                    <div class="planner-field">
+                        <label for="planner-buffer">Arrive with at least (%)</label>
+                        <input type="number" id="planner-buffer" value="10" min="0" max="50">
+                    </div>
+                    <div class="planner-field">
+                        <label for="planner-limit">Charge limit (%)</label>
+                        <input type="number" id="planner-limit" value="80" min="10" max="100">
+                    </div>
+                </div>
+                <div class="planner-actions">
+                    <button type="submit" class="btn-primary">Assess</button>
+                    <button type="button" class="btn-secondary" id="planner-save">Save as trip</button>
+                </div>
+            </form>
+
+            <div class="planner-verdict" id="planner-verdict" role="status" aria-live="polite" hidden></div>
+
+            <div class="planner-saved" id="planner-saved" hidden>
+                <h3 id="planner-saved-heading">Saved trips</h3>
+                <p class="planner-saved-note">
+                    Checked every collection cycle. You are messaged when the verdict changes.
+                </p>
+                <ul class="planner-trip-list" id="planner-trip-list" aria-labelledby="planner-saved-heading"></ul>
+            </div>
+        </section>
+
         <section class="efficiency-stats" aria-labelledby="efficiency-heading">
             <h2 id="efficiency-heading">Efficiency Statistics</h2>
             <div class="efficiency-grid" id="efficiency-grid">

@@ -11,6 +11,10 @@ import requests
 
 logger = logging.getLogger(__name__)
 
+# Open-Meteo serves roughly sixteen days ahead; beyond that there is nothing
+# to ask for.
+FORECAST_MAX_DAYS = 16
+
 
 def _at(values, index):
     """Index into an Open-Meteo series, tolerating a short or absent array."""
@@ -169,9 +173,19 @@ class WeatherService:
             return None
 
     def forecast_for(self, latitude: float, longitude: float, when) -> Optional[Dict]:
-        """The forecast entry covering a given date, or None if out of range."""
+        """The forecast entry covering a given date, or None if out of range.
+
+        Asks for exactly enough days to reach the target rather than a fixed
+        window: a departure a week out sits one day beyond a 7-day request, and
+        silently falling back to a default assumption is worse than fetching
+        two more days. Open-Meteo's horizon is about 16 days.
+        """
         target = when.date() if hasattr(when, "date") else when
-        forecast = self.get_forecast(latitude, longitude)
+        span = (target - datetime.now().date()).days + 1
+        if span < 1 or span > FORECAST_MAX_DAYS:
+            return None
+
+        forecast = self.get_forecast(latitude, longitude, days=max(span, 3))
         if not forecast:
             return None
         return next((day for day in forecast if day["date"] == target.isoformat()), None)

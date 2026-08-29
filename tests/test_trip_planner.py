@@ -195,3 +195,24 @@ def test_stale_reading_is_flagged():
     )
     assert result["reading_age_hours"] == pytest.approx(8.0)
     assert result["stale_reading"] is True
+
+
+def test_a_pack_above_its_limit_keeps_what_it_has():
+    """A limit caps charging, it does not discharge the car down to it.
+
+    Observed live: the car sat at 97% after a fast charge with the limit back
+    at 80%, and the projection reported departing at 80% -- seventeen points
+    of real charge written off.
+    """
+    result = assess_trip(
+        now=datetime(2026, 8, 11, 8, 0),
+        departure=datetime(2026, 8, 13, 7, 0),
+        soc_pct=97,
+        pack_kwh=74.0,
+        charger_kw=0.95,
+        trip_kwh=20.0,
+        arrival_buffer_pct=10,
+        daily_kwh=0.0,
+        charge_limit_pct=80,
+    )
+    assert result["projected_departure_pct"] == 97

@@ -1845,3 +1845,238 @@ button.modal-close:focus-visible {
     padding-left: 1.2rem;
     color: #4a3200;
 }
+
+/* ===========================================================================
+   Trip planner
+   
+   Status is always carried in words as well as colour: "ON TRACK" reads the
+   same to a colourblind user and in a black-and-white printout. Colour is
+   confirmation, never the message.
+   =========================================================================== */
+
+.planner-section {
+    background: var(--card-bg);
+    border-radius: var(--border-radius);
+    box-shadow: var(--shadow);
+    padding: 1.5rem;
+    margin-bottom: 1.5rem;
+}
+
+.planner-intro {
+    color: var(--text-muted-aaa);
+    margin: 0 0 1.25rem;
+    max-width: 60ch;
+}
+
+.planner-controls {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 1rem;
+}
+
+.planner-field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+}
+
+.planner-field label {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--text-color);
+}
+
+.planner-field select,
+.planner-field input {
+    min-height: 44px; /* WCAG AAA touch target */
+    padding: 0.5rem 0.65rem;
+    border: 1px solid #7b8794;
+    border-radius: 4px;
+    background: var(--card-bg);
+    color: var(--text-color);
+    font-size: 1rem;
+}
+
+.planner-field select:focus-visible,
+.planner-field input:focus-visible,
+.planner-actions button:focus-visible,
+.planner-trip-list button:focus-visible {
+    outline: 3px solid var(--chart-accent);
+    outline-offset: 2px;
+}
+
+.planner-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    margin-top: 1.25rem;
+}
+
+.planner-actions button {
+    min-height: 44px;
+    padding: 0.5rem 1.25rem;
+    font-size: 1rem;
+}
+
+/* --- verdict ------------------------------------------------------------ */
+
+.planner-verdict {
+    margin-top: 1.5rem;
+    padding: 1.25rem;
+    border-radius: var(--border-radius);
+    border-left: 6px solid var(--text-muted-aaa);
+    background: #f4f6f7;
+}
+
+.planner-verdict.on_track { border-left-color: #1e8449; }
+.planner-verdict.tight { border-left-color: #9c640c; }
+.planner-verdict.off_track { border-left-color: #a93226; }
+
+.planner-status {
+    font-size: 1.35rem;
+    font-weight: 700;
+    margin: 0 0 0.5rem;
+    letter-spacing: 0.02em;
+}
+
+/* Steps chosen for >=7:1 on the #f4f6f7 panel, which AAA requires for text. */
+.planner-verdict.on_track .planner-status { color: #14603a; }
+.planner-verdict.tight .planner-status { color: #744807; }
+.planner-verdict.off_track .planner-status { color: #8c231a; }
+
+.planner-headline {
+    font-size: 1.05rem;
+    margin: 0 0 0.75rem;
+    color: var(--text-color);
+}
+
+.planner-basis {
+    font-size: 0.875rem;
+    color: var(--text-muted-aaa);
+    margin: 0.75rem 0 0;
+}
+
+.planner-basis li { margin-bottom: 0.2rem; }
+
+.planner-warning {
+    margin: 0.75rem 0 0;
+    padding: 0.6rem 0.75rem;
+    border-radius: 4px;
+    background: #fdf3e3;
+    color: #6f4506;
+    font-weight: 600;
+}
+
+/* --- state-of-charge trajectory ----------------------------------------- */
+
+/* The same two-tone language the range charts use: the solid portion is what
+   an 80% charge reaches, the lighter cap is the last 20% to full. */
+.planner-track {
+    position: relative;
+    height: 28px;
+    border-radius: 4px;
+    background: #dde3e6;
+    overflow: hidden;
+    margin: 1rem 0 0.35rem;
+}
+
+.planner-track-fill {
+    position: absolute;
+    inset: 0 auto 0 0;
+    background: var(--chart-accent);
+}
+
+.planner-track-cap {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    background: rgba(36, 113, 163, 0.35);
+}
+
+.planner-track-marker {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background: var(--text-color);
+}
+
+.planner-track-labels {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.8125rem;
+    color: var(--text-muted-aaa);
+}
+
+/* --- saved trips --------------------------------------------------------
+   Chip foregrounds are the darkest step of each hue that clears 7:1 against
+   its own tinted background with headroom, computed rather than eyeballed --
+   the obvious mid-tones all landed near 6.5:1 and failed AAA body text. */
+
+.planner-saved { margin-top: 1.75rem; }
+
+.planner-saved-note {
+    font-size: 0.875rem;
+    color: var(--text-muted-aaa);
+    margin: 0.25rem 0 0.75rem;
+}
+
+.planner-trip-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.planner-trip {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.75rem;
+    border: 1px solid #d5dbdb;
+    border-radius: 4px;
+}
+
+.planner-trip-name { font-weight: 600; }
+
+.planner-trip-status {
+    font-size: 0.8125rem;
+    font-weight: 700;
+    padding: 0.15rem 0.5rem;
+    border-radius: 3px;
+    background: #e8ecee;
+    color: #404a5c;
+}
+
+.planner-trip-status.on_track { background: #d6ece0; color: #115131; }
+.planner-trip-status.tight { background: #f7ead2; color: #684106; }
+.planner-trip-status.off_track { background: #f6dcd9; color: #812018; }
+
+.planner-trip-when {
+    color: var(--text-muted-aaa);
+    font-size: 0.875rem;
+    margin-right: auto;
+}
+
+.planner-trip button {
+    min-height: 44px;
+    min-width: 44px;
+    padding: 0.35rem 0.85rem;
+    border: 1px solid #7b8794;
+    border-radius: 4px;
+    background: var(--card-bg);
+    color: var(--text-color);
+    cursor: pointer;
+    font-size: 0.875rem;
+}
+
+.planner-trip button:hover { background: #eef2f3; }
+
+@media (prefers-contrast: more) {
+    .planner-verdict { border-left-width: 8px; }
+    .planner-field select,
+    .planner-field input { border-width: 2px; }
+}

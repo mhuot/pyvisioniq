@@ -356,7 +356,10 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     function tempUnitLabel() {
-        return currentUnits === 'metric' ? '°C' : '°F';
+        // Reads the temperature toggle, not the distance one. These were split
+        // deliberately -- miles with Celsius is a normal preference -- and
+        // labelling from the distance toggle put °F on Celsius values.
+        return currentTempUnits === 'c' ? '°C' : '°F';
     }
     
     let currentUnits = localStorage.getItem('units') || 'metric';
@@ -3402,7 +3405,312 @@ document.head.appendChild(style);
         });
     });
 
+
+    /* --- trip planner ----------------------------------------------------
+       Lives in this block because it needs the unit preferences above, and
+       because the planner reads the same measured history the efficiency
+       charts do. Distances are entered and shown in whatever the distance
+       toggle says; the API speaks kilometres.
+       ------------------------------------------------------------------- */
+
+    const KM_PER_MI = 1.60934;
+    let plannerPackKwh = 74.0;
+    let plannerDestinations = [];
+    let lastAssessment = null;
+
+    function plannerDistanceLabel() {
+        return unitsAreMetric() ? 'km' : 'mi';
+    }
+
+    function toKm(value) {
+        return unitsAreMetric() ? value : value * KM_PER_MI;
+    }
+
+    function fromKm(km) {
+        return unitsAreMetric() ? km : km / KM_PER_MI;
+    }
+
+    function el(id) {
+        return document.getElementById(id);
+    }
+
+    async function loadPlannerDestinations() {
+        const select = el('planner-destination');
+        if (!select) { return; }
+        try {
+            const response = await fetch('/api/planner/destinations');
+            if (!response.ok) { return; }
+            const body = await response.json();
+            plannerPackKwh = body.pack_kwh || plannerPackKwh;
+            plannerDestinations = body.destinations || [];
+
+            plannerDestinations.forEach((destination, index) => {
+                const option = document.createElement('option');
+                option.value = String(index);
+                // Coarse bearing-free label: distance and how often, never a
+                // place name. Screenshots of this page should not disclose
+                // where someone actually goes.
+                const distance = Math.round(fromKm(destination.distance_km));
+                option.textContent = `${distance} ${plannerDistanceLabel()} away ` +
+                    `\u2014 ${destination.visits} visits, ~${destination.energy_kwh} kWh`;
+                select.appendChild(option);
+            });
+        } catch (error) {
+            /* The manual distance box still works without presets. */
+        }
+    }
+
+    function onDestinationChosen() {
+        const select = el('planner-destination');
+        const distance = el('planner-distance');
+        if (!select || !distance || select.value === '') { return; }
+        const destination = plannerDestinations[Number(select.value)];
+        if (destination) {
+            distance.value = Math.round(fromKm(destination.distance_km));
+        }
+    }
+
+    function plannerQuery() {
+        const distance = parseFloat(el('planner-distance').value);
+        const departure = el('planner-departure').value;
+        if (!departure || !isFinite(distance)) { return null; }
+        const params = new URLSearchParams({
+            departure: departure,
+            distance_km: toKm(distance).toFixed(1),
+            charger_kw: el('planner-charger').value,
+            arrival_buffer_pct: el('planner-buffer').value,
+        });
+        return params;
+    }
+
+    function statusWord(status) {
+        return {
+            on_track: 'ON TRACK',
+            tight: 'TIGHT',
+            off_track: 'OFF TRACK',
+            departed: 'ALREADY DEPARTED'
+        }[status] || status.toUpperCase();
+    }
+
+    function agePhrase(hours) {
+        if (hours === null || hours === undefined) { return ''; }
+        if (hours < 1) { return `${Math.round(hours * 60)} min ago`; }
+        return `${hours.toFixed(1)} h ago`;
+    }
+
+    function trajectoryMarkup(result) {
+        const departure = Math.max(0, Math.min(100, result.projected_departure_pct));
+        const arrival = Math.max(0, Math.min(100, result.projected_arrival_pct));
+        // Solid to 80, lighter above it: the same two-tone language the range
+        // charts use for "an 80% charge reaches this far".
+        const solid = Math.min(departure, 80);
+        const cap = Math.max(0, departure - 80);
+        return `
+            <div class="planner-track" role="img"
+                 aria-label="Projected ${Math.round(departure)} percent at departure,
+                             ${Math.round(arrival)} percent on arrival">
+                <div class="planner-track-fill" style="width: ${solid}%"></div>
+                <div class="planner-track-cap" style="left: 80%; width: ${cap}%"></div>
+                <div class="planner-track-marker" style="left: ${arrival}%"></div>
+            </div>
+            <div class="planner-track-labels">
+                <span>Now ${Math.round(result.soc_pct)}%</span>
+                <span>Arrive ~${Math.round(arrival)}%</span>
+                <span>Depart ~${Math.round(departure)}%</span>
+            </div>`;
+    }
+
+    function renderVerdict(result) {
+        const panel = el('planner-verdict');
+        if (!panel) { return; }
+        lastAssessment = result;
+
+        if (result.status === 'departed') {
+            panel.className = 'planner-verdict';
+            panel.innerHTML = '<p class="planner-status">ALREADY DEPARTED</p>' +
+                '<p class="planner-headline">Pick a departure in the future.</p>';
+            panel.hidden = false;
+            return;
+        }
+
+        const basis = [];
+        if (result.energy_basis) { basis.push(`Trip energy: ${result.energy_basis}`); }
+        if (result.daily_basis) {
+            basis.push(`Daily driving: ${result.daily_basis.kwh} kWh median ` +
+                `(${result.daily_basis.basis}, n=${result.daily_basis.sample})`);
+        }
+        if (result.charger_kw) {
+            basis.push(`Charging at ${result.charger_kw} kW into the pack`);
+        }
+        if (result.reading_age_hours !== undefined) {
+            basis.push(`Battery read ${agePhrase(result.reading_age_hours)}`);
+        }
+        if (result.forecast && result.forecast.precipitation_probability !== null &&
+            result.forecast.precipitation_probability !== undefined) {
+            // Stated, never applied: we have no measured wet-road figure.
+            basis.push(`${result.forecast.precipitation_probability}% chance of rain ` +
+                'on the day, which this estimate does not account for');
+        }
+
+        let shortfall = '';
+        if (result.shortfall_kwh > 0) {
+            shortfall = `<p class="planner-warning">Short about ${result.shortfall_kwh} kWh ` +
+                `&mdash; roughly ${result.dcfc_minutes} minutes of DC fast charging, ` +
+                'cheapest taken late in the schedule when the battery is low.</p>';
+        }
+
+        let stale = '';
+        if (result.stale_reading) {
+            stale = '<p class="planner-warning">The battery reading is stale, so treat ' +
+                'these numbers as unreliable &mdash; the collector may be down.</p>';
+        }
+
+        panel.className = `planner-verdict ${result.status}`;
+        panel.innerHTML =
+            `<p class="planner-status">${statusWord(result.status)}</p>` +
+            `<p class="planner-headline">Needs <strong>${result.plugged_hours_needed} hours ` +
+            `plugged in</strong> of the ${Math.round(result.hours_to_departure)} before you go ` +
+            `(${Math.round(result.duty_cycle_pct)}% of the time remaining).</p>` +
+            trajectoryMarkup(result) +
+            stale + shortfall +
+            `<ul class="planner-basis">${basis.map(line => `<li>${line}</li>`).join('')}</ul>`;
+        panel.hidden = false;
+    }
+
+    async function assessPlanner(event) {
+        if (event) { event.preventDefault(); }
+        const params = plannerQuery();
+        if (!params) { return; }
+        const panel = el('planner-verdict');
+        try {
+            const response = await fetch(`/api/planner/assess?${params.toString()}`);
+            const body = await response.json();
+            if (!response.ok) {
+                panel.className = 'planner-verdict';
+                panel.innerHTML = `<p class="planner-headline">${body.error || 'Could not assess.'}</p>`;
+                panel.hidden = false;
+                return;
+            }
+            renderVerdict(body);
+        } catch (error) {
+            panel.className = 'planner-verdict';
+            panel.innerHTML = '<p class="planner-headline">Could not reach the planner.</p>';
+            panel.hidden = false;
+        }
+    }
+
+    async function savePlannerTrip() {
+        if (!lastAssessment) { await assessPlanner(); }
+        if (!lastAssessment || lastAssessment.status === 'departed') { return; }
+
+        const departure = el('planner-departure').value.replace('T', ' ').slice(0, 16);
+        const name = window.prompt('Name this trip', 'Trip on ' + departure.slice(0, 10));
+        if (!name) { return; }
+
+        const payload = {
+            trip_name: name,
+            departure: departure,
+            // The store thinks in share-of-pack, which is how a trip is
+            // measured in practice: departure SOC minus arrival SOC.
+            trip_soc_pct: (lastAssessment.trip_kwh / plannerPackKwh) * 100,
+            pack_kwh: plannerPackKwh,
+            charger_kw: parseFloat(el('planner-charger').value),
+            arrival_buffer_pct: parseFloat(el('planner-buffer').value),
+            charge_limit_pct: parseFloat(el('planner-limit').value)
+        };
+
+        const response = await fetch('/api/planner/trips', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        if (response.ok) { loadSavedTrips(); }
+    }
+
+    async function deleteSavedTrip(id) {
+        await fetch(`/api/planner/trips/${id}`, { method: 'DELETE' });
+        loadSavedTrips();
+    }
+
+    async function loadSavedTrips() {
+        const wrapper = el('planner-saved');
+        const list = el('planner-trip-list');
+        if (!wrapper || !list) { return; }
+        try {
+            const response = await fetch('/api/planner/trips');
+            if (!response.ok) { return; }
+            const trips = (await response.json()).trips || [];
+            wrapper.hidden = trips.length === 0;
+            list.innerHTML = '';
+
+            trips.forEach(trip => {
+                const status = (trip.assessment && trip.assessment.status) || 'unknown';
+                const item = document.createElement('li');
+                item.className = 'planner-trip';
+                item.innerHTML =
+                    `<span class="planner-trip-name"></span>` +
+                    `<span class="planner-trip-status ${status}">${statusWord(status)}</span>` +
+                    `<span class="planner-trip-when">departs ${trip.departure}</span>`;
+                // Trip names are user text; set them as text, never as markup.
+                item.querySelector('.planner-trip-name').textContent = trip.trip_name;
+
+                const remove = document.createElement('button');
+                remove.type = 'button';
+                remove.textContent = 'Delete';
+                remove.setAttribute('aria-label', `Delete trip ${trip.trip_name}`);
+                remove.addEventListener('click', () => deleteSavedTrip(trip.id));
+                item.appendChild(remove);
+                list.appendChild(item);
+            });
+        } catch (error) {
+            /* Leave the saved list hidden rather than showing an empty shell. */
+        }
+    }
+
+    function refreshPlannerUnits() {
+        const label = el('planner-distance-unit');
+        if (label) { label.textContent = plannerDistanceLabel(); }
+    }
+
+    function initPlanner() {
+        const form = el('planner-form');
+        if (!form) { return; }
+
+        // Default to a week out at 07:00, the shape most trips here take.
+        const departure = el('planner-departure');
+        if (departure && !departure.value) {
+            const when = new Date();
+            when.setDate(when.getDate() + 7);
+            when.setHours(7, 0, 0, 0);
+            departure.value = when.toISOString().slice(0, 16);
+        }
+
+        refreshPlannerUnits();
+        form.addEventListener('submit', assessPlanner);
+        el('planner-save').addEventListener('click', savePlannerTrip);
+        el('planner-destination').addEventListener('change', onDestinationChosen);
+
+        // The distance toggle lives in the other scope; relabel and reconvert
+        // when it changes so the box never shows miles labelled km.
+        const unitsButton = document.getElementById('units-toggle');
+        if (unitsButton) {
+            unitsButton.addEventListener('click', () => setTimeout(() => {
+                const box = el('planner-distance');
+                if (box && box.value) {
+                    // The number was in the old unit; move it to the new one.
+                    const asKm = unitsAreMetric() ? Number(box.value) * KM_PER_MI : Number(box.value);
+                    box.value = Math.round(fromKm(asKm));
+                }
+                refreshPlannerUnits();
+            }, 0));
+        }
+
+        loadPlannerDestinations();
+        loadSavedTrips();
+    }
+
     document.addEventListener('DOMContentLoaded', initTabs);
+    document.addEventListener('DOMContentLoaded', initPlanner);
     document.addEventListener('click', event => {
         // Reload efficiency when the master time range changes and we are on that tab.
         if (event.target.closest('.master-time-range-controls .time-range-btn')) {

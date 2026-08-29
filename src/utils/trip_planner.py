@@ -437,7 +437,10 @@ def assess_trip(
     realistic = hours_left * DUTY_ON_TRACK * charger_kw
     shortfall = max(0.0, needed - realistic)
 
-    ceiling_kwh = charge_limit_pct / 100.0 * pack_kwh
+    # The limit stops the car charging higher; it does not drain it back down.
+    # A pack already above the limit -- charged to full for this very trip,
+    # with the limit since reset -- keeps what it has.
+    ceiling_kwh = max(charge_limit_pct / 100.0 * pack_kwh, current_kwh)
     projected = min(ceiling_kwh, current_kwh + realistic - pending)
 
     result = {
