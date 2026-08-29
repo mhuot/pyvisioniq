@@ -13,8 +13,10 @@ from src.utils.notify import (  # noqa: E402  pylint: disable=wrong-import-posit
     DEFAULT_SUBJECT,
     publish,
 )
+from src.storage.plan_store import PlanStore  # noqa: E402  pylint: disable=C0413
 from src.utils.trip_planner import (  # noqa: E402  pylint: disable=wrong-import-position
     assess_plan,
+    notify_on_change,
     summarize_assessment,
 )
 
@@ -40,6 +42,41 @@ def assess(plan, repo_root, now=None):
     return assess_plan(plan, os.path.join(repo_root, "data"), now)
 
 
+def watch(repo_root, subjects, server):
+    """Assess every stored plan and announce the ones whose status changed.
+
+    This is the alerting owner. The collector re-assesses plans far more often,
+    but it runs in a container that cannot reach NATS -- the server binds
+    loopback on the host and the CLI is not in the image -- so publishing lives
+    here, on the host, where both are available.
+
+    Safe to run often: notify_on_change publishes transitions, not standing
+    conditions, and records nothing it failed to send.
+    """
+    store = PlanStore(os.path.join(repo_root, "data"))
+    upcoming = store.upcoming()
+    if not upcoming:
+        print("no upcoming trips")
+        return 0
+
+    def publisher(title, body, status):
+        return publish(subjects, title, body, status, server)
+
+    announced = 0
+    for plan in upcoming:
+        try:
+            result = assess_plan(plan, os.path.join(repo_root, "data"))
+        except (OSError, ValueError, KeyError) as error:
+            print(f"could not assess {plan.get('trip_name')!r}: {error}", file=sys.stderr)
+            continue
+
+        sent = notify_on_change(plan, result, store, publisher)
+        announced += 1 if sent else 0
+        print(f"{plan['trip_name']}: {result['status']}" + (" (announced)" if sent else ""))
+
+    return 0 if announced == 0 else 1
+
+
 def main():
     """Entry point: assess readiness and optionally notify."""
     parser = argparse.ArgumentParser(description=__doc__)
@@ -61,7 +98,16 @@ def main():
     )
     parser.add_argument("--server", default=DEFAULT_SERVER)
     parser.add_argument("--json", action="store_true", help="emit raw JSON")
+    parser.add_argument(
+        "--watch",
+        action="store_true",
+        help="assess every stored plan and announce status changes (for cron)",
+    )
     args = parser.parse_args()
+
+    subjects = [s.strip() for s in args.subject.split(",") if s.strip()]
+    if args.watch:
+        return watch(args.repo_root, subjects, args.server)
 
     try:
         plan = load_plan(args.plan)
@@ -82,7 +128,6 @@ def main():
         args.notify == "on-problem" and result["status"] != "on_track"
     )
     if should:
-        subjects = [s.strip() for s in args.subject.split(",") if s.strip()]
         publish(
             subjects,
             f"EV trip readiness: {result['status'].replace('_', ' ')}",

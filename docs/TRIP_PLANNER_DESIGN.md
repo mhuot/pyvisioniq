@@ -1,9 +1,10 @@
 # Trip Planner — Design Notes
 
-Status: **planning**. The backend core exists (`src/utils/trip_planner.py`, two
-API endpoints); no UI has been built. These notes capture the design decisions,
-the measurement lessons that motivated them, and the open questions, so a later
-spec-driven effort starts from what was learned rather than rediscovering it.
+Status: **built**. The planner ships as a section on the dashboard's Now panel,
+backed by a shared core, a plan store and collector-driven alerting. These notes
+record the design decisions and the measurement lessons that motivated them, so
+the reasoning behind the code is not lost. Section 8 keeps the questions that
+are still genuinely open.
 
 Examples in this document use anonymised placeholders (distances and energy
 figures are real magnitudes from the data; place names and coordinates are
@@ -33,10 +34,14 @@ Secondary questions, in priority order:
 | Planning core | `src/utils/trip_planner.py` | done, tested |
 | Destination detection | `GET /api/planner/destinations` | done |
 | Reachability assessment | `GET /api/planner/assess` | done |
-| CLI checker (cron + NATS alerts) | `tools/trip_readiness_check.py` | done; predates the shared core and still carries its own copy of some logic — unify when the UI work starts |
-| Plan file format | `tools/trip_plan.example.json` | done |
-| Weather service | `src/utils/weather.py` | current conditions only — **forecast not yet implemented** |
-| UI | — | not started |
+| CLI checker (cron + NATS alerts) | `tools/trip_readiness_check.py` | thin wrapper over the shared core; the duplicated logic was unified |
+| Plan store | `src/storage/plan_store.py` | named plans in `data/trip_plans.json`, fcntl-locked |
+| Plan CRUD | `GET/POST/DELETE /api/planner/trips` | done |
+| Temperature bands | `src/utils/efficiency.py` | shared by the chart and the planner |
+| Weather forecast | `src/utils/weather.py` | `get_forecast` / `forecast_for`, horizon follows the departure |
+| Alert decision | `notify_on_change` in the core | transitions only, plus a daily reminder; records nothing it failed to send |
+| Alert delivery | `trip_readiness_check.py --watch`, host cron | on the host: NATS binds loopback there and its CLI is not in the container |
+| UI | Now panel, `planner-section` | done |
 
 ## 3. Principles, each learned the hard way
 
@@ -147,9 +152,9 @@ arrival %, and miles. The 80%/100% two-tone treatment on the efficiency charts
 (solid bar to the 80%-charge range, lighter cap to 100%) is the established
 visual language — reuse it for "is this destination inside the solid bar".
 
-## 4. UI sketch (not yet built)
+## 4. UI (built)
 
-Decided so far (user choices during planning):
+Decisions taken, and what shipped:
 
 - **Trip input: both modes, known destinations first.** A picker of detected
   destinations (from `/api/planner/destinations`) showing distance, visit
@@ -184,9 +189,18 @@ Requirements carried over from the rest of the dashboard:
 - Respect both unit toggles (distance and temperature are independent).
 - Show the reading age of the SOC it planned from.
 
-## 5. Weather integration (planned, not built)
+## 5. Weather integration (built)
 
-`WeatherService` only implements current conditions. Plan:
+Shipped broadly as planned. Two things the plan got wrong, worth recording:
+
+- The horizon cannot be fixed at seven days. The form defaults to a departure a
+  week out, which fell one day outside a seven-day request and silently fell
+  back to the flat default. `forecast_for` now asks for as many days as it
+  takes to reach the departure, capped at Open-Meteo's ~16.
+- Forecasts get their own cache duration (3 h) rather than the 30 minutes
+  current conditions use.
+
+The original plan, which the implementation follows:
 
 1. Add `get_forecast(lat, lon, days)` using the same Open-Meteo endpoint
    (`daily=temperature_2m_max,temperature_2m_min,precipitation_probability`)
@@ -229,26 +243,47 @@ Lessons worth encoding when this gets built:
   capacity or efficiency measurement. 620 of 791 historical rows were derived.
 - `trips.csv` distance is **miles** (verified against the km odometer over
   354 driving days); several historical mislabels came from assuming km.
-- Concurrent CSV writes (collector + webhook) remain unguarded; acceptable
-  today but a known risk if the planner adds write paths. Prefer read-only.
+- Concurrent writes are guarded: `CSVStorage._write_lock` and
+  `PlanStore._write_lock` both take an fcntl lock on a sidecar file. The
+  planner's one write path (the plan store) uses it, and an eight-process test
+  asserts nothing is lost.
 
-## 8. Open questions for the spec
+## 8. Questions, answered and still open
 
-1. Where does the planner live — fifth tab, or embedded on Now?
-2. Should assessments persist (named upcoming trips, re-evaluated by the
-   collector cycle, alerting via the existing NATS path) or stay ephemeral?
-   The CLI tool already does the persistent version crudely via
-   `trip_plan.json` — converge or keep separate?
+Resolved by the build:
+
+1. **Where it lives** — a section on Now, not a fifth tab.
+2. **Persistence** — plans persist and are re-assessed every collector cycle.
+   The alerting hazard is worth remembering: the cron checker announced *every*
+   off-track run, fine four times a day and intolerable on a cycle that can run
+   every fifteen minutes. Only transitions are published, plus one reminder a
+   day, with the last status persisted so a restart does not re-announce.
+
+   Where alerting *runs* was decided by deployment, not preference. The
+   collector cannot reach NATS at all: the server binds loopback on the host
+   and the CLI is not in the image. Worse than failing, a container-side
+   attempt would still mark the status as seen and hide the transition from
+   anything that could publish. So the decision lives in the shared core and
+   delivery lives in a host cron, and a status is only recorded once its
+   announcement has actually gone out.
+5. **Charge limit** — an explicit input, defaulting to 80%. Note the asymmetry
+   found in live use: a limit caps charging but does not discharge a pack that
+   is already above it, so the projection floors at the current SOC.
+
+Still open:
+
 3. Multi-day trips: model destination charging (rate × parked hours) as an
    input? The single-trip model treats the return as a separate assessment.
-4. Should destination names be user-editable labels? Coordinates are stored
-   locally but labels would leak into screenshots — default to coarse
-   auto-labels ("~140 mi SE") and let the user rename locally.
-5. Charge-limit awareness: projections currently cap at 100%; the car often
-   charges to a configured 80/90% limit the API does not expose. Ask the user,
-   infer from charge plateaus, or ignore?
+   Live experience says this matters most where there is no fast charging at
+   the destination, which is exactly when the return leg decides the plan.
+4. Should destination names be user-editable labels? Presets currently render
+   as "230 km away — 6 visits", which is safe in a screenshot but hard to tell
+   apart when two places are a similar distance out.
 6. When history and forecast disagree strongly (e.g. measured summer route,
-   winter departure), how loudly should the adjustment be surfaced?
+   winter departure), how loudly should the adjustment be surfaced? Today the
+   basis string states it and nothing escalates.
+7. Precipitation is stated but never applied, for want of a measured wet-road
+   figure. Logging trips against their forecast would eventually produce one.
 
 ## 9. Privacy
 

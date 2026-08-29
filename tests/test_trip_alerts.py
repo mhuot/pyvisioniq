@@ -118,11 +118,36 @@ def test_a_lasting_problem_is_repeated_once_a_day(collector, sent):
     assert len(sent) == 2
 
 
-def test_alerts_can_be_switched_off(collector, sent, monkeypatch):
-    """The status is still tracked; only the announcement is suppressed."""
+def test_a_collector_that_cannot_alert_leaves_the_status_alone(collector, sent, monkeypatch):
+    """Not the alerting owner means not touching the record either.
+
+    In the default Docker deployment the collector cannot reach NATS -- the
+    server binds loopback on the host and the CLI is not in the image. If it
+    recorded the status anyway, the host-side watcher would see no transition
+    and the user would never hear about an off-track trip.
+    """
     monkeypatch.setattr(collector_module, "TRIP_ALERTS_ENABLED", False)
     plan = collector.plan_store.save(PLAN)
     collector._notify_on_change(plan, _result("off_track"))
 
     assert sent == []
-    assert collector.plan_store.get(plan["id"])["last_status"] == "off_track"
+    assert collector.plan_store.get(plan["id"])["last_status"] is None
+
+
+def test_a_failed_publish_is_retried_rather_than_swallowed(collector, monkeypatch):
+    """A status is only recorded once its announcement actually went out."""
+    attempts = []
+
+    def failing_publish(subjects, title, body, status, server=None):
+        attempts.append(status)
+        return False
+
+    monkeypatch.setattr(collector_module, "publish", failing_publish)
+    plan = collector.plan_store.save(PLAN)
+
+    collector._notify_on_change(plan, _result("off_track"))
+    assert collector.plan_store.get(plan["id"])["last_status"] is None
+
+    # Still pending, so the next pass tries again instead of going quiet.
+    collector._notify_on_change(collector.plan_store.get(plan["id"]), _result("off_track"))
+    assert attempts == ["off_track", "off_track"]

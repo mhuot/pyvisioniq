@@ -27,7 +27,7 @@ from src.utils.ha_mqtt import (
 )
 from src.utils.plug_sessions import detect_charging_spans, load_plug_log, refine_sessions
 from src.utils.notify import DEFAULT_SUBJECT, publish
-from src.utils.trip_planner import assess_plan, summarize_assessment
+from src.utils.trip_planner import assess_plan, notify_on_change
 
 sys.path.append(str(Path(__file__).parent))
 
@@ -94,7 +94,9 @@ def adaptive_interval_minutes(is_charging, charging_power, charging_since, last_
 # A trip that stays off track is still worth one nudge a day, but not one
 # every collection cycle.
 REMINDER_HOURS = 24.0
-TRIP_ALERTS_ENABLED = os.getenv("TRIP_ALERTS_ENABLED", "true").lower() == "true"
+# Off unless the collector can actually reach NATS; the host-side watcher
+# owns alerting in the default Docker deployment.
+TRIP_ALERTS_ENABLED = os.getenv("TRIP_ALERTS_ENABLED", "false").lower() == "true"
 
 
 class DataCollector:
@@ -353,54 +355,26 @@ class DataCollector:
             logger.debug("trip_readiness unavailable: %s", metric_error)
 
     def _notify_on_change(self, plan, result):
-        """Publish when a plan's status changes, and not merely because we looked.
+        """Alert on a status change, when this process is the alerting owner.
 
-        The old cron checker ran four times a day and announced every off-track
-        run, which was tolerable at that cadence. This runs on the collection
-        cycle -- as often as every 15 minutes while charging -- so announcing a
-        standing condition would be pure noise. Only transitions are published,
-        plus one reminder a day while a trip stays off track.
+        Off by default: in the standard Docker deployment the collector cannot
+        reach NATS at all -- the server binds loopback on the host and the CLI
+        is not in the image -- so publishing here would fail silently while
+        still marking the status as seen, which would hide the transition from
+        the host-side watcher that can publish. tools/trip_readiness_check.py
+        --watch owns alerting instead. See TRIP_ALERTS_ENABLED.
         """
-        status = result["status"]
-        previous = plan.get("last_status")
-        changed = status != previous
+        if not TRIP_ALERTS_ENABLED:
+            return False
 
-        hours_quiet = self._hours_since_notified(plan)
-        reminder = status == "off_track" and not changed and hours_quiet >= REMINDER_HOURS
-
-        if not (changed or reminder):
-            return
-
-        # Worth interrupting someone for a problem, or for recovering from one.
-        # Silently recording the first sight of an on-track trip is not news.
-        newsworthy = status != "on_track" or previous in ("tight", "off_track")
-
-        sent = False
-        if newsworthy and TRIP_ALERTS_ENABLED:
+        def publisher(title, body, status):
             try:
-                sent = publish(
-                    [DEFAULT_SUBJECT],
-                    f"EV trip readiness: {status.replace('_', ' ')}",
-                    summarize_assessment(result, plan),
-                    status,
-                )
+                return publish([DEFAULT_SUBJECT], title, body, status)
             except (OSError, subprocess.SubprocessError) as publish_error:
                 logger.warning("could not publish trip alert: %s", publish_error)
+                return False
 
-        # Recorded even when nothing was sent, so an unannounced status is not
-        # re-detected as a change on the next cycle.
-        self.plan_store.record_status(plan["id"], status, notified=sent)
-
-    @staticmethod
-    def _hours_since_notified(plan):
-        """Hours since this plan last produced an alert; inf if never."""
-        stamp = plan.get("last_notified_at")
-        if not stamp:
-            return float("inf")
-        try:
-            return (datetime.now() - datetime.fromisoformat(stamp)).total_seconds() / 3600
-        except (TypeError, ValueError):
-            return float("inf")
+        return notify_on_change(plan, result, self.plan_store, publisher, REMINDER_HOURS)
 
     def _should_force(self):
         """Decide whether this poll should wake the car.

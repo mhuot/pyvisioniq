@@ -84,6 +84,7 @@ python tools/rebuild_charging_sessions.py                  # Merge fragmented ch
 python tools/recompute_is_cached.py                        # Recompute is_cached flags (dry run)
 python tools/recompute_is_cached.py --write-cache          # Recompute and persist changes
 python tools/analyze_errors.py                             # Analyze API error patterns
+python tools/trip_readiness_check.py --watch                # Assess stored trip plans, announce status changes (cron every 15 min)
 
 # Archived one-time scripts are in tools/archive/
 ```
@@ -165,6 +166,9 @@ Flask app provides endpoints at `http://localhost:{PORT}/api/`:
 - `/temperature-efficiency` - Trip efficiency correlated with temperature
 - `/charging-temperature-impact` - Charging power/speed by temperature
 - `/collection-status` - Data collection status (calls_today, next_collection)
+- `/planner/destinations` - Places visited more than once, with measured per-visit energy
+- `/planner/assess` - Trip reachability; costs the trip from the measured temperature band at the forecast departure temperature
+- `/planner/trips` (GET/POST/DELETE) - Named trip plans, re-assessed each collector cycle; alerts on status transitions
 - `/polling-status` - Polling observability: mode, recent scheduling decisions from data/polling_log.csv, budget usage
 - `/plug-sample` (POST) - Token-authenticated webhook for Home Assistant smart-plug power samples (appends to data/plug_power.csv; collector refines sessions from it)
 - `/force-update` - Force cache refresh (respects rate limits)
@@ -195,6 +199,8 @@ Critical settings that must be configured:
 - `PORT`: Web server port (default: 5000)
 - `SECRET_KEY`: Flask secret key (defaults to dev-secret-key; set in production)
 - `WEATHER_SOURCE`: "meteo" for Open-Meteo API or "vehicle" for car sensor
+- `TRIP_ALERTS_ENABLED`: Default false. Alerting is owned by the host-side watcher (`tools/trip_readiness_check.py --watch`, cron every 15 min), because NATS binds loopback on the host and its CLI is not in the container. Set true only where the collector can genuinely reach NATS
+- `TRIP_ALERT_SUBJECT`: Default `fleet.karwyn.notify`. One subject only — `fleet.digest` forwards to the same chat, so publishing to both delivers every alert twice
 
 ## Project Structure
 ```
@@ -204,9 +210,13 @@ pyvisionic/
 │   │   ├── client.py          # CachedVehicleClient - API communication, caching, rate limiting
 │   │   └── ssl_patch.py       # SSL certificate workarounds
 │   ├── storage/
-│   │   └── csv_store.py       # CSVStorage - manages 4 CSV files, deduplication, session tracking
+│   │   ├── csv_store.py       # CSVStorage - manages 4 CSV files, deduplication, session tracking
+│   │   └── plan_store.py      # PlanStore - named trip plans in data/trip_plans.json
 │   ├── utils/
-│   │   ├── weather.py         # WeatherService - Open-Meteo API integration
+│   │   ├── weather.py         # WeatherService - Open-Meteo current conditions and forecast
+│   │   ├── trip_planner.py    # Planning core - shared by the web app, collector and CLI
+│   │   ├── efficiency.py      # Temperature-banded efficiency, energy-weighted
+│   │   ├── notify.py          # NATS publishing
 │   │   └── debug.py           # DebugLogger, DataValidator - debugging utilities
 │   └── web/
 │       ├── app.py             # Flask app - main routes, API endpoints

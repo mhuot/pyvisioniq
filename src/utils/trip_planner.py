@@ -555,3 +555,64 @@ def summarize_assessment(result, plan):
         )
     lines.extend(result["detail"])
     return "\n".join(lines)
+
+
+def notify_on_change(plan, result, store, publisher, reminder_hours=24.0, now=None):
+    """Announce a plan's status when it changes, and record what was seen.
+
+    Deliberately not "announce whenever asked". The cron checker this grew out
+    of ran four times a day and published every off-track run, which is
+    tolerable at that cadence and intolerable at the every-fifteen-minutes one
+    a watcher runs at. Only transitions are published, plus one reminder a day
+    while a trip stays off track.
+
+    The last status is persisted beside the plan rather than held in memory, so
+    a restart does not re-announce a status the user already has.
+
+    ``publisher`` returns whether it actually sent. A status is only recorded
+    once the announcement it implies has been delivered, so a failed publish is
+    retried on the next pass instead of being silently swallowed.
+
+    Returns True when something was published.
+    """
+    now = now or datetime.now()
+    status = result["status"]
+    previous = plan.get("last_status")
+    changed = status != previous
+
+    quiet_hours = _hours_since(plan.get("last_notified_at"), now)
+    reminder = status == "off_track" and not changed and quiet_hours >= reminder_hours
+
+    if not (changed or reminder):
+        return False
+
+    # Worth interrupting someone for a problem, or for recovering from one.
+    # The first sight of an on-track trip is not news.
+    newsworthy = status != "on_track" or previous in ("tight", "off_track")
+
+    sent = False
+    if newsworthy:
+        sent = bool(
+            publisher(
+                f"EV trip readiness: {status.replace('_', ' ')}",
+                summarize_assessment(result, plan),
+                status,
+            )
+        )
+        if not sent:
+            # Leave last_status alone so the transition is still pending, and
+            # whatever can publish will find it next time.
+            return False
+
+    store.record_status(plan["id"], status, notified=sent, now=now)
+    return sent
+
+
+def _hours_since(stamp, now):
+    """Hours since an ISO timestamp; infinite when there is none."""
+    if not stamp:
+        return float("inf")
+    try:
+        return (now - datetime.fromisoformat(stamp)).total_seconds() / 3600
+    except (TypeError, ValueError):
+        return float("inf")
