@@ -101,3 +101,97 @@ def test_departed_trip_is_not_assessed():
         daily_kwh=6.0,
     )
     assert result["status"] == "departed"
+
+
+def test_itinerary_beats_a_flat_daily_average():
+    """A dated itinerary costs each day individually, not a flat multiple.
+
+    The flat path multiplies one typical day by the days remaining, which is
+    all a caller has when it knows only the departure. Given actual events the
+    planner must use their real energy instead: here a heavy middle day the
+    average would have understated.
+    """
+    now = datetime(2026, 8, 11, 8, 0)
+    events = [
+        {"date": "2026-08-12", "label": "Errands", "kwh": 8.0},
+        {"date": "2026-08-13", "label": "Long round trip", "kwh": 43.0},
+    ]
+    itinerary = assess_trip(
+        now=now,
+        departure=datetime(2026, 8, 14, 7, 0),
+        soc_pct=80,
+        pack_kwh=74.0,
+        charger_kw=0.95,
+        trip_kwh=30.0,
+        arrival_buffer_pct=10,
+        planned_driving=events,
+    )
+    flat = assess_trip(
+        now=now,
+        departure=datetime(2026, 8, 14, 7, 0),
+        soc_pct=80,
+        pack_kwh=74.0,
+        charger_kw=0.95,
+        trip_kwh=30.0,
+        arrival_buffer_pct=10,
+        daily_kwh=8.0,
+    )
+    assert itinerary["pending_drive_kwh"] == pytest.approx(51.0)
+    assert flat["pending_drive_kwh"] == pytest.approx(24.0)
+    assert itinerary["detail"] and flat["detail"] == []
+
+
+def test_todays_driving_is_discounted_from_the_itinerary():
+    """Energy already spent today must not still be counted as pending."""
+    now = datetime(2026, 8, 11, 15, 0)
+    events = [{"date": "2026-08-11", "label": "Round trip", "kwh": 38.5}]
+    result = assess_trip(
+        now=now,
+        departure=datetime(2026, 8, 12, 7, 0),
+        soc_pct=45,
+        pack_kwh=74.0,
+        charger_kw=0.95,
+        trip_kwh=20.0,
+        arrival_buffer_pct=10,
+        planned_driving=events,
+        consumed_today=38.5,
+    )
+    assert result["pending_drive_kwh"] == pytest.approx(0.0)
+
+
+def test_charge_limit_caps_the_projection():
+    """Projections must not promise charge the car will not accept.
+
+    The car normally sits at an 80% limit and is raised to 100% for a trip.
+    Projecting to a full pack regardless would overstate the departure SOC.
+    """
+    common = {
+        "now": datetime(2026, 8, 11, 8, 0),
+        "departure": datetime(2026, 8, 14, 7, 0),
+        "soc_pct": 50,
+        "pack_kwh": 74.0,
+        "charger_kw": 1.9,
+        "trip_kwh": 10.0,
+        "arrival_buffer_pct": 10,
+        "daily_kwh": 0.0,
+    }
+    assert assess_trip(**common)["projected_departure_pct"] == 100
+    assert assess_trip(**common, charge_limit_pct=80)["projected_departure_pct"] == 80
+
+
+def test_stale_reading_is_flagged():
+    """A plan computed from an old SOC must say so rather than look current."""
+    now = datetime(2026, 8, 11, 12, 0)
+    result = assess_trip(
+        now=now,
+        departure=datetime(2026, 8, 14, 7, 0),
+        soc_pct=60,
+        pack_kwh=74.0,
+        charger_kw=0.95,
+        trip_kwh=20.0,
+        arrival_buffer_pct=10,
+        daily_kwh=8.0,
+        reading_at=datetime(2026, 8, 11, 4, 0),
+    )
+    assert result["reading_age_hours"] == pytest.approx(8.0)
+    assert result["stale_reading"] is True

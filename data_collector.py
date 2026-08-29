@@ -24,6 +24,7 @@ from src.utils.ha_mqtt import (
     values_from_vehicle,
 )
 from src.utils.plug_sessions import detect_charging_spans, load_plug_log, refine_sessions
+from src.utils.trip_planner import assess_plan
 
 sys.path.append(str(Path(__file__).parent))
 
@@ -308,30 +309,25 @@ class DataCollector:
 
         # Trip readiness, when a plan exists and its departure is ahead.
         try:
-            import sys  # pylint: disable=import-outside-toplevel
-
-            sys.path.insert(0, str(Path(__file__).parent / "tools"))
-            from trip_readiness_check import (  # pylint: disable=import-outside-toplevel
-                assess,
-                load_plan,
-            )
-
-            plan = load_plan(str(Path(__file__).parent / "tools" / "trip_plan.json"))
-            departure = datetime.strptime(plan["departure"], "%Y-%m-%d %H:%M")
-            if departure > datetime.now():
-                result = assess(plan, str(Path(__file__).parent))
-                derived["trip_readiness"] = result["status"]
-                attributes["trip_readiness"] = {
-                    "trip": plan.get("trip_name"),
-                    "departure": plan.get("departure"),
-                    "duty_cycle_pct": result.get("duty_cycle_pct"),
-                    "projected_arrival_pct": result.get("shortfall_kwh"),
-                    "plugged_hours_needed": result.get("plugged_hours_needed"),
-                }
+            plan_path = Path(__file__).parent / "tools" / "trip_plan.json"
+            if not plan_path.exists():
+                derived["trip_readiness"] = "no_plan"
             else:
-                derived["trip_readiness"] = "idle"
-        except SystemExit:
-            derived["trip_readiness"] = "no_plan"
+                with open(plan_path, encoding="utf-8") as handle:
+                    plan = json.load(handle)
+                departure = datetime.strptime(plan["departure"], "%Y-%m-%d %H:%M")
+                if departure <= datetime.now():
+                    derived["trip_readiness"] = "idle"
+                else:
+                    result = assess_plan(plan, str(Path(__file__).parent / "data"))
+                    derived["trip_readiness"] = result["status"]
+                    attributes["trip_readiness"] = {
+                        "trip": plan.get("trip_name"),
+                        "departure": plan.get("departure"),
+                        "duty_cycle_pct": result.get("duty_cycle_pct"),
+                        "projected_arrival_pct": result.get("projected_arrival_pct"),
+                        "plugged_hours_needed": result.get("plugged_hours_needed"),
+                    }
         except Exception as metric_error:  # pylint: disable=broad-except
             logger.debug("trip_readiness unavailable: %s", metric_error)
 
