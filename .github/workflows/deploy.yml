@@ -7,6 +7,8 @@ name: Deploy
 # there. So the deploy updates that checkout in place instead of building
 # from the runner's own copy, which is wiped on every run.
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
 
 concurrency:
