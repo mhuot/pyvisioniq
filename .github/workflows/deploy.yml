@@ -1,0 +1,58 @@
+name: Deploy
+# Continuous deployment to mcserver1 (pyvisionic.geekpark.com), on that
+# host's self-hosted runner (label: pyvisioniq).
+#
+# This app keeps its data, cache, logs and sessions in folders inside its
+# checkout on the host (~/new-pyvisionic), and cron jobs run tools from
+# there. So the deploy updates that checkout in place instead of building
+# from the runner's own copy, which is wiped on every run.
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-pyvisioniq
+  cancel-in-progress: false
+
+# Deploy only reads the repo; it never writes back to GitHub.
+permissions:
+  contents: read
+
+env:
+  APP_DIR: /home/ubuntu/new-pyvisionic
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, pyvisioniq]
+    timeout-minutes: 20
+    steps:
+      - name: Update the checkout on the host
+        # Fast-forward only: if the host has changes of its own, stop and
+        # leave them alone.
+        run: |
+          cd "$APP_DIR"
+          git fetch origin main
+          git merge --ff-only "$GITHUB_SHA"
+
+      - name: Build and start containers
+        # No forced recreate: a container whose image did not change keeps
+        # running, so data collection is not interrupted needlessly.
+        run: |
+          cd "$APP_DIR"
+          docker compose up -d --build
+
+      - name: Smoke test
+        # Both containers must be running, and the site must answer through
+        # the proxy (it redirects to the login page).
+        run: |
+          sleep 10
+          test "$(docker inspect -f '{{.State.Running}}' pyvisionic)" = "true"
+          test "$(docker inspect -f '{{.State.Running}}' pyvisionic-collector)" = "true"
+          code="$(curl -s -o /dev/null -w '%{http_code}' https://pyvisionic.geekpark.com/)"
+          echo "site answered $code"
+          test "$code" = "200" -o "$code" = "302"
+
+      - name: Container logs on failure
+        if: failure()
+        run: |
+          cd "$APP_DIR"
+          docker compose logs --tail=100
