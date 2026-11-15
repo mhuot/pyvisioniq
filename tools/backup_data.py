@@ -40,7 +40,7 @@ EXCLUDES = ["*.backup_*", "*.bak", ".store.lock"]
 # remote holds the same tiers and prunes track automatically via --delete.
 # Empty REMOTE disables the sync (e.g. when running on a machine without the
 # key). The Z2 is on the tailnet, so transport rides the existing WireGuard.
-REMOTE_HOST = "mhuot@mike-huot-z2-mini-g3.quagga-ide.ts.net"
+REMOTE_HOST = "mhuot@mike-huot-z2-mini-g3.tail.mhuot.net"
 REMOTE_DIR = "pyvisionic-backups"
 REMOTE = f"{REMOTE_HOST}:{REMOTE_DIR}/"
 

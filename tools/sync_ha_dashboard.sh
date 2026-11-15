@@ -17,7 +17,7 @@
 
 set -eu
 
-REMOTE="${1:-mhuot@themint-1.quagga-ide.ts.net}"
+REMOTE="${1:-mhuot@themint-1.tail.mhuot.net}"
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 CONTAINER="home-assistant"
 
